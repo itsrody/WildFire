@@ -3166,12 +3166,19 @@ async function testPopupPerSiteDisplay() {
   portListeners[0]({
     type: 'wildfire:state',
     state: { enabled: true, blocked: 99 },
-    counts: stateResult.counts
+    counts: stateResult.counts,
+    site: {
+      url: 'https://www.example.com/',
+      host: 'www.example.com',
+      site: 'example.com',
+      blocked: 9,
+      disabled: false
+    }
   });
   assert.strictEqual(elements.count.title, '99 requests blocked in total',
     'background state pushes refresh the popup lifetime counter');
-  assert.strictEqual(elements.count.textContent, '4',
-    'background pushes preserve the active site counter');
+  assert.strictEqual(elements.count.textContent, '9',
+    'background state pushes refresh the active site counter');
 
   elements.toggle.listeners.click();
   await new Promise(resolve => setImmediate(resolve));
@@ -3476,8 +3483,9 @@ async function testWapiClient() {
   handle.send({ ping: 1 });
   assert.deepStrictEqual(posted, [{ ping: 1 }], 'port handles can send payloads');
   portMessages.listeners[0]({ type: 'wildfire:state', state: { blocked: 3 } });
+  portMessages.listeners[0]({ type: 'wildfire:other' });
   portMessages.listeners[0]({ type: 'other:state' });
-  assert.strictEqual(pushed.length, 1, 'port listeners ignore unrelated prefixes');
+  assert.strictEqual(pushed.length, 1, 'port listeners ignore other channels');
   handle.close();
   assert.strictEqual(portMessages.listeners.length, 0, 'close() removes the port listener');
   assert.strictEqual(disconnected, 1, 'close() disconnects the native port');
