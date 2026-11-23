@@ -14,6 +14,7 @@
   let hiddenNodes = new Set();
   let observer = null;
   let scheduled = false;
+  let resizeBound = false;
 
   function isSafeSelector(selector) {
     if (typeof selector !== 'string' || !selector.trim()) return false;
@@ -44,6 +45,13 @@
     return false;
   }
 
+  function hasMediaStep(step) {
+    if (!step) return false;
+    if (step.op === 'matches-media') return true;
+    if ((step.op === 'has' || step.op === 'not') && step.inner && Array.isArray(step.inner.steps)) return step.inner.steps.some(hasMediaStep);
+    return false;
+  }
+
   function observeOptions(textSensitive, attrSensitive) {
     return {
       childList: true,
@@ -54,11 +62,22 @@
     };
   }
 
-  function watch(textSensitive, attrSensitive) {
-    if (!observer) return;
-    observer.disconnect();
-    if (!dynamicEntries.length) return;
-    observer.observe(document.documentElement || document, observeOptions(textSensitive, attrSensitive));
+  function watch(textSensitive, attrSensitive, mediaSensitive) {
+    if (observer) {
+      observer.disconnect();
+      if (dynamicEntries.length) {
+        observer.observe(document.documentElement || document, observeOptions(textSensitive, attrSensitive));
+      }
+    }
+    // :matches-media() depends on the viewport, which can resize without any DOM
+    // mutation, so re-apply on resize only while a live rule needs it.
+    if (mediaSensitive && !resizeBound) {
+      window.addEventListener('resize', scheduleReapply);
+      resizeBound = true;
+    } else if (!mediaSensitive && resizeBound) {
+      window.removeEventListener('resize', scheduleReapply);
+      resizeBound = false;
+    }
   }
 
   function scheduleReapply() {
@@ -116,7 +135,7 @@
       proceduralStyle.textContent = ATTRIBUTE_HIDE;
     }
 
-    watch(dynamicEntries.some(item => item.steps.some(needsText)), dynamicEntries.some(item => item.steps.some(hasAttrStep)));
+    watch(dynamicEntries.some(item => item.steps.some(needsText)), dynamicEntries.some(item => item.steps.some(hasAttrStep)), dynamicEntries.some(item => item.steps.some(hasMediaStep)));
   }
 
   function apply(selectors, procedural) {
@@ -134,7 +153,7 @@
   }
 
   if (typeof MutationObserver !== 'undefined') observer = new MutationObserver(scheduleReapply);
-  watch(false);
+  watch(false, false, false);
 
   browser.runtime.onMessage.addListener(message => {
     if (message && message.type === 'wildfire:apply') apply(message.selectors, message.procedural);

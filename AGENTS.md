@@ -202,9 +202,9 @@ it validates each selector with `CSS.supports('selector', …)` and
 
 Procedural selectors (`:has-text()`, `:contains()`, `:matches-path()`, `:has()`,
 `:nth-ancestor()`, `:upward()`, `:min-text-length()`, `:matches-attr()`,
-`:matches-css()`, `:xpath()`, `:not()`) are parsed in `lib/filter-engine.js` into
-trees with `base` plus ordered `steps`; malformed or unsafe ones are recorded in
-`engine.rejectedCosmetic` and never sent to pages.
+`:matches-css()`, `:xpath()`, `:not()`, `:matches-media()`) are parsed in
+`lib/filter-engine.js` into trees with `base` plus ordered `steps`; malformed or
+unsafe ones are recorded in `engine.rejectedCosmetic` and never sent to pages.
 `getProcedural(host)` merges generic and domain trees and subtracts `#@#`
 exceptions. Background sends them in the same `wildfire:apply` message as CSS.
 
@@ -237,6 +237,8 @@ match itself, so `targetOf()` returns the final node to hide.
 multiple `MutationObserver` batches per frame, only observes `characterData`
 when a live rule actually depends on text, and widens the attribute watch to all
 attributes when a rule uses `:matches-attr()`, `:matches-css()` or `:xpath()`.
+A `:matches-media()` rule additionally binds a `resize` listener (the viewport
+can change without a DOM mutation) and unbinds it when no live rule needs it.
 Filter text is never executed.
 
 ### State and messages
@@ -315,7 +317,7 @@ fetched before consent, `data_collection_permissions.required` stays `["none"]`.
 | `/regex/` filters (`i`, `m`, `s`, `u` flags only) | |
 | `##selector`, `#@#selector` | |
 | `##sel:has-text("…")`, `##sel:matches-path(/re/)`, `##sel:has(sel)` | |
-| `##sel:contains("…")`, `##sel:nth-ancestor(n)`, `##sel:upward(n|sel)`, `##sel:min-text-length(n)`, `##sel:matches-attr(name[=value|/re/])`, `##sel:matches-css[-before|-after](prop: value|/re/)`, `##sel:xpath(expr)` (bounded, read-only, all results), `##sel:not(<procedural>)` | |
+| `##sel:contains("…")`, `##sel:nth-ancestor(n)`, `##sel:upward(n|sel)`, `##sel:min-text-length(n)`, `##sel:matches-attr(name[=value|/re/])`, `##sel:matches-css[-before|-after](prop: value|/re/)`, `##sel:xpath(expr)` (bounded, read-only, all results), `##sel:not(<procedural>)`, `##sel:matches-media(query)` | |
 | `#?#` / `#@?#` with safe `:-abp-has()`/`:-abp-contains()` | unsupported ABP action/procedural selectors rejected |
 | `domain##+js(alias, args)` (curated aliases only) | |
 | `domain#%#//scriptlet('alias', 'args')` (AdGuard, string-only) | AdGuard trusted/debug aliases |
@@ -394,7 +396,11 @@ filter it, `:nth-ancestor()`/`:upward()` map it, and `:xpath()` expands it.
 `:not(<procedural>)`
 negates a procedural operand tested against the node itself (base plus steps);
 only a recognized procedural operand is lifted, while a plain `:not(.x)` stays in
-the native CSS base. Invalid rules land in `engine.rejectedCosmetic`. Evaluation
+the native CSS base. `:matches-media(query)` is answered read-only by Gecko's
+native `matchMedia`; the query is bounded data (≤256 chars, no control chars) and
+Gecko validates its syntax at runtime, so an invalid query never matches. It is
+viewport-dependent, so `content/cosmetic.js` re-applies on `resize` while such a
+rule is live. Invalid rules land in `engine.rejectedCosmetic`. Evaluation
 lives entirely in `lib/procedural.js` and `content/cosmetic.js` — never in
 injected script.
 

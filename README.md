@@ -95,6 +95,7 @@ options page (one per line):
 | `example.com##.bar:matches-css-before(content: "ad")` | Same, reading the `::before` pseudo-element (`-after` too) |
 | `example.com##.box:xpath(.//span[@class="ad"])` | Hide every element returned by a bounded, read-only native XPath |
 | `example.com##.ad:not(:has-text("Sponsored"))` | Hide `.ad` only when it does NOT match the procedural operand |
+| `example.com##.side:matches-media((max-width: 1000px))` | Hide only when a native CSS media query matches the viewport |
 | `example.com#?#div:-abp-has(.ad)` | ABP procedural form, mapped safely to `:has()` |
 | `example.com#?#div:-abp-contains(Ad)` | ABP procedural form, mapped safely to `:has-text()` |
 
@@ -244,7 +245,7 @@ This is deliberately a *minimal* engine, not a full uBO port:
   aliases cancel normally.
 - Procedural cosmetic rules (`:has-text()`, `:contains()`, `:matches-path()`,
   `:has()`, `:nth-ancestor()`, `:matches-attr()`, `:matches-css()`, `:xpath()`,
-  `:not()`) use Firefox-native CSS wherever possible: plain `:has()` rules and
+  `:not()`, `:matches-media()`) use Firefox-native CSS wherever possible: plain `:has()` rules and
   `:matches-attr(name)`/`=(name="literal")` are compiled into the cosmetic
   stylesheet, and `:matches-path()` is checked once per page. Only
   text/regex/ancestor/computed-style-dependent rules are evaluated in
@@ -258,7 +259,9 @@ This is deliberately a *minimal* engine, not a full uBO port:
   base match); it hides every element result, and later steps filter that set. A
   malformed expression simply matches nothing. `:not()`
   negates a procedural operand on the node itself; a plain `:not(.x)` stays in
-  the native CSS base. No script from a filter is ever injected.
+  the native CSS base. `:matches-media(query)` asks Gecko's native `matchMedia`
+  engine (read-only) and re-applies on viewport resize. No script from a filter
+  is ever injected.
 
 ## Message API (internal)
 

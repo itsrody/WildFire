@@ -896,6 +896,42 @@ assert.strictEqual(classify(nthRule, '/').mode, 'js', ':nth-ancestor stays in th
   assert.strictEqual(notReload.loadCompiled(notBlob), true, ':not compiled round-trip');
   assert.strictEqual(notReload.getProcedural('example.com').length, 2, ':not survives compiled load');
 
+  const mediaEngine = new FilterEngine();
+  mediaEngine.load([
+    'example.com##div:matches-media((max-width: 1000px))',
+    'example.com##div:matches-media()',
+    'example.com##div:matches-media(' + 'x'.repeat(300) + ')'
+  ].join('\n'));
+  assert.strictEqual(mediaEngine.getProcedural('example.com').length, 1, 'matches-media parses');
+  assert.strictEqual(mediaEngine.rejectedCosmetic.length, 2, 'empty/overlong matches-media rejected');
+  const mediaRule = mediaEngine.getProcedural('example.com')[0];
+  assert.strictEqual(mediaRule.steps[0].op, 'matches-media', 'matches-media step parsed');
+  assert.strictEqual(mediaRule.steps[0].query, '(max-width: 1000px)', 'matches-media stores the media query');
+
+  // Fake native matchMedia reached through the node keeps procedural.js DOM-only.
+  const mediaNode = (selector, matches) => {
+    const node = stubNode(selector, '');
+    node.ownerDocument = { defaultView: { matchMedia: () => ({ matches }) } };
+    return node;
+  };
+  const narrowNode = mediaNode('div', true);
+  const wideNode = mediaNode('div', false);
+  const mediaRoot = stubNode('body', '', [narrowNode, wideNode]);
+  const mediaSel = WildFireProcedural.select(mediaRoot, mediaRule, '/');
+  assert.strictEqual(mediaSel.length, 1, 'matches-media hides only when the query matches');
+  assert.strictEqual(mediaSel[0], narrowNode, 'matches-media selects the matching-viewport node');
+
+  const throwNode = stubNode('div', '');
+  throwNode.ownerDocument = { defaultView: { matchMedia: () => { throw new Error('bad query'); } } };
+  const noViewNode = stubNode('div', '');
+  const mediaSafeRoot = stubNode('body', '', [throwNode, noViewNode]);
+  assert.strictEqual(WildFireProcedural.select(mediaSafeRoot, mediaRule, '/').length, 0, 'invalid query / missing view never matches or throws');
+  assert.strictEqual(WildFireProcedural.classify(mediaRule, '/').mode, 'js', 'matches-media stays JS (viewport-dependent)');
+  const mediaBlob = mediaEngine.toCompiled();
+  const mediaReload = new FilterEngine();
+  assert.strictEqual(mediaReload.loadCompiled(mediaBlob), true, 'matches-media compiled round-trip');
+  assert.strictEqual(mediaReload.getProcedural('example.com').length, 1, 'matches-media survives compiled load');
+
 const resolveCsp = alias => CspResources.resolve(alias);
 // Arrays built inside the vm realm have a different prototype than Node's.
 const cspFor = (instance, url, type, documentUrl) =>

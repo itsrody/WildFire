@@ -337,6 +337,26 @@
         "host": "example.com",
         "count": 1
       }
+    },
+    {
+      "name": "matches-media viewport procedural",
+      "rules": [
+        "example.com##div:matches-media((max-width: 1000px))",
+        "example.com##div:matches-media()"
+      ],
+      "expect": {
+        "capabilities": [
+          "COSMETIC",
+          "PROCEDURAL"
+        ],
+        "diagnosticCategories": [
+          "cosmetic"
+        ]
+      },
+      "proceduralCount": {
+        "host": "example.com",
+        "count": 1
+      }
     }
   ]
 }
