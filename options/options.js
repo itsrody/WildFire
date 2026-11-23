@@ -6,6 +6,7 @@
   const sitesList = document.getElementById('sites');
   const siteForm = document.getElementById('site-form');
   const siteInput = document.getElementById('site-input');
+  const suggestedList = document.getElementById('suggested-lists');
   const listsList = document.getElementById('remote-lists');
   const listForm = document.getElementById('list-form');
   const listInput = document.getElementById('list-url');
@@ -14,6 +15,7 @@
 
   let state = null;
   let lists = [];
+  let suggested = [];
 
   function setListStatus(message) {
     listStatus.textContent = message || '';
@@ -61,6 +63,33 @@
       });
       item.append(label, remove);
       sitesList.appendChild(item);
+    });
+  }
+
+  function renderSuggested() {
+    suggestedList.textContent = '';
+    suggested.forEach(entry => {
+      const item = document.createElement('li');
+      item.className = 'list-item';
+      const row = document.createElement('div');
+      row.className = 'list-row';
+      const label = document.createElement('span');
+      label.className = 'list-label';
+      label.textContent = entry.name;
+      const meta = document.createElement('span');
+      meta.className = 'list-meta';
+      meta.textContent = entry.description;
+      row.append(label, meta);
+
+      const actions = document.createElement('div');
+      actions.className = 'list-actions';
+      const added = lists.some(list => list.url === entry.url);
+      const add = actionButton(added ? 'Added' : 'Add',
+        () => listAction('wildfire:add-list', entry.url));
+      add.disabled = added;
+      actions.appendChild(add);
+      item.append(row, actions);
+      suggestedList.appendChild(item);
     });
   }
 
@@ -116,6 +145,7 @@
     else if (type === 'wildfire:update-list') setListStatus(result.changed ? 'Updated.' : 'Checked.');
     else setListStatus('Saved.');
     renderLists();
+    renderSuggested();
     return result;
   }
 
@@ -125,6 +155,7 @@
       ' requests blocked since tracking began.';
     renderSites();
     renderLists();
+    renderSuggested();
   }
 
   document.getElementById('save').addEventListener('click', async () => {
@@ -164,11 +195,13 @@
 
   Promise.all([
     browser.runtime.sendMessage({ type: 'wildfire:state' }),
-    browser.runtime.sendMessage({ type: 'wildfire:list-state' })
+    browser.runtime.sendMessage({ type: 'wildfire:list-state' }),
+    browser.runtime.sendMessage({ type: 'wildfire:suggested-lists' })
   ])
     .then(results => {
       state = results[0].state;
       lists = Array.isArray(results[1].lists) ? results[1].lists : [];
+      suggested = Array.isArray(results[2].suggested) ? results[2].suggested : [];
       render();
     })
     .catch(error => {

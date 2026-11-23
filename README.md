@@ -105,11 +105,13 @@ Lines starting with `!` are comments.
 
 ## Remote filter lists
 
-Open Options → **Remote filter lists** to add an `http(s)` URL. Adding a URL only
-registers it; use **Fetch** to download it, then **Enable** to apply its rules.
-You can **Update** it later, opt into daily checks with **Auto**, or **Remove**
-it. WildFire never ships a list URL, never fetches without your action, and
-sends no data about you — the manifest still declares `data_collection_permissions: ["none"]`.
+Open Options → **Suggested lists** for shortcuts to well-known community lists,
+or **Remote filter lists** to add any `http(s)` URL. Adding a URL — suggested or
+typed — only registers it; use **Fetch** to download it, then **Enable** to apply
+its rules. You can **Update** it later, opt into daily checks with **Auto**, or
+**Remove** it. The suggested catalog is inert: WildFire never adds, fetches, or
+enables a list for you, and it sends no data about you — the manifest still
+declares `data_collection_permissions: ["none"]`.
 
 Fetches bypass the HTTP cache, are size-capped and time-limited, and support
 `ETag`/`Last-Modified` revalidation. A `304` reuses the stored rules. The exact
@@ -269,5 +271,5 @@ This is deliberately a *minimal* engine, not a full uBO port:
 ## Message API (internal)
 
 Background listens for `wildfire:*` messages: `state`, `toggle`, `toggle-site`,
-`set-filters`, `reset-stats`, `reload`, `list-state`, `add-list`, `remove-list`,
+`set-filters`, `reset-stats`, `reload`, `list-state`, `suggested-lists`, `add-list`, `remove-list`,
 `update-list`, `set-list-enabled`, `set-list-auto`, and `cosmetic`.

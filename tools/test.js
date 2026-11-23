@@ -58,6 +58,9 @@ loadFiles(context, PROCEDURAL_FILES);
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/state/remote-lists.js'), 'utf8'), context, {
   filename: 'remote-lists.js'
 });
+vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/state/suggested-lists.js'), 'utf8'), context, {
+  filename: 'suggested-lists.js'
+});
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/resources/csp-resources.js'), 'utf8'), context, {
   filename: 'csp-resources.js'
 });
@@ -71,7 +74,7 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/compile/compile-cache.js'),
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/compile/compiler.js'), 'utf8'), context, {
   filename: 'compiler.js'
 });
-const { FilterEngine, mapResourceType, DocumentScope, RedirectResources, WildFireProcedural, RemoteLists, CspResources, WildFireScriptlets, RewriteResources, WildFireCompileCache, WildFireCompiler } = context;
+const { FilterEngine, mapResourceType, DocumentScope, RedirectResources, WildFireProcedural, RemoteLists, WildFireSuggestedLists, CspResources, WildFireScriptlets, RewriteResources, WildFireCompileCache, WildFireCompiler } = context;
 
 const engine = new FilterEngine();
 engine.load([
@@ -1746,6 +1749,7 @@ async function testStaleGenerationWorkerHang() {
   const WorkerCtor = class extends HangingWorker { constructor() { super(); workers.push(this); } };
 
   const apiHooks = {};
+  let bgMessageHandler;
   const ctx = vm.createContext({
     console, URL, setTimeout, clearTimeout, setImmediate, Promise,
     Map, Set, Array, Object, String, RegExp, JSON, Math, Boolean, Number, Error,
@@ -1760,7 +1764,7 @@ async function testStaleGenerationWorkerHang() {
   ctx.globalThis = ctx; ctx.window = ctx; ctx.CSS = { supports: () => true }; ctx.location = { hostname: 'page.example' };
   ctx.Worker = WorkerCtor; ctx.indexedDB = undefined;
   ctx.browser = {
-    runtime: { getURL: p => 'moz-extension://test/' + p, onMessage: { addListener: () => {} } },
+    runtime: { getURL: p => 'moz-extension://test/' + p, onMessage: { addListener: handler => { bgMessageHandler = handler; } } },
     storage: { local: memoryStorage({}) },
     browserAction: { setBadgeBackgroundColor: () => {}, setBadgeText: () => {} },
     webRequest: { onBeforeRequest: { addListener: () => {} }, onHeadersReceived: { addListener: () => {} }, onCompleted: { addListener: () => {} }, onErrorOccurred: { addListener: () => {} }, onBeforeRedirect: { addListener: () => {} }, filterResponseData: () => ({ ondata() {}, onstop() {}, onerror() {}, write() {}, close() {}, disconnect() {} }) },
@@ -1770,7 +1774,7 @@ async function testStaleGenerationWorkerHang() {
     contentScripts: { register: async () => ({ unregister: async () => {} }) },
     publicSuffix: { getDomain: host => host.split('.').slice(-2).join('.') }
   };
-  ['lib/state/store.js', ...ENGINE_FILES, 'lib/state/document-scope.js', 'lib/resources/redirect-resources.js', 'lib/state/remote-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js', 'lib/compile/compile-cache.js', 'lib/compile/compiler.js']
+  ['lib/state/store.js', ...ENGINE_FILES, 'lib/state/document-scope.js', 'lib/resources/redirect-resources.js', 'lib/state/remote-lists.js', 'lib/state/suggested-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js', 'lib/compile/compile-cache.js', 'lib/compile/compiler.js']
     .forEach(f => vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f }));
   const bgSource = fs.readFileSync(path.join(ROOT, 'background.js'), 'utf8')
     .replace(/  init\(\);\n}\)\(\);\s*$/, '  globalThis.__wildfireTest = { loadFilters, engine, getState: () => state, setState: p => { state = Object.assign({}, state, p); }, compiler }; init(); })();');
@@ -1780,6 +1784,12 @@ async function testStaleGenerationWorkerHang() {
   await new Promise(resolve => setTimeout(resolve, 30));
   console.debug = origDebug2;
   const api = ctx.__wildfireTest;
+
+  const suggested = await bgMessageHandler({ type: 'wildfire:suggested-lists' }, {});
+  assert.ok(Array.isArray(suggested.suggested) && suggested.suggested.length >= 2,
+    'the background exposes the suggested-list catalog');
+  assert.ok(suggested.suggested.every(entry => /^https:\/\//.test(entry.url)),
+    'catalog URLs are https');
 
   // Make custom compile hang at worker level; default/bundled compiles still respond.
   ctx.Worker = class extends HangingWorker {
@@ -1920,7 +1930,7 @@ async function testBackgroundLoadFiltersIntegration() {
 
   [
     'lib/state/store.js', ...ENGINE_FILES, 'lib/state/document-scope.js', 'lib/resources/redirect-resources.js',
-    'lib/state/remote-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js',
+    'lib/state/remote-lists.js', 'lib/state/suggested-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js',
     'lib/compile/compile-cache.js', 'lib/compile/compiler.js'
   ].forEach(f => vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f }));
 
@@ -2017,7 +2027,7 @@ async function testRemoveRuntimeIntegration() {
     contentScripts:{register:async()=>({unregister:async()=>{}})},
     publicSuffix:{getDomain:host=>host.split('.').slice(-2).join('.')}
   };
-  ['lib/state/store.js',...ENGINE_FILES,'lib/state/document-scope.js','lib/resources/redirect-resources.js','lib/state/remote-lists.js','lib/resources/csp-resources.js',...SCRIPTLET_FILES,'lib/resources/rewrite-resources.js','lib/compile/compile-cache.js','lib/compile/compiler.js']
+  ['lib/state/store.js',...ENGINE_FILES,'lib/state/document-scope.js','lib/resources/redirect-resources.js','lib/state/remote-lists.js', 'lib/state/suggested-lists.js','lib/resources/csp-resources.js',...SCRIPTLET_FILES,'lib/resources/rewrite-resources.js','lib/compile/compile-cache.js','lib/compile/compiler.js']
     .forEach(f=>vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),ctx,{filename:f}));
   const bgSource = fs.readFileSync(path.join(ROOT,'background.js'),'utf8')
     .replace(/  init\(\);\n}\)\(\);\s*$/, '  globalThis.__wildfireTest = { loadFilters, engine, getState: () => state, setState: p => { state = Object.assign({}, state, p); } }; init(); })();');
@@ -2276,7 +2286,7 @@ async function testCompileInFlightDedup() {
     publicSuffix: { getDomain: h => h.split('.').slice(-2).join('.') }
   };
   ['lib/state/store.js', ...ENGINE_FILES, 'lib/state/document-scope.js', 'lib/resources/redirect-resources.js',
-    'lib/state/remote-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js',
+    'lib/state/remote-lists.js', 'lib/state/suggested-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js',
     'lib/compile/compile-cache.js']
     .forEach(f => vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f }));
 
@@ -2715,6 +2725,24 @@ async function testRemoteLists() {
       text: async () => text
     };
   }
+
+  const catalog = WildFireSuggestedLists.all();
+  assert.ok(catalog.length >= 2, 'the catalog offers suggested lists');
+  assert.ok(catalog.every(entry => entry.name && entry.description && /^https:\/\//.test(entry.url)),
+    'catalog entries are complete https shortcuts');
+  const copy = WildFireSuggestedLists.all();
+  copy[0].url = 'https://changed.example/';
+  assert.notStrictEqual(WildFireSuggestedLists.all()[0].url, 'https://changed.example/',
+    'catalog data cannot be mutated by callers');
+  const catalogRemote = RemoteLists.create({
+    storage: memoryStorage({ [RemoteLists.KEY]: { lists: [] } }),
+    fetchImpl: async () => { throw new Error('suggested-list registration must not fetch'); },
+    timeoutMs: 0
+  });
+  const registered = await catalogRemote.add(catalog[0].url);
+  assert.strictEqual(registered.ok, true, 'a suggested URL can be registered');
+  assert.strictEqual(registered.list.enabled, false, 'suggested lists are registered disabled');
+  assert.strictEqual(registered.list.text, '', 'suggested lists are registered unfetched');
 
   let clock = 1000;
   let fetchMode = 'ok';

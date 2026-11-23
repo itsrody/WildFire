@@ -804,6 +804,9 @@
         await loadFilters();
         return snapshot();
 
+      case 'suggested-lists':
+        return { suggested: WildFireSuggestedLists.all() };
+
       case 'list-state':
         payload.lists = (await remoteLists.get()).lists;
         return payload;

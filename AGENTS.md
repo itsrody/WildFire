@@ -85,6 +85,7 @@ lib/
   state/
     store.js           browser.storage.local wrapper, key wildfire.state.v1
     remote-lists.js    opt-in remote list store, key wildfire.remote.v1
+    suggested-lists.js inert catalog of suggested list URLs (Options shortcuts)
     document-scope.js  documentId -> document URL cache for request scope
 content/cosmetic.js    injects hidden-element CSS in every frame
 filters/default.txt    bundled starter rules (~85 network rules)
@@ -116,14 +117,15 @@ used **only** by `tools/`.
 3. `lib/state/document-scope.js` → `window.DocumentScope`
 4. `lib/resources/redirect-resources.js` → `window.RedirectResources`
 5. `lib/state/remote-lists.js` → `window.RemoteLists`
-6. `lib/resources/csp-resources.js` → `window.CspResources`
-7. `lib/resources/scriptlets/` chain, in order: `core.js`, `runtime.js`,
+6. `lib/state/suggested-lists.js` → `window.WildFireSuggestedLists`
+7. `lib/resources/csp-resources.js` → `window.CspResources`
+8. `lib/resources/scriptlets/` chain, in order: `core.js`, `runtime.js`,
    `transforms.js`, `adguard-helpers.js`, `definitions.js`,
    `adguard-definitions.js`, `api.js` → `window.WildFireScriptlets`
-8. `lib/resources/rewrite-resources.js` → `window.RewriteResources`
-9. `lib/compile/compile-cache.js` → `window.WildFireCompileCache`
-10. `lib/compile/compiler.js` → `window.WildFireCompiler`
-11. `background.js` → the engine instance and all listeners
+9. `lib/resources/rewrite-resources.js` → `window.RewriteResources`
+10. `lib/compile/compile-cache.js` → `window.WildFireCompileCache`
+11. `lib/compile/compiler.js` → `window.WildFireCompiler`
+12. `background.js` → the engine instance and all listeners
 
 Content scripts load in this order: `lib/engine/procedural/` chain (`text.js`,
 `nodes.js`, `native.js`, `select.js`) → `content/cosmetic.js`, so the DOM
@@ -320,6 +322,7 @@ Background listens for `wildfire:*` messages:
 | `reset-stats` | zero the blocked counter |
 | `reload` | rebuild from bundled + custom + enabled remote filters |
 | `list-state` | return registered remote lists |
+| `suggested-lists` | return the inert catalog of suggested list URLs |
 | `add-list` | register an http(s) list URL, disabled and unfetched |
 | `remove-list` | forget a list and stop applying its rules |
 | `update-list` | explicitly fetch/revalidate one list |
@@ -331,8 +334,10 @@ Background listens for `wildfire:*` messages:
 it got from `state` and merges it into later responses (`applyResult`); keep
 that behavior when adding popup actions.
 
-Remote lists are strictly opt-in. No URL is bundled, `add-list` never fetches,
-and a list cannot be enabled until an explicit `update-list` has stored text.
+Remote lists are strictly opt-in. The bundled `lib/state/suggested-lists.js`
+catalog is inert: Options shows its URLs as shortcuts, and clicking one only
+sends `add-list`, which never fetches. A list cannot be enabled until an
+explicit `update-list` has stored text.
 `lib/state/remote-lists.js` fetches with `cache: 'no-store'`, a size cap and an
 `AbortController` timeout; a 304 keeps the stored text but refreshes the check
 time. The exact text and its hash are persisted so the applied rules are
@@ -340,7 +345,9 @@ reproducible. `loadFilters()` composes bundled → custom → enabled remote tex
 and exceptions still win over blockers. Daily checks exist only for lists whose
 owner opted in via `set-list-auto`; the `alarms` permission supports that one
 named alarm. Because nothing is collected or sent about the user and no list is
-fetched before consent, `data_collection_permissions.required` stays `["none"]`.
+fetched before consent, `data_collection_permissions.required` stays `["none"]`;
+the suggested catalog does not change that, since selecting it is a user action
+and fetching still requires a separate explicit step.
 
 ---
 

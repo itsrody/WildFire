@@ -52,6 +52,7 @@
       "lib/state/document-scope.js",
       "lib/resources/redirect-resources.js",
       "lib/state/remote-lists.js",
+      "lib/state/suggested-lists.js",
       "lib/resources/csp-resources.js",
       "lib/resources/scriptlets/core.js",
       "lib/resources/scriptlets/runtime.js",
