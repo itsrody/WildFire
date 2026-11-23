@@ -232,6 +232,30 @@ assert.strictEqual(plainEngineFast.matchRequest('https://start.example/a/b/end',
 assert.strictEqual(plainEngineFast.matchRequest('https://start.example/a/b/end2', 'script', '').blocked,
   false, 'end anchor is enforced for segment matcher');
 
+const segmentEngine = new FilterEngine();
+segmentEngine.load([
+  'foo*bar*baz',
+  '||seg.example^*/script.js',
+  '|https://left.example/path/*/end|',
+  'ad^banner^'
+].join('\n'));
+assert.strictEqual(segmentEngine.matchRequest('https://x.test/foo-1-bar-2-baz.js', 'script', '').blocked,
+  true, 'multi-wildcard segment matches');
+assert.strictEqual(segmentEngine.matchRequest('https://x.test/foo-1-bar-2-qux.js', 'script', '').blocked,
+  false, 'multi-wildcard segment requires all literals');
+assert.strictEqual(segmentEngine.matchRequest('https://sub.seg.example/a/script.js', 'script', '').blocked,
+  true, 'host-anchor segment with separator and wildcard matches');
+assert.strictEqual(segmentEngine.matchRequest('https://seg.example.evil/a/script.js', 'script', '').blocked,
+  false, 'host-anchor segment rejects lookalike host');
+assert.strictEqual(segmentEngine.matchRequest('https://left.example/path/a/b/end', 'script', '').blocked,
+  true, 'start+end anchored segment with wildcard matches');
+assert.strictEqual(segmentEngine.matchRequest('https://left.example/path/a/b/endx', 'script', '').blocked,
+  false, 'start+end anchored segment rejects trailing chars');
+assert.strictEqual(segmentEngine.matchRequest('https://x.test/ad/banner/img', 'image', '').blocked,
+  true, 'separator-only segment matches separators');
+assert.strictEqual(segmentEngine.matchRequest('https://x.test/adbanner/img', 'image', '').blocked,
+  false, 'separator-only segment rejects missing separator');
+
 const importantEngine = new FilterEngine();
 importantEngine.load([
   '||ads.example^$script',
