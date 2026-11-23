@@ -2182,6 +2182,13 @@ async function testHideExceptionModifiers() {
   assert.strictEqual(p4.generichide, false, 'badfilter disables generichide exception');
   assert.ok(e4.getCosmetic('example.com', p4).includes('.global-ad'), 'generic visible when generichide badfiltered');
 
+  const eScoped = new FilterEngine();
+  eScoped.load(['##.global', 'example.com##.specific', '@@||example.com^$generichide,domain=example.com'].join('\n'));
+  const pScoped = eScoped.getHidePolicy('https://example.com/', 'document', 'https://example.com/');
+  assert.strictEqual(pScoped.generichide, true, 'domain-scoped generichide applies');
+  const pOther = eScoped.getHidePolicy('https://other.example/', 'document', 'https://other.example/');
+  assert.strictEqual(pOther.generichide, false, 'generichide domain scope respected');
+
   const e5 = new FilterEngine();
   e5.load([
     'example.com#?#div:-abp-has(.ad)',

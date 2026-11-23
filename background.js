@@ -492,11 +492,13 @@
   async function sendCosmetic(tabId, url) {
     const host = safeHost(url);
     if (!host) return;
+    const hidePolicy = engine.getHidePolicy ? engine.getHidePolicy(url, 'document', url) : {};
     try {
       await browser.tabs.sendMessage(tabId, {
         type: 'wildfire:apply',
-        selectors: engine.getCosmetic(host),
-        procedural: engine.getProcedural(host)
+        selectors: engine.getCosmetic(host, hidePolicy),
+        procedural: engine.getProcedural(host, hidePolicy),
+        hidePolicy
       });
     } catch (error) {
       /* No content script in that tab/frame - safe to ignore. */
