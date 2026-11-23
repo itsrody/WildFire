@@ -36,6 +36,17 @@
   </section>
 
   <section class="card">
+    <h2>Remote filter lists</h2>
+    <p class="hint">Nothing is bundled or fetched automatically. Add an http(s) URL, fetch it explicitly, then enable it. WildFire stores the exact text it applies.</p>
+    <ul id="remote-lists" class="sites"></ul>
+    <form id="list-form" class="actions">
+      <input id="list-url" type="url" placeholder="https://example.com/filters.txt" autocomplete="off" spellcheck="false">
+      <button class="button" type="submit">Add list</button>
+      <span id="list-status" class="status" role="status"></span>
+    </form>
+  </section>
+
+  <section class="card">
     <h2>Statistics</h2>
     <p id="stats-text" class="hint">Loading…</p>
     <button id="reset" class="button" type="button">Reset blocked counter</button>

@@ -84,6 +84,18 @@ options page (one per line):
 
 Lines starting with `!` are comments.
 
+## Remote filter lists
+
+Open Options → **Remote filter lists** to add an `http(s)` URL. Adding a URL only
+registers it; use **Fetch** to download it, then **Enable** to apply its rules.
+You can **Update** it later, opt into daily checks with **Auto**, or **Remove**
+it. WildFire never ships a list URL, never fetches without your action, and
+sends no data about you — the manifest still declares `data_collection_permissions: ["none"]`.
+
+Fetches bypass the HTTP cache, are size-capped and time-limited, and support
+`ETag`/`Last-Modified` revalidation. A `304` reuses the stored rules. The exact
+text is stored under `wildfire.remote.v1`, so the applied rules are reproducible.
+
 ## Design notes / limits
 
 This is deliberately a *minimal* engine, not a full uBO port:
@@ -93,8 +105,9 @@ This is deliberately a *minimal* engine, not a full uBO port:
 - `$csp`, `$rewrite`, and `elemhide` are not supported.
 - Rules are indexed by their `||host^` key and 4-character tokens; patterns with
   no usable token (including regex filters) are scanned per request.
-- No remote list fetching or auto-updating — `filters/default.txt` plus your custom
-  filters are the complete rule set.
+- Remote lists are opt-in: no URL is bundled, nothing is fetched until you add a
+  URL and explicitly fetch it, and a fetched list must be enabled before its
+  rules apply. WildFire stores the exact text and a hash of each applied list.
 - No hand-written `for`/`while`/`do` loops; iteration uses native helpers
   (`map`, `filter`, `reduce`, `forEach`, `find`, `flatMap`, `Array.from`).
   `npm run check` enforces this across all scripts.
@@ -118,4 +131,5 @@ This is deliberately a *minimal* engine, not a full uBO port:
 ## Message API (internal)
 
 Background listens for `wildfire:*` messages: `state`, `toggle`, `toggle-site`,
-`set-filters`, `reset-stats`, `reload`, and `cosmetic`.
+`set-filters`, `reset-stats`, `reload`, `list-state`, `add-list`, `remove-list`,
+`update-list`, `set-list-enabled`, `set-list-auto`, and `cosmetic`.

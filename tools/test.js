@@ -20,7 +20,10 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/redirect-resources.js'), 'u
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/procedural.js'), 'utf8'), context, {
   filename: 'procedural.js'
 });
-const { FilterEngine, mapResourceType, DocumentScope, RedirectResources, WildFireProcedural } = context;
+vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/remote-lists.js'), 'utf8'), context, {
+  filename: 'remote-lists.js'
+});
+const { FilterEngine, mapResourceType, DocumentScope, RedirectResources, WildFireProcedural, RemoteLists } = context;
 
 const engine = new FilterEngine();
 engine.load([
@@ -559,4 +562,138 @@ assert.ok(engine.counts.cosmetic > 5, 'bundled list should contain cosmetic rule
 assert.strictEqual(blocked('https://securepubads.g.doubleclick.net/gampad/ads', 'script'), true,
   'bundled list blocks ads');
 
-console.log('WildFire tests passed (' + engine.counts.network + ' network rules loaded from bundled list).');
+async function testRemoteLists() {
+  assert.strictEqual(RemoteLists.normalizeUrl('javascript:alert(1)'), '',
+    'javascript URLs are rejected');
+  assert.strictEqual(RemoteLists.normalizeUrl('file:///etc/passwd'), '',
+    'file URLs are rejected');
+  assert.strictEqual(RemoteLists.normalizeUrl('https://example.com/list.txt?a=1'),
+    'https://example.com/list.txt?a=1', 'http(s) URLs are normalized');
+  assert.strictEqual(RemoteLists.hashText('abc'), RemoteLists.hashText('abc'),
+    'list hashing is deterministic');
+  assert.notStrictEqual(RemoteLists.hashText('abc'), RemoteLists.hashText('abd'),
+    'different text has a different hash');
+
+  function memoryStorage(initial) {
+    let data = Object.assign({}, initial);
+    return {
+      async get(key) { return { [key]: data[key] }; },
+      async set(patch) { data = Object.assign({}, data, patch); },
+      get data() { return data; }
+    };
+  }
+
+  function remoteResponse(text, headers, status) {
+    const values = headers || {};
+    const code = status === undefined ? 200 : status;
+    return {
+      ok: code >= 200 && code < 300,
+      status: code,
+      headers: { get: name => values[name.toLowerCase()] || '' },
+      text: async () => text
+    };
+  }
+
+  let clock = 1000;
+  let fetchMode = 'ok';
+  const fetchCalls = [];
+  const remoteStorage = memoryStorage({
+    [RemoteLists.KEY]: {
+      lists: [
+        { url: 'javascript:bad' },
+        { url: 'https://list.example/rules.txt', enabled: true },
+        { url: 'https://list.example/rules.txt', enabled: false }
+      ]
+    }
+  });
+  const remote = RemoteLists.create({
+    storage: remoteStorage,
+    fetchImpl: async (url, options) => {
+      fetchCalls.push({ url, options });
+      if (fetchMode === '304') {
+        return { status: 304, ok: false, headers: { get: () => '' }, text: async () => '' };
+      }
+      if (fetchMode === '500') return remoteResponse('', {}, 500);
+      return remoteResponse('||tracker.example^', { etag: '"v1"' });
+    },
+    now: () => clock,
+    timeoutMs: 0
+  });
+
+  const initial = await remote.get();
+  assert.strictEqual(initial.lists.length, 1,
+    'invalid and duplicate stored URLs are discarded on load');
+  assert.strictEqual(initial.lists[0].enabled, false,
+    'the last duplicate entry wins deterministically');
+
+  const added = await remote.add('https://fresh.example/list.txt');
+  assert.strictEqual(added.ok, true, 'a valid URL can be registered');
+  assert.strictEqual(added.list.enabled, false, 'registering never enables a list');
+  assert.strictEqual(added.list.text, '', 'registering never fetches a list');
+  assert.strictEqual(fetchCalls.length, 0, 'add performs no network request');
+
+  const earlyEnable = await remote.setEnabled('https://fresh.example/list.txt', true);
+  assert.strictEqual(earlyEnable.ok, false, 'an unfetched list cannot be enabled');
+  assert.ok(/Fetch/.test(earlyEnable.error), 'the error explains the consent step');
+
+  const fetched = await remote.update('https://fresh.example/list.txt');
+  assert.strictEqual(fetched.ok, true, 'an explicit update fetches the list');
+  assert.strictEqual(fetched.list.etag, '"v1"', 'the ETag is stored');
+  assert.strictEqual(fetched.list.hash, RemoteLists.hashText('||tracker.example^'),
+    'the exact fetched text is hashed');
+  assert.strictEqual(fetchCalls.length, 1, 'one update makes one request');
+  assert.strictEqual(fetchCalls[0].options.cache, 'no-store', 'fetches bypass the HTTP cache');
+  assert.strictEqual(fetchCalls[0].options.headers['If-None-Match'], undefined,
+    'the first fetch sends no validator');
+
+  fetchMode = '304';
+  clock = 2000;
+  const revalidated = await remote.update('https://fresh.example/list.txt');
+  assert.strictEqual(revalidated.ok, true, 'a 304 reuses the stored text');
+  assert.strictEqual(revalidated.list.text, '||tracker.example^', '304 keeps previous rules');
+  assert.strictEqual(revalidated.list.updatedAt, 2000, '304 still records check time');
+  assert.strictEqual(fetchCalls[1].options.headers['If-None-Match'], '"v1"',
+    'revalidation sends the stored ETag');
+
+  const enabled = await remote.setEnabled('https://fresh.example/list.txt', true);
+  assert.strictEqual(enabled.ok, true, 'a fetched list can be enabled');
+  assert.strictEqual(await remote.enabledText(),
+    '! wildfire remote: https://fresh.example/list.txt\n||tracker.example^',
+    'only enabled lists contribute filter text');
+
+  const earlyAuto = await remote.setAutoUpdate('https://list.example/rules.txt', true);
+  assert.strictEqual(earlyAuto.ok, false, 'auto-update needs an enabled fetched list');
+  const auto = await remote.setAutoUpdate('https://fresh.example/list.txt', true);
+  assert.strictEqual(auto.ok, true, 'auto-update can be opted into');
+  assert.strictEqual(auto.list.autoUpdate, true);
+
+  fetchMode = '500';
+  const failed = await remote.update('https://fresh.example/list.txt');
+  assert.strictEqual(failed.ok, false, 'an HTTP error is reported');
+  assert.strictEqual(failed.list.text, '||tracker.example^', 'a failed fetch keeps old rules');
+
+  const sizeStorage = memoryStorage({
+    [RemoteLists.KEY]: { lists: [{ url: 'https://size.example/list' }] }
+  });
+  const sizeRemote = RemoteLists.create({
+    storage: sizeStorage,
+    fetchImpl: async () => remoteResponse('abcdefghij'),
+    now: () => clock,
+    timeoutMs: 0,
+    maxTextLength: 8
+  });
+  const tooLarge = await sizeRemote.update('https://size.example/list');
+  assert.strictEqual(tooLarge.ok, false, 'an oversized list is rejected');
+  assert.ok(/exceeds/.test(tooLarge.error), 'the size limit is explained');
+
+  const removed = await remote.remove('https://fresh.example/list.txt');
+  assert.strictEqual(removed.ok, true, 'a list can be removed');
+  assert.strictEqual(await remote.enabledText(), '', 'removed lists contribute no filters');
+}
+
+testRemoteLists()
+  .then(() => console.log('WildFire tests passed (' + engine.counts.network + ' network rules loaded from bundled list).'))
+  .catch(error => {
+    console.error(error);
+    process.exit(1);
+  });

@@ -43,7 +43,7 @@ if (!gecko || !gecko.id) errors.push('browser_specific_settings.gecko.id is requ
 if (!gecko || !gecko.data_collection_permissions) {
   errors.push('browser_specific_settings.gecko.data_collection_permissions is required');
 }
-['publicSuffix', 'webNavigation'].forEach(permission => {
+['alarms', 'publicSuffix', 'webNavigation'].forEach(permission => {
   if (!Array.isArray(manifest.permissions) || !manifest.permissions.includes(permission)) {
     errors.push('permissions must include "' + permission + '"');
   }

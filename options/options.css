@@ -75,3 +75,8 @@ input { max-width: 260px; }
   font-size: 12px;
 }
 .sites .empty { color: #6d7482; border-bottom: 0; }
+.sites .list-item { flex-direction: column; align-items: stretch; gap: 4px; }
+.sites .list-row { display: flex; justify-content: space-between; gap: 12px; }
+.sites .list-url { overflow-wrap: anywhere; }
+.sites .list-meta { color: #6d7482; font-size: 11px; white-space: nowrap; }
+.sites .list-actions { display: flex; flex-wrap: wrap; gap: 8px; }

@@ -25,6 +25,7 @@
   },
 
   "permissions": [
+    "alarms",
     "publicSuffix",
     "webRequest",
     "webRequestBlocking",
@@ -40,6 +41,7 @@
       "lib/filter-engine.js",
       "lib/document-scope.js",
       "lib/redirect-resources.js",
+      "lib/remote-lists.js",
       "background.js"
     ],
     "persistent": true

@@ -22,6 +22,11 @@
 
   const engine = new FilterEngine(registrableDomain);
   const documentScope = new DocumentScope();
+  const remoteLists = RemoteLists.create({
+    storage: browser.storage.local,
+    fetchImpl: (url, options) => fetch(url, options),
+    now: () => Date.now()
+  });
   const blockedPopups = new Set();
   let state = Object.assign({}, WildFireStore.defaults);
   let flushTimer = null;
@@ -86,8 +91,43 @@
     } catch (error) {
       console.warn('WildFire: bundled filter list unavailable', error);
     }
-    engine.load(bundled + '\n' + (state.customFilters || ''));
+    // Bundled rules first, then the user's own rules, then opted-in remote
+    // lists. Exceptions still win regardless of where they were loaded.
+    let remote = '';
+    try {
+      remote = await remoteLists.enabledText();
+    } catch (error) {
+      console.warn('WildFire: remote list store unavailable', error);
+    }
+    engine.load(bundled + '\n' + (state.customFilters || '') + '\n' + remote);
     await refreshAllCosmetic();
+  }
+
+  async function syncRemoteAlarm() {
+    if (!browser.alarms) return;
+    const lists = (await remoteLists.get()).lists;
+    const needed = lists.some(entry => entry.autoUpdate && entry.enabled && entry.text);
+    if (!needed) {
+      await browser.alarms.clear('wildfire-remote-update');
+      return;
+    }
+    const existing = await browser.alarms.get('wildfire-remote-update');
+    if (!existing) {
+      await browser.alarms.create('wildfire-remote-update', { periodInMinutes: 1440 });
+    }
+  }
+
+  async function applyRemoteResult(result) {
+    if (!result.ok) {
+      return { ok: false, error: result.error, lists: result.snapshot.lists };
+    }
+    await loadFilters();
+    try {
+      await syncRemoteAlarm();
+    } catch (error) {
+      console.warn('WildFire: remote update schedule failed', error);
+    }
+    return Object.assign(snapshot(), { ok: true, lists: result.snapshot.lists });
   }
 
   async function sendCosmetic(tabId, url) {
@@ -194,6 +234,25 @@
         await loadFilters();
         return snapshot();
 
+      case 'list-state':
+        payload.lists = (await remoteLists.get()).lists;
+        return payload;
+
+      case 'add-list':
+        return applyRemoteResult(await remoteLists.add(message.url));
+
+      case 'remove-list':
+        return applyRemoteResult(await remoteLists.remove(message.url));
+
+      case 'update-list':
+        return applyRemoteResult(await remoteLists.update(message.url));
+
+      case 'set-list-enabled':
+        return applyRemoteResult(await remoteLists.setEnabled(message.url, Boolean(message.value)));
+
+      case 'set-list-auto':
+        return applyRemoteResult(await remoteLists.setAutoUpdate(message.url, Boolean(message.value)));
+
       case 'cosmetic': {
         const host = safeHost(message.url || (sender.tab && sender.tab.url) || '');
         return {
@@ -215,6 +274,11 @@
     try {
       state = await WildFireStore.get();
       await loadFilters();
+      try {
+        await syncRemoteAlarm();
+      } catch (error) {
+        console.warn('WildFire: remote update schedule failed', error);
+      }
 
       browser.webRequest.onBeforeRequest.addListener(
         onBeforeRequest,
@@ -223,6 +287,16 @@
       );
 
       browser.runtime.onMessage.addListener(onMessage);
+
+      if (browser.alarms && browser.alarms.onAlarm) {
+        browser.alarms.onAlarm.addListener(async alarm => {
+          if (alarm.name !== 'wildfire-remote-update') return;
+          const due = (await remoteLists.get()).lists
+            .filter(entry => entry.autoUpdate && entry.enabled && entry.text);
+          const results = await Promise.all(due.map(entry => remoteLists.update(entry.url)));
+          if (results.some(entry => entry.ok)) await loadFilters();
+        });
+      }
 
       browser.webNavigation.onCreatedNavigationTarget.addListener(onPopupNavigation);
       browser.webNavigation.onCommitted.addListener(details => documentScope.remember(details));

@@ -51,11 +51,12 @@ lib/filter-engine.js   filter parser + matcher (self-contained, no deps)
 lib/document-scope.js  documentId -> document URL cache for request scope
 lib/redirect-resources.js  WildFire-owned data-URI redirect resources
 lib/procedural.js      DOM-based procedural cosmetic evaluator (no browser APIs)
+lib/remote-lists.js    opt-in remote list store, key wildfire.remote.v1
 lib/store.js           browser.storage.local wrapper, key wildfire.state.v1
 content/cosmetic.js    injects hidden-element CSS in every frame
 filters/default.txt    bundled starter rules (~85 network rules)
 popup/                 toolbar popup (status, counter, pause controls)
-options/               custom filters, paused sites, stats reset
+options/               custom filters, paused sites, remote lists, stats reset
 assets/                generated PNG icons (16/32/48/96/128)
 tools/                 icon generator, validator, tests, XPI packager
 dist/                  generated XPI — ignored, never reviewed or committed
@@ -76,7 +77,8 @@ used **only** by `tools/`.
 2. `lib/filter-engine.js` → `window.FilterEngine`, `window.mapResourceType`
 3. `lib/document-scope.js` → `window.DocumentScope`
 4. `lib/redirect-resources.js` → `window.RedirectResources`
-5. `background.js` → the engine instance and all listeners
+5. `lib/remote-lists.js` → `window.RemoteLists`
+6. `background.js` → the engine instance and all listeners
 
 Content scripts load in this order: `lib/procedural.js` → `content/cosmetic.js`,
 so the DOM evaluator exists before the content script runs.
@@ -178,7 +180,9 @@ when a live rule actually depends on text. Filter text is never executed.
 Storage key `wildfire.state.v1` holds `{enabled, blocked, customFilters,
 disabledSites}`. `persist(patch)` merges into the in-memory copy and writes a
 **full snapshot** — do not write partial objects directly, or parallel message
-handlers will clobber unrelated fields.
+handlers will clobber unrelated fields. Storage key `wildfire.remote.v1` holds
+`{lists: [{url, enabled, autoUpdate, etag, lastModified, text, updatedAt, hash}]}`
+and is owned entirely by `lib/remote-lists.js`.
 
 Background listens for `wildfire:*` messages:
 
@@ -189,12 +193,29 @@ Background listens for `wildfire:*` messages:
 | `toggle-site` | add/remove a host in `disabledSites` |
 | `set-filters` | save custom filters, reload engine, refresh cosmetics |
 | `reset-stats` | zero the blocked counter |
-| `reload` | rebuild from bundled + custom filters |
+| `reload` | rebuild from bundled + custom + enabled remote filters |
+| `list-state` | return registered remote lists |
+| `add-list` | register an http(s) list URL, disabled and unfetched |
+| `remove-list` | forget a list and stop applying its rules |
+| `update-list` | explicitly fetch/revalidate one list |
+| `set-list-enabled` | apply or stop a fetched list |
+| `set-list-auto` | opt a fetched, enabled list into daily checks |
 | `cosmetic` | return selectors for a URL |
 
 `state`-only fields are not on other responses. The popup keeps the tab info
 it got from `state` and merges it into later responses (`applyResult`); keep
 that behavior when adding popup actions.
+
+Remote lists are strictly opt-in. No URL is bundled, `add-list` never fetches,
+and a list cannot be enabled until an explicit `update-list` has stored text.
+`lib/remote-lists.js` fetches with `cache: 'no-store'`, a size cap and an
+`AbortController` timeout; a 304 keeps the stored text but refreshes the check
+time. The exact text and its hash are persisted so the applied rules are
+reproducible. `loadFilters()` composes bundled → custom → enabled remote text,
+and exceptions still win over blockers. Daily checks exist only for lists whose
+owner opted in via `set-list-auto`; the `alarms` permission supports that one
+named alarm. Because nothing is collected or sent about the user and no list is
+fetched before consent, `data_collection_permissions.required` stays `["none"]`.
 
 ---
 
@@ -218,7 +239,7 @@ that behavior when adding popup actions.
 | `||host^` domain anchors, subdomains | `$csp`, `$rewrite` |
 | `|url|` start/end anchors | `elemhide`, `generichide`, `ghide` |
 | `*` wildcards, `^` separator | other advanced selectors |
-| `@@` exceptions | remote list fetching / auto-update |
+| `@@` exceptions | full EasyList-scale list curation |
 | `$script`, `$image`, `$~type`, other resource types | `domain=` with wildcard `.*` patterns |
 | `$third-party`, `$~third-party` | full EasyList-scale performance tuning |
 | `$domain=a\|~b` (`from=` alias) | |
@@ -312,17 +333,18 @@ cosmetic hiding.
 These are the natural WildFire-native growth paths, in roughly this order.
 Each one must be written from scratch and land with tests:
 
-1. More procedural cosmetics implemented with DOM code owned by
-   `content/cosmetic.js`, never by injecting arbitrary script from a filter.
-2. Optional remote lists with a deterministic update store and user consent —
-   keeping the "no data collection" manifest declaration truthful.
+1. `$csp` response-header filtering with a curated WildFire-owned directive
+   set, implemented on `webRequest.onHeadersReceived`.
+2. A curated, WildFire-owned scriptlet alias registry — never filter-supplied
+   script — for sites that detect blockers.
 
 Already implemented and tested: Firefox-native registrable-domain scoping
 (`publicSuffix`), `documentId`-keyed request scope, the 4-character token index,
 safe regex filters, wider resource types with `$document`/`$popup`, a
-from-scratch redirect engine with WildFire-owned data-URI resources, and
-DOM-based procedural cosmetic selectors (including native-CSS compilation,
-`:contains()`, and `:nth-ancestor()`).
+from-scratch redirect engine with WildFire-owned data-URI resources, DOM-based
+procedural cosmetic selectors (including native-CSS compilation, `:contains()`,
+and `:nth-ancestor()`), and opt-in remote lists with a deterministic update
+store and user consent.
 
 Do not start a later item while an earlier one is only half-implemented. A
 small, correct, fully tested engine is the product.
