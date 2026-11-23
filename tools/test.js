@@ -14,7 +14,10 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/filter-engine.js'), 'utf8')
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/document-scope.js'), 'utf8'), context, {
   filename: 'document-scope.js'
 });
-const { FilterEngine, mapResourceType, DocumentScope } = context;
+vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/redirect-resources.js'), 'utf8'), context, {
+  filename: 'redirect-resources.js'
+});
+const { FilterEngine, mapResourceType, DocumentScope, RedirectResources } = context;
 
 const engine = new FilterEngine();
 engine.load([
@@ -274,6 +277,85 @@ plainEngine.load('example.net*track');
 assert.strictEqual(
   plainEngine.matchRequest('https://example.net/landing', mapResourceType('main_frame'), '').blocked,
   false, 'plain rules never block documents');
+
+// WildFire redirect engine: rules may only choose WildFire-owned data-URI
+// resources, never a URL supplied by the filter itself.
+assert.ok(RedirectResources.hasAlias('noopjs'), 'known redirect alias is registered');
+assert.ok(RedirectResources.hasAlias('NOOPJS'), 'alias lookup is case-insensitive');
+assert.strictEqual(RedirectResources.hasAlias('unknown'), false,
+  'unknown redirect alias is not registered');
+assert.strictEqual(RedirectResources.resolve('noopjs'),
+  'data:application/javascript;charset=utf-8,', 'noopjs resolves to an empty script');
+assert.ok(RedirectResources.resolve('1x1.gif').startsWith('data:image/gif;base64,'),
+  'image alias resolves to a bundled transparent pixel');
+assert.strictEqual(RedirectResources.resolve('missing'), '',
+  'unknown alias resolves to no redirect');
+assert.ok(RedirectResources.aliases.every(alias =>
+  RedirectResources.resolve(alias).startsWith('data:')),
+  'every registered resource is a data: URI');
+
+const redirectEngine = new FilterEngine();
+redirectEngine.load([
+  '||ads.example^$script,redirect=noopjs',
+  '||img.example^$image,redirect=1x1.gif',
+  '@@||keep.ads.example^$script',
+  '/track\\.example\\/pixel\\/([^/]+)\\.js/$script,redirect-rule=tagged.svg',
+  '||unknown.example^$script,redirect=missing'
+].join('\n'));
+
+// Mirrors the synchronous composition in background.onBeforeRequest.
+function redirectFor(result) {
+  return result.redirect
+    ? RedirectResources.resolve(result.redirect.alias, result.redirect.captures)
+    : '';
+}
+
+const scriptRedirect = redirectEngine.matchRequest(
+  'https://ads.example/app.js', mapResourceType('script'), '');
+assert.strictEqual(scriptRedirect.blocked, true, 'redirect rule still blocks the request');
+assert.strictEqual(scriptRedirect.redirect.alias, 'noopjs', 'redirect alias is parsed');
+assert.strictEqual(redirectFor(scriptRedirect), 'data:application/javascript;charset=utf-8,',
+  'noopjs redirect is served from WildFire resources');
+
+const imageRedirect = redirectEngine.matchRequest(
+  'https://img.example/pixel.png', mapResourceType('image'), '');
+assert.strictEqual(imageRedirect.blocked, true, 'image redirect rule matches');
+assert.ok(redirectFor(imageRedirect).startsWith('data:image/gif;base64,'),
+  'image redirect serves a local transparent pixel');
+
+assert.strictEqual(redirectEngine.matchRequest(
+  'https://ads.example/app.js', mapResourceType('image'), '').blocked, false,
+  'redirect rule respects type options');
+assert.strictEqual(redirectEngine.matchRequest(
+  'https://ads.example/landing', mapResourceType('main_frame'), '').blocked, false,
+  'redirect rules do not block documents');
+
+const exceptedRedirect = redirectEngine.matchRequest(
+  'https://keep.ads.example/app.js', mapResourceType('script'), '');
+assert.strictEqual(exceptedRedirect.blocked, false, 'exception still wins over a redirect rule');
+assert.strictEqual(exceptedRedirect.redirect, null, 'exceptions carry no redirect');
+
+const ruleRedirect = redirectEngine.matchRequest(
+  'https://track.example/pixel/hello-world.js', mapResourceType('script'), '');
+assert.deepStrictEqual(Array.from(ruleRedirect.redirect.captures), ['hello-world'],
+  '$redirect-rule captures regex groups');
+assert.ok(redirectFor(ruleRedirect).includes('hello-world'),
+  'captures are substituted into the redirect resource');
+assert.ok(redirectFor(ruleRedirect).includes('%3Ctitle%3E'),
+  'template body stays a data: URI');
+
+const encodedRedirect = redirectEngine.matchRequest(
+  'https://track.example/pixel/a&b<c.js', mapResourceType('script'), '');
+assert.ok(redirectFor(encodedRedirect).includes('a%26b%3Cc'),
+  'captures are percent-encoded before substitution');
+assert.strictEqual(redirectFor(encodedRedirect).includes('&b<c'), false,
+  'a redirect capture cannot inject raw markup');
+
+const unknownRedirect = redirectEngine.matchRequest(
+  'https://unknown.example/x.js', mapResourceType('script'), '');
+assert.strictEqual(unknownRedirect.blocked, true, 'unknown-alias rule still blocks');
+assert.strictEqual(redirectFor(unknownRedirect), '',
+  'unknown alias falls back to a plain cancel');
 
 engine.load(fs.readFileSync(path.join(ROOT, 'filters/default.txt'), 'utf8'));
 assert.ok(engine.counts.network > 50, 'bundled list should contain network rules');

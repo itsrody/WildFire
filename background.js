@@ -117,13 +117,21 @@
     const host = safeHost(documentUrl);
     if (siteDisabled(host)) return undefined;
 
-    const result = engine.matchRequest(details.url, mapResourceType(details.type), documentUrl);
+    const type = mapResourceType(details.type);
+    const result = engine.matchRequest(details.url, type, documentUrl);
     if (!result.blocked) return undefined;
+
+    // Only WildFire-owned data-URI resources can be served, and never for
+    // navigations. An unknown alias falls back to a plain cancel.
+    const redirectUrl = type !== 'document' && result.redirect &&
+      typeof RedirectResources !== 'undefined'
+      ? RedirectResources.resolve(result.redirect.alias, result.redirect.captures)
+      : '';
 
     state.blocked = (state.blocked || 0) + 1;
     updateBadge();
     scheduleFlush();
-    return { cancel: true };
+    return redirectUrl ? { redirectUrl } : { cancel: true };
   }
 
   function onPopupNavigation(details) {

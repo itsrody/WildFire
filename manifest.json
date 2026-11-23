@@ -39,6 +39,7 @@
       "lib/store.js",
       "lib/filter-engine.js",
       "lib/document-scope.js",
+      "lib/redirect-resources.js",
       "background.js"
     ],
     "persistent": true

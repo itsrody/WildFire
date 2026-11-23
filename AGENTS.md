@@ -49,6 +49,7 @@ manifest.json          MV2 manifest; gecko floor 153.0; all permissions
 background.js          blocking listener, counters/badge, message API
 lib/filter-engine.js   filter parser + matcher (self-contained, no deps)
 lib/document-scope.js  documentId -> document URL cache for request scope
+lib/redirect-resources.js  WildFire-owned data-URI redirect resources
 lib/store.js           browser.storage.local wrapper, key wildfire.state.v1
 content/cosmetic.js    injects hidden-element CSS in every frame
 filters/default.txt    bundled starter rules (~85 network rules)
@@ -73,7 +74,8 @@ used **only** by `tools/`.
 1. `lib/store.js` → `window.WildFireStore`
 2. `lib/filter-engine.js` → `window.FilterEngine`, `window.mapResourceType`
 3. `lib/document-scope.js` → `window.DocumentScope`
-4. `background.js` → the engine instance and all listeners
+4. `lib/redirect-resources.js` → `window.RedirectResources`
+5. `background.js` → the engine instance and all listeners
 
 Libraries export by attaching to `this` (the window/global in a classic
 script). Keep that pattern; do not introduce imports, `export`, or a module
@@ -93,7 +95,10 @@ graph without a deliberate redesign.
 - Map `details.type` through `mapResourceType`, then call
   `engine.matchRequest(url, type, documentUrl)`.
 - On a block: increment `state.blocked`, refresh the badge, schedule a
-  debounced stats save (1.5 s), return `{cancel:true}`.
+  debounced stats save (1.5 s), return `{cancel:true}` — or `{redirectUrl}` when
+  the rule has `$redirect`/`$redirect-rule` and the alias resolves to a
+  WildFire-owned data-URI resource. Navigations are never redirected, and an
+  unknown alias falls back to a cancel.
 - Exceptions (`@@`) always win; the engine returns early on the first match.
 
 **Never make the blocking listener async.** Engine state lives in memory and
@@ -125,6 +130,13 @@ synchronous `browser.publicSuffix.getDomain()` (with IP, plain-suffix and
 unknown-suffix lookups enabled); the engine falls back to a last-two-label
 scope when no resolver is given or a lookup fails. Never call `browser.*`
 from `lib/filter-engine.js`.
+
+`matchRequest()` returns `redirect: {alias, captures}` when the winning rule
+carries `$redirect` or `$redirect-rule`. `RedirectResources.resolve()` is the
+only place redirect targets are defined: it serves WildFire-authored `data:`
+URIs, fills `{{1}}`–`{{9}}` placeholders from regex captures with
+percent-encoding, and returns `''` for unknown aliases so the listener falls
+back to a cancel. Filter text can never supply a redirect URL itself.
 
 `getCosmetic(host)` merges generic selectors with every parent-domain selector
 and subtracts applicable exceptions. `content/cosmetic.js` asks for them once
@@ -174,7 +186,7 @@ that behavior when adding popup actions.
 
 | Supported | Not supported (yet) |
 | --- | --- |
-| `||host^` domain anchors, subdomains | `$csp`, `$rewrite`, `$redirect` |
+| `||host^` domain anchors, subdomains | `$csp`, `$rewrite` |
 | `|url|` start/end anchors | `elemhide`, `generichide`, `ghide` |
 | `*` wildcards, `^` separator | `:has-text()`, `:matches-path()`, other procedural cosmetics |
 | `@@` exceptions | remote list fetching / auto-update |
@@ -182,6 +194,7 @@ that behavior when adding popup actions.
 | `$third-party`, `$~third-party` | full EasyList-scale performance tuning |
 | `$domain=a\|~b` (`from=` alias) | |
 | `$document`, `$popup` | |
+| `$redirect=alias`, `$redirect-rule=alias` | |
 | `/regex/` filters (`i`, `m`, `s`, `u` flags only) | |
 | `##selector`, `#@#selector` | |
 
@@ -190,6 +203,12 @@ quantifiers, excessive quantifier/group counts, long patterns and stateful
 flags (`g`, `y`, `d`) are rejected into `engine.rejectedRegex` and never reach
 the blocking listener. Regex rules bypass the token index and are evaluated on
 URLs up to 8192 characters.
+
+Redirect rules name an alias from `lib/redirect-resources.js`: `noopjs`,
+`noopcss`, `nooptext`, `noopjson`, `noophtml`, `1x1.gif`, `1x1.png`,
+`tagged.svg`. `$redirect-rule` uses regex captures to fill that resource's
+`{{1}}`–`{{9}}` placeholders; captures are percent-encoded before insertion.
+An unregistered alias cancels instead. No upstream resources are bundled.
 
 Add new syntax by extending `lib/filter-engine.js` **and** `tools/test.js` in
 the same change. `README.md` gets a syntax-table row when the feature is
@@ -259,7 +278,8 @@ Each one must be written from scratch and land with tests:
 
 Already implemented and tested: Firefox-native registrable-domain scoping
 (`publicSuffix`), `documentId`-keyed request scope, the 4-character token index,
-safe regex filters, and wider resource types with `$document`/`$popup`.
+safe regex filters, wider resource types with `$document`/`$popup`, and a
+from-scratch redirect engine with WildFire-owned data-URI resources.
 
 Do not start a later item while an earlier one is only half-implemented. A
 small, correct, fully tested engine is the product.
