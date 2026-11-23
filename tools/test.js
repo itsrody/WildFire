@@ -35,7 +35,13 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/scriptlets.js'), 'utf8'), c
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/rewrite-resources.js'), 'utf8'), context, {
   filename: 'rewrite-resources.js'
 });
-const { FilterEngine, mapResourceType, DocumentScope, RedirectResources, WildFireProcedural, RemoteLists, CspResources, WildFireScriptlets, RewriteResources } = context;
+vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/compile-cache.js'), 'utf8'), context, {
+  filename: 'compile-cache.js'
+});
+vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/compiler.js'), 'utf8'), context, {
+  filename: 'compiler.js'
+});
+const { FilterEngine, mapResourceType, DocumentScope, RedirectResources, WildFireProcedural, RemoteLists, CspResources, WildFireScriptlets, RewriteResources, WildFireCompileCache, WildFireCompiler } = context;
 
 const engine = new FilterEngine();
 engine.load([
@@ -1417,6 +1423,74 @@ assert.ok(engine.counts.cosmetic > 5, 'bundled list should contain cosmetic rule
 assert.strictEqual(blocked('https://securepubads.g.doubleclick.net/gampad/ads', 'script'), true,
   'bundled list blocks ads');
 
+async function testCompileCacheAndCompiler() {
+  function memoryStorage(initial) {
+    let data = Object.assign({}, initial);
+    return {
+      async get(key) { return { [key]: data[key] }; },
+      async set(patch) { data = Object.assign({}, data, patch); },
+      get data() { return data; }
+    };
+  }
+
+  const storage = memoryStorage({});
+  const cache = WildFireCompileCache.create({ browserApi: { storage: { local: storage } }, version: FilterEngine.COMPILED_VERSION });
+  const text = '||cache.example^';
+  const compiled = { v: FilterEngine.COMPILED_VERSION, n: [], c: { g: [], ge: [], d: [], de: [] }, p: { g: [], ge: [], d: [], de: [] }, s: [] };
+  await cache.set(text, compiled, { source: 'remote', hash: 'h' });
+  assert.deepStrictEqual(await cache.get(text), compiled, 'compile cache round-trips compiled data');
+
+  await cache.set(text, { v: 999, n: [] });
+  assert.deepStrictEqual(await cache.get(text), compiled, 'invalid compiled version is ignored');
+
+  const corruptStorage = memoryStorage({ 'wildfire.compiled.cache.v1': { [cache.keyFor('bad')]: { v: FilterEngine.COMPILED_VERSION, compiled: { v: FilterEngine.COMPILED_VERSION, n: 'bad' } } } });
+  const corruptCache = WildFireCompileCache.create({ browserApi: { storage: { local: corruptStorage } }, version: FilterEngine.COMPILED_VERSION });
+  assert.strictEqual(await corruptCache.get('bad'), null, 'corrupt compiled entry is rejected');
+
+  class FakeWorker {
+    constructor() { this.messages = []; this.terminated = false; }
+    postMessage(msg) {
+      this.messages.push(msg);
+      if (msg.type === 'ping') {
+        this.onmessage({ data: { id: msg.id, ok: true, type: 'pong' } });
+      }
+    }
+    terminate() { this.terminated = true; }
+  }
+
+  let worker = null;
+  const WorkerCtor = class extends FakeWorker { constructor() { super(); worker = this; } };
+  context.browser = { runtime: { getURL: p => p } };
+  const compiler = WildFireCompiler.create({ browserApi: context.browser, Worker: WorkerCtor });
+
+  const pending = compiler.compile('||worker.example^');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(worker.messages.length, 1, 'worker receives compile message');
+  const msg = worker.messages[0];
+  worker.onmessage({ data: { id: msg.id, ok: true, type: 'compiled', compiled, counts: { network: 1 } } });
+  const result = await pending;
+  assert.strictEqual(result.counts.network, 1, 'worker compile result resolves');
+
+  const ping = await compiler.ping();
+  assert.strictEqual(ping, true, 'worker ping responds');
+
+  const cancelPending = compiler.compile('||cancel.example^');
+  await new Promise(resolve => setImmediate(resolve));
+  const cancelMsg = worker.messages.slice().reverse().find(m => m.type === 'compile' && m.text === '||cancel.example^');
+  assert.ok(cancelMsg, 'cancel compile message sent');
+  const cancelResult = compiler.cancel(cancelMsg.id);
+  if (!cancelResult) {
+    console.error('debug cancel', { pending: compiler.pendingCount(), ids: worker.messages.map(m => m.id), types: worker.messages.map(m => m.type) });
+  }
+  assert.strictEqual(cancelResult, true, 'pending compile can be cancelled');
+  await assert.rejects(cancelPending, /cancelled/, 'cancelled compile rejects');
+
+  const oldWorker = worker;
+  compiler.restart('test');
+  assert.strictEqual(oldWorker.terminated, true, 'restart terminates old worker');
+  compiler.destroy();
+}
+
 async function testRemoteLists() {
   assert.strictEqual(RemoteLists.normalizeUrl('javascript:alert(1)'), '',
     'javascript URLs are rejected');
@@ -1558,7 +1632,9 @@ async function testRemoteLists() {
   assert.strictEqual(await remote.enabledText(), '', 'removed lists contribute no filters');
 }
 
-testRemoteLists()
+Promise.resolve()
+  .then(() => testCompileCacheAndCompiler())
+  .then(() => testRemoteLists())
   .then(() => console.log('WildFire tests passed (' + engine.counts.network + ' network rules loaded from bundled list).'))
   .catch(error => {
     console.error(error);
