@@ -1,0 +1,69 @@
+{
+  "manifest_version": 2,
+  "name": "WildFire",
+  "short_name": "WildFire",
+  "version": "0.1.0",
+  "description": "A minimal uBO-style content blocker built from scratch for Firefox 153+ (ESR).",
+  "homepage_url": "https://github.com/",
+
+  "icons": {
+    "16": "assets/icon-16.png",
+    "32": "assets/icon-32.png",
+    "48": "assets/icon-48.png",
+    "96": "assets/icon-96.png",
+    "128": "assets/icon-128.png"
+  },
+
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "wildfire@wildfire.local",
+      "strict_min_version": "153.0",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
+    }
+  },
+
+  "permissions": [
+    "webRequest",
+    "webRequestBlocking",
+    "storage",
+    "tabs",
+    "<all_urls>"
+  ],
+
+  "background": {
+    "scripts": [
+      "lib/store.js",
+      "lib/filter-engine.js",
+      "background.js"
+    ],
+    "persistent": true
+  },
+
+  "browser_action": {
+    "default_title": "WildFire",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "assets/icon-16.png",
+      "32": "assets/icon-32.png",
+      "48": "assets/icon-48.png"
+    }
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/cosmetic.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
+
+  "incognito": "spanning"
+}

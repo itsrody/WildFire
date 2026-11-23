@@ -1,0 +1,111 @@
+/* Package the extension into an unsigned Firefox XPI (a plain ZIP archive). */
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+const zlib = require('zlib');
+const { execFileSync } = require('child_process');
+
+const ROOT = path.resolve(__dirname, '..');
+const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'tools']);
+const SKIP_FILES = new Set(['.DS_Store', '.gitignore', 'package-lock.json']);
+
+function crc32(buffer) {
+  let crc = ~0;
+  for (let i = 0; i < buffer.length; i++) {
+    crc ^= buffer[i];
+    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (0xEDB88320 & -(crc & 1));
+  }
+  return (~crc) >>> 0;
+}
+
+function dosTime(date) {
+  return ((date.getHours() & 31) << 11) | ((date.getMinutes() & 63) << 5) | ((date.getSeconds() / 2) & 31);
+}
+
+function dosDate(date) {
+  return (((date.getFullYear() - 1980) & 127) << 9) | (((date.getMonth() + 1) & 15) << 5) | (date.getDate() & 31);
+}
+
+function createZip(entries) {
+  const locals = [];
+  const centrals = [];
+  const time = dosTime(new Date());
+  const date = dosDate(new Date());
+  let offset = 0;
+
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name, 'utf8');
+    const compressed = zlib.deflateRawSync(entry.data, { level: 9 });
+    const checksum = crc32(entry.data);
+
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0x0800, 6); // UTF-8 filenames
+    local.writeUInt16LE(8, 8); // deflate
+    local.writeUInt16LE(time, 10);
+    local.writeUInt16LE(date, 12);
+    local.writeUInt32LE(checksum, 14);
+    local.writeUInt32LE(compressed.length, 18);
+    local.writeUInt32LE(entry.data.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    local.writeUInt16LE(0, 28);
+    locals.push(local, name, compressed);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0x0800, 8);
+    central.writeUInt16LE(8, 10);
+    central.writeUInt16LE(time, 12);
+    central.writeUInt16LE(date, 14);
+    central.writeUInt32LE(checksum, 16);
+    central.writeUInt32LE(compressed.length, 20);
+    central.writeUInt32LE(entry.data.length, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt32LE(offset, 42);
+    centrals.push(central, name);
+
+    offset += local.length + name.length + compressed.length;
+  }
+
+  const centralDirectory = Buffer.concat(centrals);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(centralDirectory.length, 12);
+  end.writeUInt32LE(offset, 16);
+
+  return Buffer.concat([...locals, centralDirectory, end]);
+}
+
+function walk(directory, base, output) {
+  for (const item of fs.readdirSync(directory, { withFileTypes: true })) {
+    const full = path.join(directory, item.name);
+    const relative = base ? base + '/' + item.name : item.name;
+    if (item.isDirectory()) {
+      if (!SKIP_DIRS.has(item.name)) walk(full, relative, output);
+    } else if (item.isFile() && !SKIP_FILES.has(item.name) && !item.name.endsWith('.md')) {
+      output.push({ name: relative, data: fs.readFileSync(full) });
+    }
+  }
+}
+
+execFileSync(process.execPath, [path.join(__dirname, 'check.js')], { stdio: 'inherit' });
+
+const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'));
+const entries = [];
+walk(ROOT, '', entries);
+entries.sort((a, b) => a.name.localeCompare(b.name));
+
+const dist = path.join(ROOT, 'dist');
+fs.mkdirSync(dist, { recursive: true });
+const minVersion = manifest.browser_specific_settings.gecko.strict_min_version;
+const output = path.join(dist, `wildfire-${manifest.version}-firefox-${minVersion}.xpi`);
+fs.writeFileSync(output, createZip(entries));
+
+console.log('Built ' + path.relative(ROOT, output) +
+  ' (' + entries.length + ' files, ' + (fs.statSync(output).size / 1024).toFixed(1) + ' KB)');

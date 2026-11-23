@@ -1,0 +1,77 @@
+:root {
+  color-scheme: dark;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 32px 20px 60px;
+  background: #16181d;
+  color: #eef0f4;
+  line-height: 1.5;
+}
+
+.header { display: flex; align-items: center; gap: 14px; margin-bottom: 24px; }
+.header img { width: 48px; height: 48px; }
+.header h1 { margin: 0; font-size: 22px; }
+.header p { margin: 2px 0 0; color: #9aa2b1; font-size: 13px; }
+
+.card {
+  margin-bottom: 18px;
+  padding: 20px;
+  border: 1px solid #2c3038;
+  border-radius: 12px;
+  background: #1c1f26;
+}
+.card h2 { margin: 0 0 6px; font-size: 16px; }
+.hint { margin: 0 0 12px; color: #9aa2b1; font-size: 12px; }
+code { padding: 1px 4px; border-radius: 3px; background: #2a2e37; color: #ffb084; font-size: 11px; }
+
+textarea, input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #3a3f49;
+  border-radius: 7px;
+  background: #121419;
+  color: #eef0f4;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+textarea { resize: vertical; }
+input { max-width: 260px; }
+
+.actions { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.button {
+  padding: 8px 14px;
+  border: 1px solid #3a3f49;
+  border-radius: 7px;
+  background: #242831;
+  color: #eef0f4;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.button:hover { background: #2d323d; }
+.button.primary { border-color: #e2511d; background: #e2511d; color: #fff; font-weight: 600; }
+.button.primary:hover { background: #f0602b; }
+.status { color: #8bd48a; font-size: 12px; }
+
+.sites { margin: 0; padding: 0; list-style: none; }
+.sites li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid #272b33;
+  font-size: 13px;
+}
+.sites button {
+  border: 0;
+  background: none;
+  color: #ff8a4c;
+  cursor: pointer;
+  font-size: 12px;
+}
+.sites .empty { color: #6d7482; border-bottom: 0; }

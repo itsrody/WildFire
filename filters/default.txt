@@ -1,0 +1,117 @@
+! WildFire default filter list
+! ---------------------------
+! Syntax supported by this build:
+!   ||domain.tld^               block domain and its subdomains
+!   |https://example.com/ad|    exact start/end anchored URL
+!   example.org*banner.gif      wildcard URL match
+!   @@||domain.tld^             exception (allow)
+!   domain.tld##.ad             hide matching elements
+!   domain.tld#@#.ad            keep matching elements
+! Add your own rules in Options. Lines starting with ! are comments.
+
+! --- Ad delivery ---
+||doubleclick.net^
+||googlesyndication.com^
+||googleadservices.com^
+||adservice.google.com^
+||adnxs.com^
+||adsrvr.org^
+||amazon-adsystem.com^
+||ad-tracking.net^
+||adcolony.com^
+||addthis.com^
+||adform.net^
+||adjoint.com^
+||admarvel.com^
+||adrevolver.com^
+||adsafeprotected.com^
+||adsense2.com^
+||adtech.de^
+||adthrive.com^
+||adtilt.com^
+||advertising.com^
+||ad.yieldmanager.com^
+||yieldmo.com^
+||casalemedia.com^
+||criteo.com^
+||criteo.net^
+||exoclick.com^
+||foxadexchange.com^
+||honestads.com^
+||inmobi.com^
+||lucerneads.com^
+||media.net^
+||moatads.com^
+||openx.net^
+||outbrain.com^
+||pubmatic.com^
+||pulsepoint.com^
+||rubiconproject.com^
+||smaato.com^
+||smartadserver.com^
+||sonobi.com^
+||sovrn.com^
+||taboola.com^
+||teads.tv^
+||triplelift.com^
+||vungle.com^
+||xandr.com^
+
+! --- Analytics / tracking ---
+||google-analytics.com^
+||googletagmanager.com^
+||analytics.google.com^
+||scorecardresearch.com^
+||quantserve.com^
+||chartbeat.net^
+||newrelic.com^
+||nr-data.net^
+||hotjar.com^
+||mixpanel.com^
+||segment.io^
+||segment.com^
+||branch.io^
+||clarity.ms^
+||bat.bing.com^
+||facebook.net^
+||connect.facebook.net^
+||static.ads-twitter.com^
+||analytics.tiktok.com^
+||an.yandex.ru^
+||mc.yandex.ru^
+||yandex.st^
+||pixel.quantserve.com^
+||demandbase.com^
+||bluekai.com^
+||krxd.net^
+||agkn.com^
+||w55c.net^
+||bidswitch.net^
+||adobedc.net^
+||demdex.net^
+||everesttech.net^
+||dwin1.com^
+||mathtag.com^
+||reson8.com^
+||rlcdn.com^
+
+! --- Known ad script paths ---
+||/ads/bytag.js
+||/ads.js
+||pagead2.googlesyndication.com^
+
+! --- Generic cosmetic rules ---
+##.adsbygoogle
+##.ad-container
+##.ad-wrapper
+##.ad-banner
+##.ad-slot
+##.advertisement
+##.ad-placeholder
+##[id^="ad-"]
+##[class*="advertisement"]
+
+! --- Examples (uncomment to try) ---
+! example.com##.promo-banner
+! example.com#@#.promo-banner
+! @@||example.com^$image

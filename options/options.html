@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WildFire options</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <header class="header">
+    <img src="../assets/icon-48.png" alt="">
+    <div>
+      <h1>WildFire options</h1>
+      <p>Minimal uBO-style blocking for Firefox 153+ (ESR).</p>
+    </div>
+  </header>
+
+  <section class="card">
+    <h2>Custom filters</h2>
+    <p class="hint">One rule per line. Supports <code>||domain^</code>, <code>@@</code> exceptions, <code>$domain=</code>, <code>$script</code>, <code>$third-party</code>, and <code>##selector</code> hiding.</p>
+    <textarea id="filters" spellcheck="false" rows="14" placeholder="||ads.example.com^&#10;example.org##.banner"></textarea>
+    <div class="actions">
+      <button id="save" class="button primary" type="button">Save &amp; reload</button>
+      <span id="filter-status" class="status" role="status"></span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Paused sites</h2>
+    <p class="hint">Blocking is skipped on these hosts.</p>
+    <ul id="sites" class="sites"></ul>
+    <form id="site-form" class="actions">
+      <input id="site-input" type="text" placeholder="example.com" autocomplete="off" spellcheck="false">
+      <button class="button" type="submit">Add site</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Statistics</h2>
+    <p id="stats-text" class="hint">Loading…</p>
+    <button id="reset" class="button" type="button">Reset blocked counter</button>
+  </section>
+
+  <script src="options.js"></script>
+</body>
+</html>

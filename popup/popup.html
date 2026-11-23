@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WildFire</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="header">
+    <img class="logo" src="../assets/icon-48.png" alt="">
+    <div>
+      <h1>WildFire</h1>
+      <p id="status" class="status">Loading…</p>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div id="count" class="count">0</div>
+    <div class="count-label">requests blocked</div>
+  </section>
+
+  <dl class="stats">
+    <div><dt>Network rules</dt><dd id="network-count">–</dd></div>
+    <div><dt>Cosmetic rules</dt><dd id="cosmetic-count">–</dd></div>
+    <div><dt>Exceptions</dt><dd id="exception-count">–</dd></div>
+  </dl>
+
+  <main class="actions">
+    <button id="toggle" class="button primary" type="button">Pause blocking</button>
+    <button id="site" class="button" type="button">Pause on this site</button>
+    <div class="row">
+      <button id="reload" class="button small" type="button">Reload filters</button>
+      <button id="options" class="button small" type="button">Options</button>
+    </div>
+  </main>
+
+  <footer class="footer">Firefox 153+ · built from scratch</footer>
+  <script src="popup.js"></script>
+</body>
+</html>
