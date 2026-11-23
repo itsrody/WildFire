@@ -37,7 +37,8 @@ const WAPI_FILES = [
   'lib/wapi/wapi-contexts.js',
   'lib/wapi/wapi-background.js',
   'lib/wapi/wapi-router.js',
-  'lib/wapi/wapi-tabs.js'
+  'lib/wapi/wapi-tabs.js',
+  'lib/wapi/wapi-webrequest.js'
 ];
 const BACKGROUND_CHAIN = [
   'lib/background/helpers.js',
@@ -90,6 +91,13 @@ if (manifest.background && manifest.background.scripts) {
   if (backgroundScripts[backgroundScripts.length - 1] !== 'background.js') {
     errors.push('background.js must be the final background script');
   }
+  const rawBackend = /browserApi\.(?:webRequest|webNavigation|tabs)\b|\bwapi\.webRequest\b/;
+  BACKGROUND_CHAIN.forEach(file => {
+    const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    if (rawBackend.test(source)) {
+      errors.push(file + ' must use wapi-webrequest/wapi-tabs for native events');
+    }
+  });
 }
 if (manifest.content_scripts) {
   manifest.content_scripts.forEach(entry => {

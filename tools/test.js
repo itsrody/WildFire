@@ -46,7 +46,8 @@ const WAPI_FILES = [
   'lib/wapi/wapi-contexts.js',
   'lib/wapi/wapi-background.js',
   'lib/wapi/wapi-router.js',
-  'lib/wapi/wapi-tabs.js'
+  'lib/wapi/wapi-tabs.js',
+  'lib/wapi/wapi-webrequest.js'
 ];
 const BACKGROUND_FILES = [
   'lib/background/helpers.js',
@@ -98,7 +99,7 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/compile/compiler.js'), 'utf
 loadFiles(context, [...WAPI_FILES, ...BACKGROUND_FILES]);
 const { FilterEngine, mapResourceType, WildFirePageStore, RedirectResources, WildFireProcedural, RemoteLists, WildFireSuggestedLists, CspResources, WildFireScriptlets, RewriteResources, WildFireCompileCache, WildFireCompiler, WildFireStore, WildFireBackground, WildFireWapi, wapi, WildFireWapiContexts, wapiContexts,
   WildFireWapiBackground, wapiBackground, WildFireWapiRouter, wapiRouter,
-  WildFireWapiTabs, wapiTabs } = context;
+  WildFireWapiTabs, wapiTabs, WildFireWapiWebRequest, wapiWebRequest } = context;
 
 const engine = new FilterEngine();
 engine.load([
@@ -3753,6 +3754,141 @@ async function testWapiTabs() {
     'required tab events are validated at registration');
 }
 
+async function testWapiWebRequest() {
+  assert.strictEqual(wapiWebRequest, WildFireWapiWebRequest,
+    'wapi-webrequest is exposed as a canonical backbone module');
+  const hub = () => {
+    const listeners = [];
+    const registrations = [];
+    return {
+      listeners,
+      registrations,
+      addListener(listener, filter, extra) {
+        listeners.push(listener);
+        registrations.push({ filter, extra });
+      },
+      removeListener(listener) {
+        const index = listeners.indexOf(listener);
+        if (index !== -1) listeners.splice(index, 1);
+      }
+    };
+  };
+  const events = {
+    onBeforeRequest: hub(),
+    onCompleted: hub(),
+    onErrorOccurred: hub(),
+    onBeforeRedirect: hub(),
+    onHeadersReceived: hub(),
+    onBeforeSendHeaders: hub()
+  };
+  const makeFilter = () => {
+    const writes = [];
+    return {
+      writes,
+      closed: 0,
+      disconnected: 0,
+      write(bytes) { writes.push(bytes); },
+      close() { this.closed += 1; },
+      disconnect() { this.disconnected += 1; }
+    };
+  };
+  let filter = makeFilter();
+  const browserApi = {
+    webRequest: Object.assign(events, {
+      filterResponseData: () => filter
+    })
+  };
+  const wapiStub = WildFireWapi.create({ browserApi });
+
+  const seen = [];
+  const handlers = {
+    beforeRequest: () => seen.push('before'),
+    cspReport: () => seen.push('csp'),
+    completed: () => seen.push('completed'),
+    error: () => seen.push('error'),
+    redirect: () => seen.push('redirect')
+  };
+  const adapter = WildFireWapiWebRequest.create({ wapi: wapiStub, handlers });
+  assert.strictEqual(adapter.registered, false, 'webRequest listeners are inert before register()');
+  assert.strictEqual(adapter.validate(), true, 'required events are checked up front');
+  assert.strictEqual(adapter.register(), true);
+  assert.strictEqual(adapter.register(), false, 'register() is idempotent');
+  assert.strictEqual(events.onBeforeRequest.listeners.length, 2);
+  assert.strictEqual(events.onBeforeRequest.registrations[0].extra.join(','), 'blocking');
+  assert.strictEqual(events.onBeforeRequest.registrations[1].filter.types.join(','), 'csp_report');
+  assert.strictEqual(adapter.names().length, 7);
+
+  events.onBeforeRequest.listeners[0]({ requestId: 'r1' });
+  events.onBeforeRequest.listeners[1]({ requestId: 'r1' });
+  events.onCompleted.listeners[0]({ requestId: 'r1' });
+  events.onErrorOccurred.listeners[0]({ requestId: 'r1' });
+  events.onBeforeRedirect.listeners[0]({ requestId: 'r1' });
+  assert.strictEqual(seen.join(','), 'before,csp,completed,error,redirect');
+
+  const headerHandler = () => {};
+  assert.strictEqual(adapter.headers(true, headerHandler), true);
+  assert.strictEqual(events.onHeadersReceived.listeners.length, 1);
+  assert.strictEqual(events.onHeadersReceived.registrations[0].extra.join(','),
+    'blocking,responseHeaders');
+  assert.strictEqual(adapter.headers(false), true);
+  assert.strictEqual(events.onHeadersReceived.listeners.length, 0);
+  assert.strictEqual(adapter.sendHeaders(true, headerHandler), true);
+  assert.strictEqual(events.onBeforeSendHeaders.registrations[0].extra.join(','),
+    'blocking,requestHeaders');
+  assert.strictEqual(adapter.sendHeaders(false), true);
+  assert.strictEqual(events.onBeforeSendHeaders.listeners.length, 0);
+
+  const started = [];
+  const finished = [];
+  const filterErrors = [];
+  const writeErrors = [];
+  const hooks = {
+    onStart: id => started.push(id),
+    onFinish: id => finished.push(id),
+    onFilterError: error => filterErrors.push(error),
+    onWriteError: error => writeErrors.push(error)
+  };
+  const resource = { type: 'script', bytes: Uint8Array.of(1, 2, 3) };
+  assert.strictEqual(adapter.rewrite('r2', resource, hooks), true);
+  assert.deepStrictEqual(started, ['r2']);
+  filter.ondata();
+  assert.strictEqual(filter.writes.length, 0, 'original chunks are dropped');
+  filter.onstop();
+  assert.strictEqual(filter.writes[0], resource.bytes, 'curated bytes are written once');
+  assert.strictEqual(filter.closed, 1);
+  assert.deepStrictEqual(finished, ['r2']);
+  filter.onstop();
+  assert.strictEqual(finished.length, 1, 'stream completion is idempotent');
+
+  filter = makeFilter();
+  filter.write = () => { throw new Error('write failed'); };
+  assert.strictEqual(adapter.rewrite('r3', resource, hooks), true);
+  filter.onstop();
+  assert.strictEqual(writeErrors.length, 1);
+  assert.strictEqual(filter.disconnected, 1);
+  assert.strictEqual(finished.length, 2);
+
+  filter = makeFilter();
+  assert.strictEqual(adapter.rewrite('r4', resource, hooks), true);
+  filter.onerror();
+  assert.strictEqual(filter.disconnected, 1);
+  assert.strictEqual(finished.length, 3);
+
+  browserApi.webRequest.filterResponseData = () => { throw new Error('filter failed'); };
+  assert.strictEqual(adapter.rewrite('r5', resource, hooks), false);
+  assert.strictEqual(filterErrors.length, 1);
+
+  assert.strictEqual(adapter.unregister(), true);
+  assert.strictEqual(adapter.registered, false);
+  assert.strictEqual(events.onBeforeRequest.listeners.length, 0);
+  assert.strictEqual(events.onCompleted.listeners.length, 0);
+
+  const missingWapi = WildFireWapi.create({ browserApi: {} });
+  const missing = WildFireWapiWebRequest.create({ wapi: missingWapi });
+  assert.throws(() => missing.validate(), /Missing required browser API/,
+    'required webRequest events are validated at registration');
+}
+
 async function testWapiContexts() {
   const sent = [];
   const wapiStub = {
@@ -3927,6 +4063,8 @@ async function testBackgroundControllerRobustness() {
       'unknown actions keep the existing error shape');
     assert.strictEqual(healthy.debug().wapiTabs.registered, true,
       'startup registers the native tab adapter');
+    assert.strictEqual(healthy.debug().wapiWebRequest.registered, true,
+      'startup registers the native webRequest adapter');
 
     let unregistered = 0;
     const previous = { unregister: async () => { unregistered += 1; } };
@@ -3983,6 +4121,7 @@ Promise.resolve()
   .then(() => testWapiBackground())
   .then(() => testWapiRouter())
   .then(() => testWapiTabs())
+  .then(() => testWapiWebRequest())
   .then(() => testWapiContexts())
   .then(() => testBackgroundControllerRobustness())
   .then(() => testPopupPerSiteDisplay())
