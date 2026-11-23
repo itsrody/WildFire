@@ -269,8 +269,9 @@ This is deliberately a *minimal* engine, not a full uBO port:
   named `wildfire:*` handlers instead of a monolithic switch. `wapi-tabs` owns
   native tab/navigation events and feeds PageStore. `wapi-webrequest` owns native
   request, stream-filter and header-listener plumbing. `wapi-action` wraps native
-  badge calls, and `wapi-capabilities` reports native API readiness. `wapi-client`
-  gives popup,
+  badge calls, `wapi-capabilities` reports native API readiness, and
+  `wapi-scripting` owns dynamic content-script registrations with atomic swaps.
+  `wapi-client` gives popup,
   options and content scripts one prefix-filtered message API with native port
   handles and a wrapped `tabs.query()` instead of scattered Firefox API calls.
   There is no Chrome shim or callback bridge.

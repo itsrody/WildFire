@@ -57,6 +57,7 @@ lib/
     wapi-webrequest.js native webRequest listener, stream and header plumbing
     wapi-action.js     native browserAction/badge plumbing
     wapi-capabilities.js readiness/capability surface for native Firefox APIs
+    wapi-scripting.js  dynamic content-script registration with atomic replacement
     wapi-client.js     client-side message API for extension pages and content scripts
   background/          background classic-script chain, load in order:
     helpers.js         counters/badge, snapshots, diagnostics and host helpers
@@ -149,9 +150,10 @@ used **only** by `tools/`.
 17. `lib/wapi/wapi-webrequest.js` → `window.WildFireWapiWebRequest` (aliased as `window.wapiWebRequest`)
 18. `lib/wapi/wapi-action.js` → `window.WildFireWapiAction` (aliased as `window.wapiAction`)
 19. `lib/wapi/wapi-capabilities.js` → `window.WildFireWapiCapabilities` (aliased as `window.wapiCapabilities`)
-20. `lib/background/` chain, in order: `helpers.js`, `engine-host.js`,
+20. `lib/wapi/wapi-scripting.js` → `window.WildFireWapiScripting` (aliased as `window.wapiScripting`)
+21. `lib/background/` chain, in order: `helpers.js`, `engine-host.js`,
     `requests.js`, `messages.js`, `background.js` → `window.WildFireBackground`
-21. `background.js` → calls `WildFireBackground.create(...).start()`
+22. `background.js` → calls `WildFireBackground.create(...).start()`
 
 `wapi.js` is WildFire's Firefox-native API backbone: named idempotent listener
 registration, one prefix-filtered message listener, and thin promise wrappers for
@@ -169,7 +171,10 @@ CSP and remove-header policy stays in `lib/background/requests.js`.
 formatting and tooltip policy. `wapi-capabilities.js` is the single readiness
 surface for `publicSuffix`, `alarms`, `contentScripts`, storage and the optional
 native bridge; policy that depends on those capabilities stays in the background
-chain. The background chain owns these modules; do not add a Chromium shim or
+chain. `wapi-scripting.js` owns named dynamic content-script registrations and
+their atomic replacement: a failed register keeps the previous working
+registration, and lifecycle cleanup goes through Firefox's registration handle.
+The background chain owns these modules; do not add a Chromium shim or
 callback bridge there.
 
 `wapi-client.js` is the matching client-side backbone: popup, options and content
@@ -306,15 +311,17 @@ never in `blocked` or `blockedBySite`. WildFire does not change Firefox ETP or
 native CSP preferences.
 
 `getScriptletPayload()` returns plain `{alias, args, domains, isException}`
-data. Background registers the `lib/resources/scriptlets/` module chain through
-Firefox's `browser.contentScripts.register()` at `document_start` with
-`['<all_urls>']`/all frames, as ordered `js: [{file: …}]` entries, and injects
-only a JSON payload through the final `code` step. The chain shares one internal
+data. Background registers the `lib/resources/scriptlets/` module chain at
+`document_start` with `['<all_urls>']`/all frames, as ordered `js: [{file: …}]`
+entries, and injects only a JSON payload through the final `code` step.
+`wapi-scripting.js` owns the Firefox `contentScripts.register()` handle and
+swaps the named registration atomically. The chain shares one internal
 namespace, `window.WildFireScriptletCore`; `api.js` publishes the public
 `window.WildFireScriptlets` API. Load order is pinned in the manifest, the
-`contentScripts.register()` call, the compiler worker's `importScripts`,
-`tools/test.js` (`SCRIPTLET_FILES`) and `tools/check.js` — keep all five in
-sync. There is no `eval`, no `Function`, and no filter-sourced script anywhere;
+registration details in `engine-host.js`, the compiler worker's
+`importScripts`, `tools/test.js` (`SCRIPTLET_FILES`) and `tools/check.js` — keep
+all five in sync. There is no `eval`, no `Function`, and no filter-sourced script
+anywhere;
 `WildFireScriptlets.apply()` revalidates every entry, resolves domains against
 `location.hostname`, and lets `#@#+js()` cancel the matching
 alias/arguments. Registrations are replaced whenever the engine reloads, and
@@ -660,7 +667,8 @@ procedural cosmetic selectors (including native-CSS compilation, `:contains()`,
 update store and user consent, curated `$csp` response-header filtering on
 Firefox's `onHeadersReceived`, fixed-mapping `$rewrite` response bodies through
 Firefox's `filterResponseData()` stream filter, and a scriptlet alias registry
-injected at `document_start` through Firefox's `contentScripts.register()`.
+injected at `document_start` through `wapi-scripting`'s Firefox
+`contentScripts.register()` lifecycle.
 Phase 1A, 1B and 1C are implemented: canonical short aliases, safe needles,
 property traps, eval/timer/event/window defusers, DOM/storage aliases,
 `json-prune` with wildcard paths, response transforms, JSONPath/edit aliases,

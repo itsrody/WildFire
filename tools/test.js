@@ -49,7 +49,8 @@ const WAPI_FILES = [
   'lib/wapi/wapi-tabs.js',
   'lib/wapi/wapi-webrequest.js',
   'lib/wapi/wapi-action.js',
-  'lib/wapi/wapi-capabilities.js'
+  'lib/wapi/wapi-capabilities.js',
+  'lib/wapi/wapi-scripting.js'
 ];
 const BACKGROUND_FILES = [
   'lib/background/helpers.js',
@@ -102,7 +103,8 @@ loadFiles(context, [...WAPI_FILES, ...BACKGROUND_FILES]);
 const { FilterEngine, mapResourceType, WildFirePageStore, RedirectResources, WildFireProcedural, RemoteLists, WildFireSuggestedLists, CspResources, WildFireScriptlets, RewriteResources, WildFireCompileCache, WildFireCompiler, WildFireStore, WildFireBackground, WildFireWapi, wapi, WildFireWapiContexts, wapiContexts,
   WildFireWapiBackground, wapiBackground, WildFireWapiRouter, wapiRouter,
   WildFireWapiTabs, wapiTabs, WildFireWapiWebRequest, wapiWebRequest,
-  WildFireWapiAction, wapiAction, WildFireWapiCapabilities, wapiCapabilities } = context;
+  WildFireWapiAction, wapiAction, WildFireWapiCapabilities, wapiCapabilities,
+  WildFireWapiScripting, wapiScripting } = context;
 
 const engine = new FilterEngine();
 engine.load([
@@ -3436,6 +3438,102 @@ async function testWapiBackbone() {
   await instance.ready;
 }
 
+async function testWapiScripting() {
+  assert.strictEqual(wapiScripting, WildFireWapiScripting,
+    'wapi-scripting is exposed as a canonical backbone module');
+  const makeDetails = () => ({
+    matches: ['<all_urls>'],
+    js: [{ file: 'lib/resources/scriptlets/api.js' }],
+    runAt: 'document_start',
+    allFrames: true
+  });
+  const registrations = [];
+  const unregistered = [];
+  const errors = [];
+  let failRegister = false;
+  let failUnregister = false;
+  let nextId = 0;
+  const browserApi = {
+    contentScripts: {
+      register: async options => {
+        if (failRegister) throw new Error('register failed');
+        const registration = { id: ++nextId, options };
+        registration.unregister = async () => {
+          if (failUnregister) throw new Error('unregister failed');
+          unregistered.push(registration);
+        };
+        registrations.push(registration);
+        return registration;
+      }
+    }
+  };
+  const wapiStub = WildFireWapi.create({ browserApi });
+  const scripting = WildFireWapiScripting.create({
+    wapi: wapiStub,
+    onError: error => errors.push(error)
+  });
+
+  assert.strictEqual(scripting.supported, true, 'scripting reports Firefox content script support');
+  const first = await scripting.register('scriptlets', makeDetails());
+  assert.strictEqual(first.id, 1);
+  assert.strictEqual(scripting.get('scriptlets'), first);
+  assert.strictEqual(scripting.has('scriptlets'), true);
+  assert.strictEqual(scripting.size(), 1);
+  assert.strictEqual(registrations[0].options.matches[0], '<all_urls>');
+
+  const sourceDetails = makeDetails();
+  await scripting.register('copy', sourceDetails);
+  sourceDetails.matches.push('https://changed.test/*');
+  assert.strictEqual(scripting.get('copy').options.matches.length, 1,
+    'registration details are copied before crossing the native boundary');
+
+  failRegister = true;
+  assert.strictEqual(await scripting.replace('scriptlets', makeDetails()), false);
+  assert.strictEqual(scripting.get('scriptlets'), first,
+    'a failed replace keeps the previous registration');
+  assert.strictEqual(unregistered.length, 0, 'a failed replace does not unregister anything');
+  assert.strictEqual(errors.length, 1);
+  failRegister = false;
+
+  const second = await scripting.register('scriptlets', makeDetails());
+  assert.strictEqual(second.id, 3);
+  assert.strictEqual(scripting.get('scriptlets'), second);
+  assert.strictEqual(unregistered[0], first, 'a successful replace closes the previous registration');
+
+  failUnregister = true;
+  const third = await scripting.register('scriptlets', makeDetails());
+  assert.strictEqual(scripting.get('scriptlets'), third,
+    'an unregister failure does not discard the replacement');
+  assert.strictEqual(errors.length, 2);
+  failUnregister = false;
+
+  assert.strictEqual(await scripting.clear('scriptlets'), true);
+  assert.strictEqual(scripting.get('scriptlets'), null);
+  assert.strictEqual(scripting.has('scriptlets'), false);
+  assert.strictEqual(await scripting.clear('missing'), false);
+
+  await scripting.register('a', makeDetails());
+  await scripting.register('b', makeDetails());
+  assert.strictEqual(scripting.keys().join(','), 'copy,a,b');
+  assert.strictEqual(await scripting.clearAll(), true);
+  assert.strictEqual(scripting.size(), 0);
+
+  const validationErrors = [];
+  const validator = WildFireWapiScripting.create({
+    wapi: wapiStub,
+    onError: error => validationErrors.push(error)
+  });
+  assert.strictEqual(await validator.register('x', {}), null);
+  assert.ok(/matches are required/.test(String(validationErrors[0])));
+  assert.strictEqual(await validator.register('x', { matches: ['<all_urls>'] }), null);
+  assert.ok(/js steps are required/.test(String(validationErrors[1])));
+
+  const unsupported = WildFireWapiScripting.create({ browserApi: {} });
+  assert.strictEqual(unsupported.supported, false);
+  assert.strictEqual(await unsupported.register('x', makeDetails()), null);
+  assert.strictEqual(await unsupported.replace('x', makeDetails()), false);
+}
+
 async function testWapiStorage() {
   const data = {};
   const storageCalls = [];
@@ -4249,6 +4347,8 @@ async function testBackgroundControllerRobustness() {
       'startup registers the native webRequest adapter');
     assert.strictEqual(healthy.debug().wapiAction.supported, true,
       'startup exposes the native action adapter');
+    assert.strictEqual(healthy.debug().wapiScripting, healthy.context.wapiScripting,
+      'startup exposes the native scripting adapter');
     const caps = healthy.debug().wapiCapabilities.snapshot();
     assert.strictEqual(caps.publicSuffix, true,
       'startup exposes the native domain capability');
@@ -4257,9 +4357,17 @@ async function testBackgroundControllerRobustness() {
     assert.strictEqual(caps.nativeBridge, false,
       'the optional native bridge stays unavailable when not supplied');
 
+    const previous = await healthy.context.wapiScripting.register('scriptlets', {
+      matches: ['<all_urls>'],
+      js: [{ code: '/* seed */' }]
+    });
+    assert.ok(previous, 'wapi-scripting owns the seeded scriptlet registration');
     let unregistered = 0;
-    const previous = { unregister: async () => { unregistered += 1; } };
-    healthy.context.scriptletRegistration = previous;
+    const nativeUnregister = previous.unregister;
+    previous.unregister = async () => {
+      unregistered += 1;
+      await nativeUnregister();
+    };
     healthy.context.engine.getScriptletPayload = () => [{
       alias: 'set-constant',
       args: ['foo', '1'],
@@ -4276,11 +4384,11 @@ async function testBackgroundControllerRobustness() {
       return next;
     };
     await healthy.context.syncScriptlets();
-    assert.strictEqual(healthy.context.scriptletRegistration, previous,
+    assert.strictEqual(healthy.context.wapiScripting.get('scriptlets'), previous,
       'a failed scriptlet swap keeps the previous registration');
     assert.strictEqual(unregistered, 0, 'the previous registration is not closed on failure');
     await healthy.context.syncScriptlets();
-    assert.strictEqual(healthy.context.scriptletRegistration, next,
+    assert.strictEqual(healthy.context.wapiScripting.get('scriptlets'), next,
       'a successful swap installs the new registration');
     assert.strictEqual(unregistered, 1, 'the previous registration is closed after success');
     const injectedCode = registered.js[registered.js.length - 1].code;
@@ -4316,6 +4424,7 @@ Promise.resolve()
   .then(() => testWapiWebRequest())
   .then(() => testWapiAction())
   .then(() => testWapiCapabilities())
+  .then(() => testWapiScripting())
   .then(() => testWapiContexts())
   .then(() => testBackgroundControllerRobustness())
   .then(() => testPopupPerSiteDisplay())

@@ -40,7 +40,8 @@ const WAPI_FILES = [
   'lib/wapi/wapi-tabs.js',
   'lib/wapi/wapi-webrequest.js',
   'lib/wapi/wapi-action.js',
-  'lib/wapi/wapi-capabilities.js'
+  'lib/wapi/wapi-capabilities.js',
+  'lib/wapi/wapi-scripting.js'
 ];
 const BACKGROUND_CHAIN = [
   'lib/background/helpers.js',

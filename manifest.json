@@ -72,6 +72,7 @@
       "lib/wapi/wapi-webrequest.js",
       "lib/wapi/wapi-action.js",
       "lib/wapi/wapi-capabilities.js",
+      "lib/wapi/wapi-scripting.js",
       "lib/background/helpers.js",
       "lib/background/engine-host.js",
       "lib/background/requests.js",
