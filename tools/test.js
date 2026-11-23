@@ -1423,6 +1423,169 @@ assert.ok(engine.counts.cosmetic > 5, 'bundled list should contain cosmetic rule
 assert.strictEqual(blocked('https://securepubads.g.doubleclick.net/gampad/ads', 'script'), true,
   'bundled list blocks ads');
 
+async function testBackgroundLoadFiltersIntegration() {
+  function memoryStorage(initial) {
+    let data = Object.assign({}, initial || {});
+    return {
+      async get(key) {
+        if (key === undefined) return Object.assign({}, data);
+        if (Array.isArray(key)) return key.reduce((acc, k) => { acc[k] = data[k]; return acc; }, {});
+        return { [key]: data[key] };
+      },
+      async set(patch) { data = Object.assign({}, data, patch || {}); },
+      async remove(key) {
+        const keys = Array.isArray(key) ? key : [key];
+        keys.forEach(k => { delete data[k]; });
+      }
+    };
+  }
+
+  const compileCalls = [];
+  const fakeCompiled = text => {
+    const e = new FilterEngine(null, () => '', null, () => false);
+    e.load(text);
+    return e.toCompiled();
+  };
+
+  class FakeWorker {
+    constructor() { this.messages = []; this.terminated = false; }
+    postMessage(msg) {
+      this.messages.push(msg);
+      if (msg.type === 'ping') {
+        this.onmessage({ data: { id: msg.id, ok: true, type: 'pong' } });
+        return;
+      }
+      if (msg.type === 'compile') {
+        setImmediate(() => {
+          if (this.terminated) return;
+          this.onmessage({ data: { id: msg.id, ok: true, type: 'compiled', compiled: fakeCompiled(msg.text), counts: {} } });
+        });
+      }
+    }
+    terminate() { this.terminated = true; }
+  }
+
+  const workers = [];
+  const WorkerCtor = class extends FakeWorker { constructor() { super(); workers.push(this); } };
+
+  const ctx = vm.createContext({
+    console, URL, setTimeout, clearTimeout, setImmediate, Promise,
+    Map, Set, Array, Object, String, RegExp, JSON, Math, Boolean, Number, Error,
+    TextEncoder, TextDecoder, Uint8Array, ArrayBuffer,
+    fetch: async url => {
+      const u = String(url);
+      if (u.includes('default.compiled.json')) return { ok: true, json: async () => fakeCompiled('||bundled.example^') };
+      if (u.includes('default.txt')) return { ok: true, text: async () => '||bundled.example^' };
+      return { ok: false, status: 404, json: async () => ({}), text: async () => '' };
+    }
+  });
+  ctx.globalThis = ctx;
+  ctx.window = ctx;
+  ctx.CSS = { supports: () => true };
+  ctx.location = { hostname: 'page.example' };
+  ctx.Worker = WorkerCtor;
+  ctx.indexedDB = undefined;
+  const storage = memoryStorage({});
+  ctx.browser = {
+    runtime: {
+      getURL: p => 'moz-extension://test/' + p,
+      onMessage: { addListener: () => {} }
+    },
+    storage: { local: storage },
+    browserAction: { setBadgeBackgroundColor: () => {}, setBadgeText: () => {} },
+    webRequest: {
+      onBeforeRequest: { addListener: () => {} },
+      onHeadersReceived: { addListener: () => {} },
+      onCompleted: { addListener: () => {} },
+      onErrorOccurred: { addListener: () => {} },
+      onBeforeRedirect: { addListener: () => {} },
+      filterResponseData: () => ({ ondata() {}, onstop() {}, onerror() {}, write() {}, close() {}, disconnect() {} })
+    },
+    webNavigation: {
+      onCreatedNavigationTarget: { addListener: () => {} },
+      onCommitted: { addListener: () => {} },
+      onReferenceFragmentUpdated: { addListener: () => {} },
+      onHistoryStateUpdated: { addListener: () => {} }
+    },
+    tabs: {
+      query: async () => [],
+      onUpdated: { addListener: () => {} },
+      onRemoved: { addListener: () => {} },
+      sendMessage: async () => {},
+      remove: async () => {}
+    },
+    alarms: { onAlarm: { addListener: () => {} }, clear: async () => {}, get: async () => null, create: async () => {} },
+    contentScripts: { register: async () => ({ unregister: async () => {} }) },
+    publicSuffix: { getDomain: host => host.split('.').slice(-2).join('.') }
+  };
+
+  [
+    'lib/store.js', 'lib/filter-engine.js', 'lib/document-scope.js', 'lib/redirect-resources.js',
+    'lib/remote-lists.js', 'lib/csp-resources.js', 'lib/scriptlets.js', 'lib/rewrite-resources.js',
+    'lib/compile-cache.js', 'lib/compiler.js'
+  ].forEach(f => vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f }));
+
+  const bgSource = fs.readFileSync(path.join(ROOT, 'background.js'), 'utf8')
+    .replace(/  init\(\);\n}\)\(\);\s*$/, '  globalThis.__wildfireTest = { loadFilters, engine, getState: () => state, setState: p => { state = Object.assign({}, state, p); }, remoteLists, compiler, compileCache }; init(); })();');
+  vm.runInContext(bgSource, ctx, { filename: 'background.js' });
+
+  // wait for init/load
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const api = ctx.__wildfireTest;
+  assert.ok(api, 'background test hook exposed');
+
+  // Instrument compiler to count actual compiles
+  const origCompile = api.compiler.compile.bind(api.compiler);
+  api.compiler.compile = async text => { compileCalls.push(String(text)); return origCompile(text); };
+
+  // Seed two remote lists
+  await api.remoteLists.save({
+    lists: [
+      { url: 'https://a.test/list.txt', enabled: true, text: '||a.example^', hash: 'ha', updatedAt: 1, checkedAt: 1 },
+      { url: 'https://b.test/list.txt', enabled: true, text: '||b.example^', hash: 'hb', updatedAt: 1, checkedAt: 1 }
+    ]
+  });
+  compileCalls.length = 0;
+  await api.loadFilters(true);
+  await new Promise(resolve => setTimeout(resolve, 30));
+
+  assert.strictEqual(api.engine.matchRequest('https://a.example/x.js', 'script', 'https://site.test/').blocked, true, 'remote A active');
+  assert.strictEqual(api.engine.matchRequest('https://b.example/x.js', 'script', 'https://site.test/').blocked, true, 'remote B active');
+  const callsAfterFirst = compileCalls.length;
+
+  // Unchanged reload should not recompile remote lists
+  compileCalls.length = 0;
+  await api.loadFilters(true);
+  await new Promise(resolve => setTimeout(resolve, 30));
+  const remoteRecompiles = compileCalls.filter(t => t.includes('wildfire remote:')).length;
+  assert.strictEqual(remoteRecompiles, 0, 'unchanged remote lists do not recompile');
+
+  // Change only list B
+  await api.remoteLists.save({
+    lists: [
+      { url: 'https://a.test/list.txt', enabled: true, text: '||a.example^', hash: 'ha', updatedAt: 1, checkedAt: 1 },
+      { url: 'https://b.test/list.txt', enabled: true, text: '||b.example^\n||b2.example^', hash: 'hb2', updatedAt: 2, checkedAt: 2 }
+    ]
+  });
+  compileCalls.length = 0;
+  await api.loadFilters();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  const changedCalls = compileCalls.filter(t => t.includes('wildfire remote:'));
+  assert.strictEqual(changedCalls.length, 1, 'only changed remote list recompiles');
+  assert.ok(changedCalls[0].includes('https://b.test/list.txt'), 'changed list B compiled');
+  assert.strictEqual(api.engine.matchRequest('https://b2.example/x.js', 'script', 'https://site.test/').blocked, true, 'changed rule active');
+
+  // Worker restart/fallback does not block activation
+  const origWarn = console.warn;
+  console.warn = () => {};
+  api.compiler.compile = async () => { throw new Error('worker hung'); };
+  api.setState({ customFilters: '||fallback.example^' });
+  await api.loadFilters(true);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  console.warn = origWarn;
+  assert.strictEqual(api.engine.matchRequest('https://fallback.example/x.js', 'script', 'https://site.test/').blocked, true, 'fallback compile activates rules');
+}
+
 async function testIncrementalRemoteCompileSemantics() {
   function memoryStorage(initial) {
     let data = Object.assign({}, initial);
@@ -1696,6 +1859,7 @@ async function testRemoteLists() {
 Promise.resolve()
   .then(() => testCompileCacheAndCompiler())
   .then(() => testIncrementalRemoteCompileSemantics())
+  .then(() => testBackgroundLoadFiltersIntegration())
   .then(() => testRemoteLists())
   .then(() => console.log('WildFire tests passed (' + engine.counts.network + ' network rules loaded from bundled list).'))
   .catch(error => {
