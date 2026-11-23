@@ -541,6 +541,9 @@ function stubNode(selector, text, children) {
     selector,
     textContent: text || '',
     childNodes: text ? [{ nodeType: 3, textContent: text }] : [],
+    matches: query => {
+      try { return typeof query === 'string' && query.split(',').map(s=>s.trim()).includes(selector); } catch (e) { return false; }
+    },
     querySelector: query => {
       const all = stubDescendants(list);
       return (query === '*' ? all[0] : all.find(item => item.selector === query)) || null;
@@ -681,6 +684,21 @@ assert.strictEqual(treeSelected(nestedNthRule)[0], targetNode,
   ':nth-ancestor works inside :has');
 assert.strictEqual(classify(containsRule, '/').mode, 'js', ':contains stays in the JS path');
 assert.strictEqual(classify(nthRule, '/').mode, 'js', ':nth-ancestor stays in the JS path');
+
+  const upEngine = new FilterEngine();
+  upEngine.load([
+    'example.com##.leaf:upward(2)',
+    'example.com##.leaf:upward(.target)',
+    'example.com##.bad:upward()'
+  ].join('\n'));
+  assert.strictEqual(upEngine.getProcedural('example.com').length, 2, 'upward(n) and upward(selector) parse');
+  assert.strictEqual(upEngine.rejectedCosmetic.length, 1, 'invalid upward rejected');
+  const upRule = upEngine.getProcedural('example.com').find(rule => rule.steps.some(step => step.op === 'upward' && step.selector === '.target'));
+  const upNRule = upEngine.getProcedural('example.com').find(rule => rule.steps.some(step => step.op === 'nth-ancestor' && step.count === 2));
+  assert.strictEqual(WildFireProcedural.select(treeRoot, upNRule, '/')[0], targetNode, 'upward(2) hides ancestor');
+  const upSel = WildFireProcedural.select(treeRoot, upRule, '/');
+  assert.strictEqual(upSel.length, 1, 'upward(selector) selects one ancestor');
+  assert.strictEqual(upSel[0], targetNode, 'upward(selector) hides ancestor');
 
 const resolveCsp = alias => CspResources.resolve(alias);
 // Arrays built inside the vm realm have a different prototype than Node's.

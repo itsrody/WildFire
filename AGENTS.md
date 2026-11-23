@@ -301,7 +301,7 @@ fetched before consent, `data_collection_permissions.required` stays `["none"]`.
 | `/regex/` filters (`i`, `m`, `s`, `u` flags only) | |
 | `##selector`, `#@#selector` | |
 | `##sel:has-text("…")`, `##sel:matches-path(/re/)`, `##sel:has(sel)` | |
-| `##sel:contains("…")`, `##sel:nth-ancestor(n)` | |
+| `##sel:contains("…")`, `##sel:nth-ancestor(n)`, `##sel:upward(n|sel)` | |
 | `domain##+js(alias, args)` (curated aliases only) | |
 | `domain#%#//scriptlet('alias', 'args')` (AdGuard, string-only) | AdGuard trusted/debug aliases |
 

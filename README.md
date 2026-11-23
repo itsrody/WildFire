@@ -86,7 +86,8 @@ options page (one per line):
 | `example.com##.promo:matches-path(/deals/)` | Hide `.promo` only on matching URL paths |
 | `example.com##.box:has(.inner)` | Hide `.box` when it contains `.inner` |
 | `example.com##.ad:contains("Buy now")` | Hide `.ad` when its own text or a descendant's text matches |
-| `example.com##.leaf:nth-ancestor(2)` | Hide the second parent of every `.leaf` match |
+| `example.com##.leaf:nth-ancestor(2)` / `:upward(2)` | Hide the nth parent of every `.leaf` match |
+| `example.com##.leaf:upward(.panel)` | Hide the nearest matching ancestor |
 
 Lines starting with `!` are comments.
 
@@ -238,7 +239,7 @@ This is deliberately a *minimal* engine, not a full uBO port:
   `:matches-path()` is checked once per page. Only text/ancestor-dependent
   rules are evaluated in WildFire's DOM code, using native `:has()` prefilters
   and one query per shared selector. `:has-text()` checks an element's own text;
-  `:contains()` also searches descendants. `:nth-ancestor(n)` hides the nth
+  `:contains()` also searches descendants. `:nth-ancestor(n)`/`:upward(n|selector)` hides an ancestor
   parent of a match. No script from a filter is ever injected.
 
 ## Message API (internal)
