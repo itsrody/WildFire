@@ -738,6 +738,10 @@ assert.strictEqual(classify(nthRule, '/').mode, 'js', ':nth-ancestor stays in th
   const litClass = WildFireProcedural.classify(litRule, '/');
   assert.strictEqual(litClass.mode, 'css', 'matches-attr literal compiles to native CSS');
   assert.strictEqual(litClass.selector, 'div[data-ad="promo"]', 'matches-attr literal selector');
+  const mixed = { base: 'div', steps: [{ op: 'matches-attr', name: 'data-ad', matcher: null }, { op: 'min-text-length', length: 10 }] };
+  const mixedClass = WildFireProcedural.classify(mixed, '/');
+  assert.strictEqual(mixedClass.mode, 'js', 'mixed rule stays JS');
+  assert.strictEqual(mixedClass.prefilter, 'div[data-ad]', 'native self fragments prefilter JS rules');
 
 const resolveCsp = alias => CspResources.resolve(alias);
 // Arrays built inside the vm realm have a different prototype than Node's.
