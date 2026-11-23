@@ -31,6 +31,7 @@ function collectFiles(directory, skipDirs) {
 }
 
 const LOOP_STATEMENT = /^\s*(?:for\s*\(|while\s*\(|for\s+await\b|do\s*\{)/;
+const WAPI_FILE = 'lib/wapi/wapi.js';
 const BACKGROUND_CHAIN = [
   'lib/background/helpers.js',
   'lib/background/engine-host.js',
@@ -67,7 +68,11 @@ if (manifest.browser_action && manifest.browser_action.default_popup) {
 if (manifest.background && manifest.background.scripts) {
   const backgroundScripts = manifest.background.scripts;
   backgroundScripts.forEach(value => referenced.add(value));
+  const wapiIndex = backgroundScripts.indexOf(WAPI_FILE);
   const chainStart = backgroundScripts.indexOf(BACKGROUND_CHAIN[0]);
+  if (wapiIndex === -1 || chainStart === -1 || wapiIndex + 1 !== chainStart) {
+    errors.push('wapi.js must load immediately before the background chain');
+  }
   const actualChain = backgroundScripts.slice(chainStart, chainStart + BACKGROUND_CHAIN.length);
   BACKGROUND_CHAIN.forEach((file, index) => {
     if (actualChain[index] !== file) {
@@ -83,6 +88,9 @@ if (manifest.content_scripts) {
 }
 
 const testSource = fs.readFileSync(path.join(ROOT, 'tools/test.js'), 'utf8');
+if (!/const WAPI_FILES = \[[\s\S]*?lib\/wapi\/wapi\.js/.test(testSource)) {
+  errors.push('tools/test.js must define WAPI_FILES for ' + WAPI_FILE);
+}
 const testChain = /const BACKGROUND_FILES = \[([\s\S]*?)\];/.exec(testSource);
 if (!testChain) {
   errors.push('tools/test.js must define BACKGROUND_FILES');

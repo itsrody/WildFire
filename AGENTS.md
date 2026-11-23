@@ -48,6 +48,8 @@ in the WildFire style; never close a gap by importing upstream code.
 manifest.json          MV2 manifest; gecko floor 153.0; all permissions
 background.js          thin bootstrap for the background controller
 lib/
+  wapi/                Firefox-native API backbone (wapi), no browser shims
+    wapi.js            named listener registry, message router, tabs/alarms/content scripts
   background/          background classic-script chain, load in order:
     helpers.js         counters/badge, snapshots, diagnostics and host helpers
     engine-host.js     engine lifecycle, compiler/cache, cosmetic and scriptlet sync
@@ -131,9 +133,15 @@ used **only** by `tools/`.
 9. `lib/resources/rewrite-resources.js` → `window.RewriteResources`
 10. `lib/compile/compile-cache.js` → `window.WildFireCompileCache`
 11. `lib/compile/compiler.js` → `window.WildFireCompiler`
-12. `lib/background/` chain, in order: `helpers.js`, `engine-host.js`,
+12. `lib/wapi/wapi.js` → `window.WildFireWapi` (aliased as `window.wapi`)
+13. `lib/background/` chain, in order: `helpers.js`, `engine-host.js`,
     `requests.js`, `messages.js`, `background.js` → `window.WildFireBackground`
-13. `background.js` → calls `WildFireBackground.create(...).start()`
+14. `background.js` → calls `WildFireBackground.create(...).start()`
+
+`wapi.js` is WildFire's Firefox-native API backbone: named idempotent listener
+registration, one message router, and thin promise wrappers for tabs, alarms,
+content-script registration and response-stream access. The background chain
+builds on it; do not add a Chromium shim or callback bridge there.
 
 Content scripts load in this order: `lib/engine/procedural/` chain (`text.js`,
 `nodes.js`, `native.js`, `select.js`) → `content/cosmetic.js`, so the DOM

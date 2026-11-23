@@ -39,6 +39,9 @@ const SCRIPTLET_FILES = [
   'lib/resources/scriptlets/api.js'
 ];
 /* Background controller is a classic-script chain loaded before the bootstrap. */
+const WAPI_FILES = [
+  'lib/wapi/wapi.js'
+];
 const BACKGROUND_FILES = [
   'lib/background/helpers.js',
   'lib/background/engine-host.js',
@@ -85,8 +88,8 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/compile/compile-cache.js'),
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/compile/compiler.js'), 'utf8'), context, {
   filename: 'compiler.js'
 });
-loadFiles(context, BACKGROUND_FILES);
-const { FilterEngine, mapResourceType, WildFirePageStore, RedirectResources, WildFireProcedural, RemoteLists, WildFireSuggestedLists, CspResources, WildFireScriptlets, RewriteResources, WildFireCompileCache, WildFireCompiler, WildFireStore, WildFireBackground } = context;
+loadFiles(context, [...WAPI_FILES, ...BACKGROUND_FILES]);
+const { FilterEngine, mapResourceType, WildFirePageStore, RedirectResources, WildFireProcedural, RemoteLists, WildFireSuggestedLists, CspResources, WildFireScriptlets, RewriteResources, WildFireCompileCache, WildFireCompiler, WildFireStore, WildFireBackground, WildFireWapi, wapi } = context;
 
 const engine = new FilterEngine();
 engine.load([
@@ -1831,7 +1834,7 @@ async function testStaleGenerationWorkerHang() {
     contentScripts: { register: async () => ({ unregister: async () => {} }) },
     publicSuffix: { getDomain: host => host.split('.').slice(-2).join('.') }
   };
-  ['lib/state/store.js', ...ENGINE_FILES, 'lib/state/page-store.js', 'lib/resources/redirect-resources.js', 'lib/state/remote-lists.js', 'lib/state/suggested-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js', 'lib/compile/compile-cache.js', 'lib/compile/compiler.js', ...BACKGROUND_FILES]
+  ['lib/state/store.js', ...ENGINE_FILES, 'lib/state/page-store.js', 'lib/resources/redirect-resources.js', 'lib/state/remote-lists.js', 'lib/state/suggested-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js', 'lib/compile/compile-cache.js', 'lib/compile/compiler.js', ...WAPI_FILES, ...BACKGROUND_FILES]
     .forEach(f => vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f }));
   const bgSource = fs.readFileSync(path.join(ROOT, 'background.js'), 'utf8')
     .replace(/  wildfire\.start\(\);\n\}\)\(\);\s*$/, '  globalThis.__wildfireTest = wildfire.debug(); wildfire.start(); })();');
@@ -1988,7 +1991,7 @@ async function testBackgroundLoadFiltersIntegration() {
   [
     'lib/state/store.js', ...ENGINE_FILES, 'lib/state/page-store.js', 'lib/resources/redirect-resources.js',
     'lib/state/remote-lists.js', 'lib/state/suggested-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js',
-    'lib/compile/compile-cache.js', 'lib/compile/compiler.js', ...BACKGROUND_FILES
+    'lib/compile/compile-cache.js', 'lib/compile/compiler.js', ...WAPI_FILES, ...BACKGROUND_FILES
   ].forEach(f => vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f }));
 
   const bgSource = fs.readFileSync(path.join(ROOT, 'background.js'), 'utf8')
@@ -2084,7 +2087,7 @@ async function testRemoveRuntimeIntegration() {
     contentScripts:{register:async()=>({unregister:async()=>{}})},
     publicSuffix:{getDomain:host=>host.split('.').slice(-2).join('.')}
   };
-  ['lib/state/store.js',...ENGINE_FILES,'lib/state/page-store.js','lib/resources/redirect-resources.js','lib/state/remote-lists.js', 'lib/state/suggested-lists.js','lib/resources/csp-resources.js',...SCRIPTLET_FILES,'lib/resources/rewrite-resources.js','lib/compile/compile-cache.js','lib/compile/compiler.js',...BACKGROUND_FILES]
+  ['lib/state/store.js',...ENGINE_FILES,'lib/state/page-store.js','lib/resources/redirect-resources.js','lib/state/remote-lists.js', 'lib/state/suggested-lists.js','lib/resources/csp-resources.js',...SCRIPTLET_FILES,'lib/resources/rewrite-resources.js','lib/compile/compile-cache.js','lib/compile/compiler.js',...WAPI_FILES, ...BACKGROUND_FILES]
     .forEach(f=>vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),ctx,{filename:f}));
   const bgSource = fs.readFileSync(path.join(ROOT,'background.js'),'utf8')
     .replace(/  wildfire\.start\(\);\n\}\)\(\);\s*$/, '  globalThis.__wildfireTest = wildfire.debug(); wildfire.start(); })();');
@@ -2383,7 +2386,7 @@ async function testCompileInFlightDedup() {
   };
   ['lib/state/store.js', ...ENGINE_FILES, 'lib/state/page-store.js', 'lib/resources/redirect-resources.js',
     'lib/state/remote-lists.js', 'lib/state/suggested-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js',
-    'lib/compile/compile-cache.js', 'lib/compile/compiler.js', ...BACKGROUND_FILES]
+    'lib/compile/compile-cache.js', 'lib/compile/compiler.js', ...WAPI_FILES, ...BACKGROUND_FILES]
     .forEach(f => vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f }));
 
   let compileCalls = 0;
@@ -2920,7 +2923,7 @@ async function testPerSiteBadgeCounters() {
     'lib/resources/redirect-resources.js', 'lib/state/remote-lists.js',
     'lib/state/suggested-lists.js', 'lib/resources/csp-resources.js',
     ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js',
-    'lib/compile/compile-cache.js', 'lib/compile/compiler.js', ...BACKGROUND_FILES
+    'lib/compile/compile-cache.js', 'lib/compile/compiler.js', ...WAPI_FILES, ...BACKGROUND_FILES
   ]);
   const bgSource = fs.readFileSync(path.join(ROOT, 'background.js'), 'utf8')
     .replace(/  wildfire\.start\(\);\n\}\)\(\);\s*$/, '  globalThis.__wildfireTest = wildfire.debug(); wildfire.start(); })();');
@@ -3304,6 +3307,61 @@ async function testRemoteLists() {
   assert.strictEqual(await remote.enabledText(), '', 'removed lists contribute no filters');
 }
 
+async function testWapiBackbone() {
+  const hub = () => {
+    const listeners = [];
+    return {
+      listeners,
+      addListener(listener) { listeners.push(listener); },
+      removeListener(listener) {
+        const index = listeners.indexOf(listener);
+        if (index !== -1) listeners.splice(index, 1);
+      }
+    };
+  };
+  const beforeRequest = hub();
+  const onMessage = hub();
+  const browserApi = {
+    runtime: { getURL: path => 'moz-extension://test/' + path, onMessage },
+    webRequest: { onBeforeRequest: beforeRequest, filterResponseData: () => ({}) },
+    tabs: { sendMessage: async () => { throw new Error('no content script'); } },
+    alarms: {
+      create: async () => {},
+      get: async () => null,
+      clear: async () => {},
+      onAlarm: hub()
+    },
+    contentScripts: { register: async () => ({ unregister: async () => {} }) }
+  };
+
+  assert.strictEqual(wapi, WildFireWapi, 'wapi is the canonical backbone global');
+  const instance = WildFireWapi.create({ browserApi });
+  assert.strictEqual(instance.browser, browserApi, 'wapi exposes the native Firefox API');
+  assert.strictEqual(instance.prefix, 'wildfire:', 'wapi uses the WildFire message prefix');
+  const noop = () => {};
+  assert.strictEqual(instance.events.add('test.event', hub(), noop), true);
+  assert.strictEqual(instance.events.add('test.event', hub(), noop), false,
+    'named listeners are idempotent');
+  assert.strictEqual(instance.events.count(), 1, 'only one named listener is registered');
+  assert.strictEqual(instance.webRequest.onBeforeRequest('request.main', noop,
+    { urls: ['<all_urls>'] }, ['blocking'], true), true);
+  assert.strictEqual(instance.webRequest.onBeforeRequest('request.main', noop,
+    { urls: ['<all_urls>'] }, ['blocking'], true), false,
+    'webRequest registrations share the idempotent event registry');
+  assert.strictEqual(beforeRequest.listeners.length, 1);
+  assert.strictEqual(instance.messages(noop), true);
+  assert.strictEqual(instance.messages(noop), false, 'one message router is installed');
+  assert.strictEqual(onMessage.listeners.length, 1);
+  assert.strictEqual(instance.events.remove('test.event'), true);
+  assert.strictEqual(instance.events.count(), 2);
+  assert.throws(() => WildFireWapi.create({ browserApi: {} }).messages(noop),
+    /runtime\.onMessage/, 'required APIs fail loudly');
+  assert.ok(instance.getURL('filters/default.txt').endsWith('filters/default.txt'));
+  await instance.tabs.send(1, { type: 'wildfire:apply' });
+  await instance.settle();
+  await instance.ready;
+}
+
 async function testBackgroundControllerRobustness() {
   const eventHub = () => {
     const listeners = [];
@@ -3467,6 +3525,7 @@ Promise.resolve()
   .then(() => testStaleGenerationWorkerHang())
   .then(() => testRemoveRuntimeIntegration())
   .then(() => testPerSiteBadgeCounters())
+  .then(() => testWapiBackbone())
   .then(() => testBackgroundControllerRobustness())
   .then(() => testPopupPerSiteDisplay())
   .then(() => testRemoteLists())

@@ -64,6 +64,7 @@
       "lib/resources/rewrite-resources.js",
       "lib/compile/compile-cache.js",
       "lib/compile/compiler.js",
+      "lib/wapi/wapi.js",
       "lib/background/helpers.js",
       "lib/background/engine-host.js",
       "lib/background/requests.js",

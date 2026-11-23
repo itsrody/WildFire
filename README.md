@@ -13,6 +13,7 @@ APIs and a small filter engine.
 ```
 manifest.json          Firefox MV2 manifest, gecko floor 153.0
 background.js          thin bootstrap for the background controller
+lib/wapi/              Firefox-native API backbone (wapi)
 lib/background/        background chain: helpers, engine lifecycle, requests, messages, controller
 lib/engine/            filter engine module chain (filter/), procedural DOM evaluator
 lib/compile/           filter compiler, worker, compiled-filter cache
@@ -259,10 +260,14 @@ This is deliberately a *minimal* engine, not a full uBO port:
 - Page/tab/frame state lives in a synchronous in-memory store. It tracks document
   lifetimes, frame URLs, top-level site attribution, popup state, and per-page
   cosmetic/scriptlet caches; nothing about visited pages is persisted.
+- `wapi` is the Firefox-native API backbone: named idempotent listener
+  registration, a single message router, and promise wrappers for tabs, alarms,
+  content scripts and response streams. There is no Chrome shim or callback bridge.
 - The background controller owns startup, listener registration and engine
-  lifecycle. The blocking listener stays synchronous; listener registration is
-  idempotent, a failed init settles readiness with a recorded error, and scriptlet
-  registrations are swapped atomically so a failed replacement keeps the old one.
+  lifecycle through `wapi`. The blocking listener stays synchronous; listener
+  registration is idempotent, a failed init settles readiness with a recorded
+  error, and scriptlet registrations are swapped atomically so a failed
+  replacement keeps the old one.
 - Remote lists are opt-in: no URL is bundled, nothing is fetched until you add a
   URL and explicitly fetch it, and a fetched list must be enabled before its
   rules apply. WildFire stores the exact text and a hash of each applied list.
