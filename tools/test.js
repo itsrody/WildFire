@@ -1763,6 +1763,28 @@ async function testRemoveRuntimeIntegration() {
   assert.strictEqual(reqEx, undefined, 'removeheader exception wins');
   const rpBlock = apiHooks.onBeforeRequest({ url:'https://x.example/app.js?fbclid=1', type:'script', tabId:1, frameId:0, documentUrl:'https://site.test/' });
   assert.ok(rpBlock && (rpBlock.redirectUrl || rpBlock.cancel), 'removeparam or block applies');
+
+  // badfilter/important/domain/navigation semantics
+  api.setState({ enabled: true, customFilters: [
+    '||nav.example^$removeparam=utm_source',
+    '||nav.example^$removeparam=utm_source,badfilter',
+    '||dom.example^$removeparam=fbclid,domain=allowed.test',
+    '@@||keep.example^$removeparam=keep',
+    '||keep.example^$removeparam=keep,important',
+    '@@||imp.example^$removeparam=id,important',
+    '||imp.example^$removeparam=id'
+  ].join('\n'), disabledSites: [] });
+  await api.loadFilters(true); await new Promise(r=>setTimeout(r,30));
+  const nav = apiHooks.onBeforeRequest({ url:'https://nav.example/page?utm_source=x', type:'main_frame', tabId:2, frameId:0, documentUrl:'https://nav.example/page?utm_source=x' });
+  assert.strictEqual(nav, undefined, 'badfilter disables removeparam');
+  const domNo = apiHooks.onBeforeRequest({ url:'https://dom.example/x?fbclid=1', type:'image', tabId:2, frameId:0, documentUrl:'https://other.test/' });
+  assert.strictEqual(domNo, undefined, 'removeparam domain scope respected');
+  const domYes = apiHooks.onBeforeRequest({ url:'https://dom.example/x?fbclid=1', type:'image', tabId:2, frameId:0, documentUrl:'https://allowed.test/' });
+  assert.ok(domYes && domYes.redirectUrl && !domYes.redirectUrl.includes('fbclid'), 'removeparam applies on matching domain');
+  const impBlock = apiHooks.onBeforeRequest({ url:'https://keep.example/x?keep=1', type:'image', tabId:2, frameId:0, documentUrl:'https://site.test/' });
+  assert.ok(impBlock && impBlock.redirectUrl, 'important removeparam overrides exception');
+  const impEx = apiHooks.onBeforeRequest({ url:'https://imp.example/x?id=1', type:'image', tabId:2, frameId:0, documentUrl:'https://site.test/' });
+  assert.strictEqual(impEx, undefined, 'important remove exception wins');
 }
 
 async function testIncrementalRemoteCompileSemantics() {

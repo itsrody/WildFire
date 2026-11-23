@@ -590,7 +590,7 @@
 
     // Capability-gated removeparam: redirect to cleaned URL before normal
     // blocking/mutation decisions. No work when capability is absent.
-    if ((engine.capabilities & FilterEngine.CAP.REMOVEPARAM) && type !== 'document' && type !== 'subdocument') {
+    if (engine.capabilities & FilterEngine.CAP.REMOVEPARAM) {
       const rp = engine.matchRemoveparam(details.url, type, documentUrl);
       if (rp.params && rp.params.length) {
         const cleanUrl = applyRemoveparam(details.url, rp.params);

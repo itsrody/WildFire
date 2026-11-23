@@ -131,6 +131,23 @@ WildFire-owned aliases are accepted: `blank-js`, `blank-css`, `blank-text`,
 list loads and never turn into request blockers. `$rewrite-rule` is not
 supported.
 
+## Removeparam / removeheader (capability-gated)
+
+WildFire parses and applies `$removeparam` and `$removeheader` as validated,
+capability-gated modifiers. No filter-supplied code or arbitrary header/body
+template is executed.
+
+- `$removeparam` / `$removeparam=name` / `$removeparam=/re/`: removes matching
+  query params by redirecting the request to a cleaned URL. Applies to requests
+  where the rule matches (including navigations) and respects `@@` exceptions,
+  `$important`, domain/type options, and `$badfilter`.
+- `$removeheader=request:header-name` / `$removeheader=response:header-name`:
+  removes matching request headers in `onBeforeSendHeaders` and response headers
+  in `onHeadersReceived`. Header names are validated; invalid rules are rejected
+  at load time.
+
+These listeners are registered only when compiled capabilities require them.
+
 ## Curated scriptlets
 
 Some sites probe for blocker side effects. `##+js(alias, args)` lets a filter
