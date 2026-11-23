@@ -399,14 +399,33 @@ assert.strictEqual(hasRule.steps[0].inner.base, '.child', ':has stores its inner
 assert.strictEqual(hasRule.steps[0].inner.steps[0].op, 'has-text',
   'nested procedural selectors are parsed');
 
+function stubDescendants(nodes) {
+  return nodes.reduce((all, node) => {
+    if (!node || node.nodeType === 3) return all;
+    return all.concat(node, stubDescendants(node.childNodes || []));
+  }, []);
+}
+
 function stubNode(selector, text, children) {
   const list = children || [];
-  return {
+  const node = {
     selector,
     textContent: text || '',
-    querySelector: query => (query === '*' ? list[0] || null : list.find(item => item.selector === query) || null),
-    querySelectorAll: query => (query === '*' ? list : list.filter(item => item.selector === query))
+    childNodes: text ? [{ nodeType: 3, textContent: text }] : [],
+    querySelector: query => {
+      const all = stubDescendants(list);
+      return (query === '*' ? all[0] : all.find(item => item.selector === query)) || null;
+    },
+    querySelectorAll: query => {
+      const all = stubDescendants(list);
+      return query === '*' ? all : all.filter(item => item.selector === query);
+    }
   };
+  list.forEach(child => {
+    child.parentElement = node;
+    node.childNodes.push(child);
+  });
+  return node;
 }
 
 const innerNode = stubNode('.inner', '');
@@ -488,6 +507,51 @@ WildFireProcedural.selectAll(groupedRoot, [
 ], '/');
 assert.deepStrictEqual(queryCalls, ['.deep:has(.child)'],
   'a native prefilter groups rules with different bases');
+
+// :contains() searches the subtree, :has-text() only the element's own text,
+// and :nth-ancestor() changes which node is hidden.
+const treeEngine = new FilterEngine();
+treeEngine.load([
+  'example.com##.target:contains("hit")',
+  'example.com##.target:contains(/hit/i)',
+  'example.com##.target:has-text("hit")',
+  'example.com##.leaf:nth-ancestor(2)',
+  'example.com##.target:has(.leaf:nth-ancestor(2))',
+  'example.com##.bad:nth-ancestor(0)',
+  'example.com##.bad:nth-ancestor(9)',
+  'example.com##.bad:contains(/unclosed'
+].join('\n'));
+assert.strictEqual(treeEngine.counts.cosmetic, 5, 'valid new procedural rules are counted');
+assert.strictEqual(treeEngine.rejectedCosmetic.length, 3, 'invalid new procedural rules are rejected');
+assert.strictEqual(treeEngine.rejectedCosmetic.filter(entry => entry.reason === 'invalid :nth-ancestor argument').length,
+  2, 'out-of-range ancestor counts are rejected');
+
+const treeRules = treeEngine.getProcedural('example.com');
+const leafNode = stubNode('.leaf', 'hit');
+const midNode = stubNode('.mid', '', [leafNode]);
+const targetNode = stubNode('.target', '', [midNode]);
+const treeRoot = stubNode('body', '', [targetNode]);
+const containsRule = treeRules.find(rule => rule.steps.some(step => step.op === 'contains' && step.matcher.type === 'text'));
+const regexContainsRule = treeRules.find(rule => rule.steps.some(step => step.op === 'contains' && step.matcher.type === 'regex'));
+const ownTextRule = treeRules.find(rule => rule.steps.some(step => step.op === 'has-text'));
+const nthRule = treeRules.find(rule => rule.base === '.leaf');
+const nestedNthRule = treeRules.find(rule => rule.steps.some(step => step.op === 'has'));
+
+function treeSelected(rule) {
+  return WildFireProcedural.select(treeRoot, rule, '/');
+}
+assert.strictEqual(treeSelected(containsRule)[0], targetNode,
+  ':contains matches text found in a descendant');
+assert.strictEqual(treeSelected(regexContainsRule)[0], targetNode,
+  ':contains accepts a safe regex');
+assert.strictEqual(treeSelected(ownTextRule).length, 0,
+  ':has-text only matches the element own text');
+assert.strictEqual(treeSelected(nthRule)[0], targetNode,
+  ':nth-ancestor hides the nth parent rather than the matched child');
+assert.strictEqual(treeSelected(nestedNthRule)[0], targetNode,
+  ':nth-ancestor works inside :has');
+assert.strictEqual(classify(containsRule, '/').mode, 'js', ':contains stays in the JS path');
+assert.strictEqual(classify(nthRule, '/').mode, 'js', ':nth-ancestor stays in the JS path');
 
 engine.load(fs.readFileSync(path.join(ROOT, 'filters/default.txt'), 'utf8'));
 assert.ok(engine.counts.network > 50, 'bundled list should contain network rules');

@@ -148,9 +148,10 @@ on load via `wildfire:cosmetic` and re-applies on `wildfire:apply` broadcasts;
 it validates each selector with `CSS.supports('selector', …)` and
 `document.querySelector` before injecting a `<style id="wildfire-cosmetic">`.
 
-Procedural selectors (`:has-text()`, `:matches-path()`, `:has()`) are parsed in
-`lib/filter-engine.js` into trees with `base` plus ordered `steps`; malformed or
-unsafe ones are recorded in `engine.rejectedCosmetic` and never sent to pages.
+Procedural selectors (`:has-text()`, `:contains()`, `:matches-path()`, `:has()`,
+`:nth-ancestor()`) are parsed in `lib/filter-engine.js` into trees with `base`
+plus ordered `steps`; malformed or unsafe ones are recorded in
+`engine.rejectedCosmetic` and never sent to pages.
 `getProcedural(host)` merges generic and domain trees and subtracts `#@#`
 exceptions. Background sends them in the same `wildfire:apply` message as CSS.
 
@@ -164,6 +165,10 @@ native `:has()` **prefilter** on the `querySelectorAll` call. `selectAll()` grou
 rules sharing a base (or prefilter) into one query pass instead of one per rule.
 Only the remaining text-dependent rules hide nodes via `data-wildfire-hidden`,
 and the attribute is diffed so unchanged nodes are never touched.
+`:has-text()` checks an element's own text nodes; `:contains()` also searches
+descendants. Both share the safe literal/regex matcher. `:nth-ancestor(n)` is a
+transforming step: the rule hides the nth parent of a match instead of the
+match itself, so `targetOf()` returns the final node to hide.
 `content/cosmetic.js` schedules re-applies with `requestAnimationFrame` to merge
 multiple `MutationObserver` batches per frame, and only observes `characterData`
 when a live rule actually depends on text. Filter text is never executed.
@@ -212,7 +217,7 @@ that behavior when adding popup actions.
 | --- | --- |
 | `||host^` domain anchors, subdomains | `$csp`, `$rewrite` |
 | `|url|` start/end anchors | `elemhide`, `generichide`, `ghide` |
-| `*` wildcards, `^` separator | `:contains()`, `:nth-ancestor()`, other advanced selectors |
+| `*` wildcards, `^` separator | other advanced selectors |
 | `@@` exceptions | remote list fetching / auto-update |
 | `$script`, `$image`, `$~type`, other resource types | `domain=` with wildcard `.*` patterns |
 | `$third-party`, `$~third-party` | full EasyList-scale performance tuning |
@@ -222,6 +227,7 @@ that behavior when adding popup actions.
 | `/regex/` filters (`i`, `m`, `s`, `u` flags only) | |
 | `##selector`, `#@#selector` | |
 | `##sel:has-text("…")`, `##sel:matches-path(/re/)`, `##sel:has(sel)` | |
+| `##sel:contains("…")`, `##sel:nth-ancestor(n)` | |
 
 Regex filters are checked at load time. Backreferences, nested or alternated
 quantifiers, excessive quantifier/group counts, long patterns and stateful
@@ -236,12 +242,14 @@ Redirect rules name an alias from `lib/redirect-resources.js`: `noopjs`,
 An unregistered alias cancels instead. No upstream resources are bundled.
 
 Procedural cosmetic rules are parsed into a base selector plus ordered steps.
-`:has-text()` accepts a quoted literal (case-insensitive) or a `/regex/` with
-the same safe subset as network regexes; `:matches-path()` takes a `/regex/`
-checked against `location.pathname + location.search`; `:has()` accepts another
-plain or procedural selector and can be nested up to eight levels. Invalid
-rules land in `engine.rejectedCosmetic`. Evaluation lives entirely in
-`lib/procedural.js` and `content/cosmetic.js` — never in injected script.
+`:has-text()` and `:contains()` accept a quoted literal (case-insensitive) or a
+`/regex/` with the same safe subset as network regexes; `:contains()` also
+searches descendants. `:matches-path()` takes a `/regex/` checked against
+`location.pathname + location.search`; `:has()` accepts another plain or
+procedural selector and can be nested up to eight levels; `:nth-ancestor(n)`
+accepts 1–8 and hides the nth parent of a match. Invalid rules land in
+`engine.rejectedCosmetic`. Evaluation lives entirely in `lib/procedural.js` and
+`content/cosmetic.js` — never in injected script.
 
 Add new syntax by extending `lib/filter-engine.js` **and** `tools/test.js` in
 the same change. `README.md` gets a syntax-table row when the feature is
@@ -313,7 +321,8 @@ Already implemented and tested: Firefox-native registrable-domain scoping
 (`publicSuffix`), `documentId`-keyed request scope, the 4-character token index,
 safe regex filters, wider resource types with `$document`/`$popup`, a
 from-scratch redirect engine with WildFire-owned data-URI resources, and
-DOM-based procedural cosmetic selectors.
+DOM-based procedural cosmetic selectors (including native-CSS compilation,
+`:contains()`, and `:nth-ancestor()`).
 
 Do not start a later item while an earlier one is only half-implemented. A
 small, correct, fully tested engine is the product.

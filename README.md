@@ -79,6 +79,8 @@ options page (one per line):
 | `example.com##.ad:has-text("Buy now")` | Hide `.ad` when its text contains the phrase |
 | `example.com##.promo:matches-path(/deals/)` | Hide `.promo` only on matching URL paths |
 | `example.com##.box:has(.inner)` | Hide `.box` when it contains `.inner` |
+| `example.com##.ad:contains("Buy now")` | Hide `.ad` when its own text or a descendant's text matches |
+| `example.com##.leaf:nth-ancestor(2)` | Hide the second parent of every `.leaf` match |
 
 Lines starting with `!` are comments.
 
@@ -104,12 +106,14 @@ This is deliberately a *minimal* engine, not a full uBO port:
   `nooptext`, `noopjson`, `noophtml`, `1x1.gif`, `1x1.png`, `tagged.svg`); the
   response is a bundled `data:` URI, never a URL from the filter. Unknown
   aliases cancel normally.
-- Procedural cosmetic rules (`:has-text()`, `:matches-path()`, `:has()`) use
-  Firefox-native CSS wherever possible: plain `:has()` rules are compiled into
-  the cosmetic stylesheet, and `:matches-path()` is checked once per page.
-  Only text-dependent rules are evaluated in WildFire's DOM code, using native
-  `:has()` prefilters and one query per shared selector. No script from a filter
-  is ever injected. `:contains()` and `:nth-ancestor()` are not supported yet.
+- Procedural cosmetic rules (`:has-text()`, `:contains()`, `:matches-path()`,
+  `:has()`, `:nth-ancestor()`) use Firefox-native CSS wherever possible: plain
+  `:has()` rules are compiled into the cosmetic stylesheet, and
+  `:matches-path()` is checked once per page. Only text/ancestor-dependent
+  rules are evaluated in WildFire's DOM code, using native `:has()` prefilters
+  and one query per shared selector. `:has-text()` checks an element's own text;
+  `:contains()` also searches descendants. `:nth-ancestor(n)` hides the nth
+  parent of a match. No script from a filter is ever injected.
 
 ## Message API (internal)
 

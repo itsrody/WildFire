@@ -28,7 +28,7 @@
 
   function needsText(step) {
     if (!step) return false;
-    if (step.op === 'has-text') return true;
+    if (step.op === 'has-text' || step.op === 'contains') return true;
     if (step.op === 'has' && step.inner && Array.isArray(step.inner.steps)) {
       return step.inner.steps.some(needsText);
     }
