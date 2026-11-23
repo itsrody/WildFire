@@ -68,6 +68,7 @@
       "lib/wapi/wapi-contexts.js",
       "lib/wapi/wapi-background.js",
       "lib/wapi/wapi-router.js",
+      "lib/wapi/wapi-tabs.js",
       "lib/background/helpers.js",
       "lib/background/engine-host.js",
       "lib/background/requests.js",

@@ -45,7 +45,8 @@ const WAPI_FILES = [
   'lib/wapi/wapi.js',
   'lib/wapi/wapi-contexts.js',
   'lib/wapi/wapi-background.js',
-  'lib/wapi/wapi-router.js'
+  'lib/wapi/wapi-router.js',
+  'lib/wapi/wapi-tabs.js'
 ];
 const BACKGROUND_FILES = [
   'lib/background/helpers.js',
@@ -96,7 +97,8 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/compile/compiler.js'), 'utf
 });
 loadFiles(context, [...WAPI_FILES, ...BACKGROUND_FILES]);
 const { FilterEngine, mapResourceType, WildFirePageStore, RedirectResources, WildFireProcedural, RemoteLists, WildFireSuggestedLists, CspResources, WildFireScriptlets, RewriteResources, WildFireCompileCache, WildFireCompiler, WildFireStore, WildFireBackground, WildFireWapi, wapi, WildFireWapiContexts, wapiContexts,
-  WildFireWapiBackground, wapiBackground, WildFireWapiRouter, wapiRouter } = context;
+  WildFireWapiBackground, wapiBackground, WildFireWapiRouter, wapiRouter,
+  WildFireWapiTabs, wapiTabs } = context;
 
 const engine = new FilterEngine();
 engine.load([
@@ -3634,6 +3636,123 @@ async function testWapiRouter() {
   assert.strictEqual(router.size(), 0);
 }
 
+async function testWapiTabs() {
+  assert.strictEqual(wapiTabs, WildFireWapiTabs,
+    'wapi-tabs is exposed as a canonical backbone module');
+  const hub = () => {
+    const listeners = [];
+    return {
+      listeners,
+      addListener(listener) { listeners.push(listener); },
+      removeListener(listener) {
+        const index = listeners.indexOf(listener);
+        if (index !== -1) listeners.splice(index, 1);
+      }
+    };
+  };
+  const webNavigation = {
+    onCreatedNavigationTarget: hub(),
+    onCommitted: hub(),
+    onReferenceFragmentUpdated: hub(),
+    onHistoryStateUpdated: hub()
+  };
+  const tabEvents = {
+    onUpdated: hub(),
+    onRemoved: hub(),
+    onActivated: hub()
+  };
+  const browserApi = {
+    webNavigation,
+    tabs: Object.assign({
+      get: async id => ({ id, url: 'https://tab.test/' })
+    }, tabEvents)
+  };
+  const wapiStub = WildFireWapi.create({ browserApi });
+
+  const navigations = [];
+  const tabUrls = [];
+  const forgotten = [];
+  const pageStore = {
+    observeNavigation(details) { navigations.push(details); },
+    observeTab(id, url) { tabUrls.push([id, url]); },
+    forgetTab(id) { forgotten.push(id); }
+  };
+  const popups = [];
+  const topLevel = [];
+  const badge = [];
+  const complete = [];
+  const activated = [];
+  const removed = [];
+  const hooks = {
+    onPopupNavigation(details) { popups.push(details); },
+    onTopLevelNavigation(id) { topLevel.push(id); },
+    onTabUrl(id) { badge.push(id); },
+    onTabComplete(id) { complete.push(id); },
+    onTabActivated(id) { activated.push(id); },
+    onTabRemoved(id) { removed.push(id); }
+  };
+
+  const adapter = WildFireWapiTabs.create({ wapi: wapiStub, pageStore, hooks, browserApi });
+  assert.strictEqual(adapter.registered, false, 'tab listeners are inert before register()');
+  assert.strictEqual(adapter.validate(), true, 'required events are checked up front');
+  assert.strictEqual(adapter.register(), true);
+  assert.strictEqual(adapter.register(), false, 'register() is idempotent');
+  assert.strictEqual(adapter.names().join(','), [
+    'webNavigation.onCreatedNavigationTarget', 'webNavigation.onCommitted',
+    'webNavigation.onReferenceFragmentUpdated', 'webNavigation.onHistoryStateUpdated',
+    'tabs.onUpdated', 'tabs.onRemoved', 'tabs.onActivated'
+  ].join(','));
+
+  webNavigation.onCreatedNavigationTarget.listeners[0]({ tabId: 1 });
+  assert.strictEqual(popups.length, 1, 'popup navigation is delegated to policy');
+
+  webNavigation.onCommitted.listeners[0]({ tabId: 2, frameId: 0 });
+  webNavigation.onCommitted.listeners[0]({ tabId: 3, frameId: 1 });
+  webNavigation.onReferenceFragmentUpdated.listeners[0]({ tabId: 4 });
+  webNavigation.onHistoryStateUpdated.listeners[0]({ tabId: 4 });
+  assert.strictEqual(navigations.length, 4, 'all navigation events reach PageStore');
+  assert.deepStrictEqual(topLevel, [2], 'only top-level commits refresh the badge');
+
+  tabEvents.onUpdated.listeners[0](5, { url: 'https://new.test/' },
+    { url: 'https://new.test/' });
+  tabEvents.onUpdated.listeners[0](6, { status: 'complete' },
+    { url: 'https://done.test/' });
+  assert.strictEqual(tabUrls.length, 3, 'complete updates observe the final tab URL');
+  assert.strictEqual(badge.join(','), '5,6', 'complete updates badge the tab once');
+  assert.deepStrictEqual(complete, [6], 'complete updates refresh cosmetics');
+
+  tabEvents.onActivated.listeners[0]({ tabId: 7 });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.strictEqual(tabUrls.length, 4);
+  assert.strictEqual(tabUrls[3].join(','), '7,https://tab.test/');
+  assert.strictEqual(activated.length, 0, 'successful tab reads use the URL hook');
+
+  browserApi.tabs.get = async () => { throw new Error('tab unavailable'); };
+  tabEvents.onActivated.listeners[0]({ tabId: 8 });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.strictEqual(tabUrls.length, 4, 'failed tab reads do not observe a URL');
+  assert.strictEqual(activated.join(','), '8', 'failed tab reads still refresh the badge');
+
+  tabEvents.onRemoved.listeners[0](9);
+  assert.deepStrictEqual(forgotten, [9]);
+  assert.deepStrictEqual(removed, [9]);
+
+  assert.strictEqual(adapter.unregister(), true);
+  assert.strictEqual(adapter.registered, false);
+  assert.strictEqual(webNavigation.onCommitted.listeners.length, 0);
+  assert.strictEqual(tabEvents.onUpdated.listeners.length, 0);
+  assert.strictEqual(tabEvents.onActivated.listeners.length, 0);
+
+  const missingWapi = WildFireWapi.create({ browserApi: {} });
+  const missing = WildFireWapiTabs.create({ wapi: missingWapi, hooks: {} });
+  assert.throws(() => missing.validate(), /Missing required browser API/,
+    'required tab events are validated at registration');
+  assert.throws(() => missing.register(), /Missing required browser API/,
+    'required tab events are validated at registration');
+}
+
 async function testWapiContexts() {
   const sent = [];
   const wapiStub = {
@@ -3806,6 +3925,8 @@ async function testBackgroundControllerRobustness() {
     const unknown = await healthy.debug().onMessage({ type: 'wildfire:missing' }, {});
     assert.strictEqual(unknown.error, 'Unknown action: missing',
       'unknown actions keep the existing error shape');
+    assert.strictEqual(healthy.debug().wapiTabs.registered, true,
+      'startup registers the native tab adapter');
 
     let unregistered = 0;
     const previous = { unregister: async () => { unregistered += 1; } };
@@ -3861,6 +3982,7 @@ Promise.resolve()
   .then(() => testWapiClient())
   .then(() => testWapiBackground())
   .then(() => testWapiRouter())
+  .then(() => testWapiTabs())
   .then(() => testWapiContexts())
   .then(() => testBackgroundControllerRobustness())
   .then(() => testPopupPerSiteDisplay())

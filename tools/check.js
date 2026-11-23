@@ -36,7 +36,8 @@ const WAPI_FILES = [
   'lib/wapi/wapi.js',
   'lib/wapi/wapi-contexts.js',
   'lib/wapi/wapi-background.js',
-  'lib/wapi/wapi-router.js'
+  'lib/wapi/wapi-router.js',
+  'lib/wapi/wapi-tabs.js'
 ];
 const BACKGROUND_CHAIN = [
   'lib/background/helpers.js',
