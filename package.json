@@ -8,6 +8,7 @@
     "check": "node tools/check.js",
     "test": "node tools/test.js",
     "build": "node tools/build.js",
+    "smoke": "node tools/smoke.js",
     "dev": "web-ext run --source-dir ."
   }
 }
