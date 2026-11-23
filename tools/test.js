@@ -1973,6 +1973,43 @@ async function testPhase0Foundation() {
   runPerfBaseline();
 }
 
+async function testPhase1AAliases() {
+  const e = new FilterEngine();
+  e.load([
+    '||a.example^$1p',
+    '||b.example^$3p',
+    '||c.example^$xhr',
+    '||d.example^$css',
+    '||e.example^$frame',
+    '||f.example^$doc',
+    '||g.example^$all',
+    '@@||h.example^$ghide',
+    '@@||i.example^$ehide',
+    '@@||j.example^$shide'
+  ].join('\n'));
+
+  assert.strictEqual(e.matchRequest('https://a.example/x.js', 'script', 'https://a.example/').blocked, true, '1p same-site matches');
+  assert.strictEqual(e.matchRequest('https://a.example/x.js', 'script', 'https://other.test/').blocked, false, '1p blocks third-party? no, 1p means first-party only');
+  assert.strictEqual(e.matchRequest('https://b.example/x.js', 'script', 'https://other.test/').blocked, true, '3p matches third-party');
+  assert.strictEqual(e.matchRequest('https://b.example/x.js', 'script', 'https://b.example/').blocked, false, '3p skips first-party');
+  assert.strictEqual(e.matchRequest('https://c.example/x', 'xmlhttprequest', 'https://site.test/').blocked, true, 'xhr alias');
+  assert.strictEqual(e.matchRequest('https://d.example/x.css', 'stylesheet', 'https://site.test/').blocked, true, 'css alias');
+  assert.strictEqual(e.matchRequest('https://e.example/frame', 'subdocument', 'https://site.test/').blocked, true, 'frame alias');
+  assert.strictEqual(e.matchRequest('https://f.example/page', 'document', 'https://site.test/').blocked, true, 'doc alias');
+  assert.strictEqual(e.matchRequest('https://g.example/anything', 'image', 'https://site.test/').blocked, true, '$all matches image');
+  assert.strictEqual(e.matchRequest('https://g.example/anything', 'script', 'https://site.test/').blocked, true, '$all matches script');
+
+  assert.ok(e.getCapabilities() & FilterEngine.CAP.GENERICHIDE, 'ghide capability');
+  assert.ok(e.getCapabilities() & FilterEngine.CAP.ELEMHIDE, 'ehide capability');
+  assert.ok(e.getCapabilities() & FilterEngine.CAP.SPECIFICHIDE, 'shide capability');
+
+  const blob = e.toCompiled();
+  const e2 = new FilterEngine();
+  assert.strictEqual(e2.loadCompiled(blob), true, 'compiled alias rules load');
+  assert.strictEqual(e2.matchRequest('https://c.example/x', 'xmlhttprequest', 'https://site.test/').blocked, true, 'compiled xhr alias');
+  assert.ok(e2.getCapabilities() & FilterEngine.CAP.GENERICHIDE, 'compiled ghide capability');
+}
+
 async function testRemoteLists() {
   assert.strictEqual(RemoteLists.normalizeUrl('javascript:alert(1)'), '',
     'javascript URLs are rejected');
@@ -2116,6 +2153,7 @@ async function testRemoteLists() {
 
 Promise.resolve()
   .then(() => testPhase0Foundation())
+  .then(() => testPhase1AAliases())
   .then(() => testCompileCacheAndCompiler())
   .then(() => testIncrementalRemoteCompileSemantics())
   .then(() => testBackgroundLoadFiltersIntegration())

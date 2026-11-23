@@ -56,6 +56,27 @@
       ]
     },
     {
+      "name": "alias normalization 1p/3p/xhr/css/frame/doc/all",
+      "rules": [
+        "||a.example^$1p,script",
+        "||b.example^$3p,script",
+        "||c.example^$xhr",
+        "||d.example^$css",
+        "||e.example^$frame",
+        "||f.example^$doc"
+      ],
+      "expect": { "capabilities": ["NETWORK", "THIRD_PARTY", "DOCUMENT"] },
+      "matches": [
+        {"url":"https://a.example/x.js","type":"script","documentUrl":"https://a.example/","blocked":true},
+        {"url":"https://a.example/x.js","type":"script","documentUrl":"https://other.test/","blocked":false},
+        {"url":"https://b.example/x.js","type":"script","documentUrl":"https://other.test/","blocked":true},
+        {"url":"https://c.example/x","type":"xmlhttprequest","documentUrl":"https://site.test/","blocked":true},
+        {"url":"https://d.example/x","type":"stylesheet","documentUrl":"https://site.test/","blocked":true},
+        {"url":"https://e.example/x","type":"subdocument","documentUrl":"https://site.test/","blocked":true},
+        {"url":"https://f.example/x","type":"document","documentUrl":"https://site.test/","blocked":true}
+      ]
+    },
+    {
       "name": "invalid regex and unknown alias rejected safely",
       "rules": [
         "||ok.example^",
