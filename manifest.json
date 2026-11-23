@@ -38,7 +38,17 @@
   "background": {
     "scripts": [
       "lib/state/store.js",
-      "lib/engine/filter-engine.js",
+      "lib/engine/filter/constants.js",
+      "lib/engine/filter/utils.js",
+      "lib/engine/filter/pattern.js",
+      "lib/engine/filter/parse-network.js",
+      "lib/engine/filter/parse-procedural.js",
+      "lib/engine/filter/parse-scriptlet.js",
+      "lib/engine/filter/parse-cosmetic.js",
+      "lib/engine/filter/engine.js",
+      "lib/engine/filter/engine-compiled.js",
+      "lib/engine/filter/engine-match.js",
+      "lib/engine/filter/engine-cosmetic.js",
       "lib/state/document-scope.js",
       "lib/resources/redirect-resources.js",
       "lib/state/remote-lists.js",

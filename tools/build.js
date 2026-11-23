@@ -95,11 +95,24 @@ execFileSync(process.execPath, [path.join(__dirname, 'check.js')], { stdio: 'inh
 
 function compiledDefault() {
   const vm = require('vm');
-  const src = fs.readFileSync(path.join(ROOT, 'lib/engine/filter-engine.js'), 'utf8');
   const ctx = { console, URL, Map, Set, Array, Object, String, RegExp, JSON, Math, Boolean, Number };
   ctx.window = ctx;
   vm.createContext(ctx);
-  vm.runInContext(src, ctx, { filename: 'filter-engine.js' });
+  [
+    'lib/engine/filter/constants.js',
+    'lib/engine/filter/utils.js',
+    'lib/engine/filter/pattern.js',
+    'lib/engine/filter/parse-network.js',
+    'lib/engine/filter/parse-procedural.js',
+    'lib/engine/filter/parse-scriptlet.js',
+    'lib/engine/filter/parse-cosmetic.js',
+    'lib/engine/filter/engine.js',
+    'lib/engine/filter/engine-compiled.js',
+    'lib/engine/filter/engine-match.js',
+    'lib/engine/filter/engine-cosmetic.js'
+  ].forEach(file => {
+    vm.runInContext(fs.readFileSync(path.join(ROOT, file), 'utf8'), ctx, { filename: file });
+  });
   const Engine = ctx.FilterEngine;
   const engine = new Engine();
   engine.load(fs.readFileSync(path.join(ROOT, 'filters/default.txt'), 'utf8'));

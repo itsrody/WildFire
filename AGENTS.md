@@ -49,7 +49,18 @@ manifest.json          MV2 manifest; gecko floor 153.0; all permissions
 background.js          blocking listener, counters/badge, message API
 lib/
   engine/
-    filter-engine.js   filter parser + matcher (self-contained, no deps)
+    filter/            filter engine module chain (classic scripts, load in order):
+      constants.js     limits, capability flags, token/type tables
+      utils.js         hashing, host/URL helpers, tokenization
+      pattern.js       pattern compilation + plain/segment/regex matching
+      parse-network.js network line parser ($options IR)
+      parse-procedural.js  procedural cosmetic selector parser
+      parse-scriptlet.js   uBO/AdGuard scriptlet line parsers
+      parse-cosmetic.js    cosmetic line parser (safe ABP mapping)
+      engine.js        FilterEngine core: state, indexing, load()
+      engine-compiled.js   toCompiled/loadCompiled serialization
+      engine-match.js  request matching hot path
+      engine-cosmetic.js   cosmetic storage + per-host getters
     procedural.js      DOM-based procedural cosmetic evaluator (no browser APIs)
   compile/
     compiler.js        dynamic compile engine: worker with sync fallback
@@ -87,7 +98,10 @@ used **only** by `tools/`.
 ### Loading order (manifest `background.scripts`)
 
 1. `lib/state/store.js` → `window.WildFireStore`
-2. `lib/engine/filter-engine.js` → `window.FilterEngine`, `window.mapResourceType`
+2. `lib/engine/filter/` chain, in order: `constants.js`, `utils.js`, `pattern.js`,
+   `parse-network.js`, `parse-procedural.js`, `parse-scriptlet.js`,
+   `parse-cosmetic.js`, `engine.js`, `engine-compiled.js`, `engine-match.js`,
+   `engine-cosmetic.js` → `window.FilterEngine`, `window.mapResourceType`
 3. `lib/state/document-scope.js` → `window.DocumentScope`
 4. `lib/resources/redirect-resources.js` → `window.RedirectResources`
 5. `lib/state/remote-lists.js` → `window.RemoteLists`
@@ -162,7 +176,18 @@ plain-suffix and unknown-suffix lookups enabled), `CspResources.resolve()`,
 `WildFireScriptlets.validate()` and `RewriteResources.hasAlias()`. The engine
 falls back to a last-two-label scope when no domain resolver is given or a
 lookup fails, and rejects `$csp`, `##+js()` and `$rewrite` rules when their
-registry is unavailable. Never call `browser.*` from `lib/engine/filter-engine.js`.
+registry is unavailable. Never call `browser.*` from the `lib/engine/filter/` chain.
+
+The filter engine is a chain of classic-script modules sharing one internal
+namespace, `window.WildFireFilter`: each file imports what it needs from the
+namespace at load time and exports its own helpers back into it. `engine.js`
+defines the `FilterEngine` class core (state, indexing, `load()`); the
+`engine-compiled.js`, `engine-match.js` and `engine-cosmetic.js` parts extend
+`FilterEngine.prototype` with their method groups. The load order is pinned in
+the manifest, the compiler worker's `importScripts`, `tools/test.js`
+(`ENGINE_FILES`) and `tools/build.js` — keep all four in sync when adding a
+module. The chain stays self-contained and unit-testable; only `engine.js`
+publishes the public `FilterEngine`/`mapResourceType` globals.
 
 `matchRequest()` returns `redirect: {alias, captures}` when the winning rule
 carries `$redirect` or `$redirect-rule`. `RedirectResources.resolve()` is the
@@ -213,7 +238,7 @@ it validates each selector with `CSS.supports('selector', …)` and
 Procedural selectors (`:has-text()`, `:contains()`, `:matches-path()`, `:has()`,
 `:nth-ancestor()`, `:upward()`, `:min-text-length()`, `:matches-attr()`,
 `:matches-css()`, `:xpath()`, `:not()`, `:matches-media()`) are parsed in
-`lib/engine/filter-engine.js` into trees with `base` plus ordered `steps`; malformed or
+`lib/engine/filter/parse-procedural.js` into trees with `base` plus ordered `steps`; malformed or
 unsafe ones are recorded in `engine.rejectedCosmetic` and never sent to pages.
 `getProcedural(host)` merges generic and domain trees and subtracts `#@#`
 exceptions. Background sends them in the same `wildfire:apply` message as CSS.
@@ -416,9 +441,9 @@ rule is live. Invalid rules land in `engine.rejectedCosmetic`. Evaluation
 lives entirely in `lib/engine/procedural.js` and `content/cosmetic.js` — never in
 injected script.
 
-Add new syntax by extending `lib/engine/filter-engine.js` **and** `tools/test.js` in
-the same change. `README.md` gets a syntax-table row when the feature is
-user-visible.
+Add new syntax by extending the `lib/engine/filter/` chain (parser **and** the
+relevant engine part) **and** `tools/test.js` in the same change. `README.md`
+gets a syntax-table row when the feature is user-visible.
 
 ---
 

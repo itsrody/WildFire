@@ -132,7 +132,7 @@ text, function source, or executable strings.
 
 The extension keeps its current responsibilities:
 
-1. Parse filter text in `lib/engine/filter-engine.js`.
+1. Parse filter text in the `lib/engine/filter/` module chain.
 2. Canonicalize aliases and merge `#@#+js()` / `#@%#//scriptlet()` exceptions.
 3. Reject unknown, malformed, unsafe, and `trusted-*` aliases.
 4. Build `engine.getScriptletPayload()`.

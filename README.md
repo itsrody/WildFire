@@ -13,7 +13,7 @@ APIs and a small filter engine.
 ```
 manifest.json          Firefox MV2 manifest, gecko floor 153.0
 background.js          webRequest blocking, cosmetic injection, message API
-lib/engine/            filter parser + matcher, procedural DOM evaluator
+lib/engine/            filter engine module chain (filter/), procedural DOM evaluator
 lib/compile/           filter compiler, worker, compiled-filter cache
 lib/resources/         curated scriptlet / CSP / redirect / rewrite registries
 lib/state/             storage wrapper, remote lists, request scope

@@ -7,13 +7,28 @@ const path = require('path');
 const vm = require('vm');
 
 const ROOT = path.resolve(__dirname, '..');
+/* The filter engine is a chain of classic-script modules; load order matters. */
+const ENGINE_FILES = [
+  'lib/engine/filter/constants.js',
+  'lib/engine/filter/utils.js',
+  'lib/engine/filter/pattern.js',
+  'lib/engine/filter/parse-network.js',
+  'lib/engine/filter/parse-procedural.js',
+  'lib/engine/filter/parse-scriptlet.js',
+  'lib/engine/filter/parse-cosmetic.js',
+  'lib/engine/filter/engine.js',
+  'lib/engine/filter/engine-compiled.js',
+  'lib/engine/filter/engine-match.js',
+  'lib/engine/filter/engine-cosmetic.js'
+];
+const loadEngine = target => ENGINE_FILES.forEach(file => {
+  vm.runInContext(fs.readFileSync(path.join(ROOT, file), 'utf8'), target, { filename: file });
+});
 const context = vm.createContext({
   console, URL, CSS: { supports: () => true }, location: { hostname: 'page.example' }
 });
 context.window = context;
-vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/engine/filter-engine.js'), 'utf8'), context, {
-  filename: 'filter-engine.js'
-});
+loadEngine(context);
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/state/document-scope.js'), 'utf8'), context, {
   filename: 'document-scope.js'
 });
@@ -1705,7 +1720,7 @@ async function testStaleGenerationWorkerHang() {
 
   const ctx0 = vm.createContext({ console, URL, Map, Set, Array, Object, String, RegExp, JSON, Math, Boolean, Number });
   ctx0.window = ctx0;
-  vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/engine/filter-engine.js'), 'utf8'), ctx0);
+  loadEngine(ctx0);
   const F = ctx0.FilterEngine;
   const fakeCompiled = text => { const e = new F(null, () => '', null, () => false); e.load(text); return e.toCompiled(); };
 
@@ -1748,7 +1763,7 @@ async function testStaleGenerationWorkerHang() {
     contentScripts: { register: async () => ({ unregister: async () => {} }) },
     publicSuffix: { getDomain: host => host.split('.').slice(-2).join('.') }
   };
-  ['lib/state/store.js', 'lib/engine/filter-engine.js', 'lib/state/document-scope.js', 'lib/resources/redirect-resources.js', 'lib/state/remote-lists.js', 'lib/resources/csp-resources.js', 'lib/resources/scriptlets.js', 'lib/resources/rewrite-resources.js', 'lib/compile/compile-cache.js', 'lib/compile/compiler.js']
+  ['lib/state/store.js', ...ENGINE_FILES, 'lib/state/document-scope.js', 'lib/resources/redirect-resources.js', 'lib/state/remote-lists.js', 'lib/resources/csp-resources.js', 'lib/resources/scriptlets.js', 'lib/resources/rewrite-resources.js', 'lib/compile/compile-cache.js', 'lib/compile/compiler.js']
     .forEach(f => vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f }));
   const bgSource = fs.readFileSync(path.join(ROOT, 'background.js'), 'utf8')
     .replace(/  init\(\);\n}\)\(\);\s*$/, '  globalThis.__wildfireTest = { loadFilters, engine, getState: () => state, setState: p => { state = Object.assign({}, state, p); }, compiler }; init(); })();');
@@ -1897,7 +1912,7 @@ async function testBackgroundLoadFiltersIntegration() {
   };
 
   [
-    'lib/state/store.js', 'lib/engine/filter-engine.js', 'lib/state/document-scope.js', 'lib/resources/redirect-resources.js',
+    'lib/state/store.js', ...ENGINE_FILES, 'lib/state/document-scope.js', 'lib/resources/redirect-resources.js',
     'lib/state/remote-lists.js', 'lib/resources/csp-resources.js', 'lib/resources/scriptlets.js', 'lib/resources/rewrite-resources.js',
     'lib/compile/compile-cache.js', 'lib/compile/compiler.js'
   ].forEach(f => vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f }));
@@ -1995,7 +2010,7 @@ async function testRemoveRuntimeIntegration() {
     contentScripts:{register:async()=>({unregister:async()=>{}})},
     publicSuffix:{getDomain:host=>host.split('.').slice(-2).join('.')}
   };
-  ['lib/state/store.js','lib/engine/filter-engine.js','lib/state/document-scope.js','lib/resources/redirect-resources.js','lib/state/remote-lists.js','lib/resources/csp-resources.js','lib/resources/scriptlets.js','lib/resources/rewrite-resources.js','lib/compile/compile-cache.js','lib/compile/compiler.js']
+  ['lib/state/store.js',...ENGINE_FILES,'lib/state/document-scope.js','lib/resources/redirect-resources.js','lib/state/remote-lists.js','lib/resources/csp-resources.js','lib/resources/scriptlets.js','lib/resources/rewrite-resources.js','lib/compile/compile-cache.js','lib/compile/compiler.js']
     .forEach(f=>vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),ctx,{filename:f}));
   const bgSource = fs.readFileSync(path.join(ROOT,'background.js'),'utf8')
     .replace(/  init\(\);\n}\)\(\);\s*$/, '  globalThis.__wildfireTest = { loadFilters, engine, getState: () => state, setState: p => { state = Object.assign({}, state, p); } }; init(); })();');
@@ -2253,7 +2268,7 @@ async function testCompileInFlightDedup() {
     contentScripts: { register: async () => ({ unregister: async () => {} }) },
     publicSuffix: { getDomain: h => h.split('.').slice(-2).join('.') }
   };
-  ['lib/state/store.js', 'lib/engine/filter-engine.js', 'lib/state/document-scope.js', 'lib/resources/redirect-resources.js',
+  ['lib/state/store.js', ...ENGINE_FILES, 'lib/state/document-scope.js', 'lib/resources/redirect-resources.js',
     'lib/state/remote-lists.js', 'lib/resources/csp-resources.js', 'lib/resources/scriptlets.js', 'lib/resources/rewrite-resources.js',
     'lib/compile/compile-cache.js']
     .forEach(f => vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f }));
