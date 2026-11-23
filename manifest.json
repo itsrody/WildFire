@@ -90,6 +90,7 @@
     {
       "matches": ["<all_urls>"],
       "js": [
+        "lib/wapi/wapi-client.js",
         "lib/engine/procedural/text.js",
         "lib/engine/procedural/nodes.js",
         "lib/engine/procedural/native.js",

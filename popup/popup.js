@@ -1,6 +1,7 @@
 (function () {
   'use strict';
 
+  const client = WildFireWapiClient.create();
   const elements = {
     status: document.getElementById('status'),
     count: document.getElementById('count'),
@@ -25,7 +26,7 @@
   async function refresh() {
     const tabs = await browser.tabs.query({ active: true, currentWindow: true });
     const url = tabs.length && tabs[0].url ? tabs[0].url : '';
-    const result = await browser.runtime.sendMessage({ type: 'wildfire:state', url });
+    const result = await client.send('state', { url });
     site = result.site || site;
     applyResult(result);
   }
@@ -56,25 +57,22 @@
   }
 
   elements.toggle.addEventListener('click', async () => {
-    applyResult(await browser.runtime.sendMessage({ type: 'wildfire:toggle' }));
+    applyResult(await client.send('toggle'));
   });
 
   elements.site.addEventListener('click', async () => {
-    const result = await browser.runtime.sendMessage({
-      type: 'wildfire:toggle-site',
-      host: site.host
-    });
+    const result = await client.send('toggle-site', { host: site.host });
     site = Object.assign({}, site, { disabled: !site.disabled });
     applyResult(result);
   });
 
   elements.reload.addEventListener('click', async () => {
-    applyResult(await browser.runtime.sendMessage({ type: 'wildfire:reload' }));
+    applyResult(await client.send('reload'));
     elements.reload.textContent = 'Reloaded ✓';
     setTimeout(() => { elements.reload.textContent = 'Reload filters'; }, 1200);
   });
 
-  elements.options.addEventListener('click', () => browser.runtime.openOptionsPage());
+  elements.options.addEventListener('click', () => client.openOptions());
 
   refresh().catch(error => {
     elements.status.textContent = 'Could not load WildFire state';

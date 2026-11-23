@@ -38,6 +38,8 @@ const SCRIPTLET_FILES = [
   'lib/resources/scriptlets/adguard-definitions.js',
   'lib/resources/scriptlets/api.js'
 ];
+/* Client-side message backbone shared by extension pages and content scripts. */
+const CLIENT_FILE = 'lib/wapi/wapi-client.js';
 /* Background controller is a classic-script chain loaded before the bootstrap. */
 const WAPI_FILES = [
   'lib/wapi/wapi.js',
@@ -55,6 +57,7 @@ const loadFiles = (target, files) => files.forEach(file => {
 });
 const loadEngine = target => loadFiles(target, ENGINE_FILES);
 const loadScriptlets = target => loadFiles(target, SCRIPTLET_FILES);
+const loadClient = target => loadFiles(target, [CLIENT_FILE]);
 const context = vm.createContext({
   console, URL, CSS: { supports: () => true }, location: { hostname: 'page.example' }
 });
@@ -3130,6 +3133,7 @@ async function testPopupPerSiteDisplay() {
       }
     }
   });
+  loadClient(ctx);
   vm.runInContext(fs.readFileSync(path.join(ROOT, 'popup/popup.js'), 'utf8'), ctx, {
     filename: 'popup.js'
   });
@@ -3378,6 +3382,92 @@ async function testWapiBackbone() {
   await instance.ready;
 }
 
+async function testWapiClient() {
+  const sent = [];
+  let opened = 0;
+  const hub = () => {
+    const listeners = [];
+    return {
+      listeners,
+      addListener(listener) { listeners.push(listener); },
+      removeListener(listener) {
+        const index = listeners.indexOf(listener);
+        if (index !== -1) listeners.splice(index, 1);
+      }
+    };
+  };
+  const messages = hub();
+  const ctx = vm.createContext({
+    console,
+    browser: {
+      runtime: {
+        onMessage: messages,
+        sendMessage: async message => {
+          sent.push(message);
+          return { ok: true, echo: message.type };
+        },
+        openOptionsPage: () => { opened += 1; }
+      }
+    }
+  });
+  loadClient(ctx);
+  const { WildFireWapiClient, wapiClient } = ctx;
+  assert.strictEqual(wapiClient, WildFireWapiClient,
+    'wapi-client is exposed as the canonical client global');
+
+  const client = WildFireWapiClient.create();
+  assert.strictEqual(client.prefix, 'wildfire:');
+  const result = await client.send('state', { url: 'https://page.test/', type: 'spoofed' });
+  assert.strictEqual(result.echo, 'wildfire:state');
+  assert.strictEqual(sent[0].type, 'wildfire:state', 'payload cannot override the message type');
+  assert.strictEqual(sent[0].url, 'https://page.test/');
+  await client.send('wildfire:reload');
+  assert.strictEqual(sent[1].type, 'wildfire:reload', 'full types are not double-prefixed');
+  await client.openOptions();
+  assert.strictEqual(opened, 1, 'client wraps the native options opener');
+
+  const seen = [];
+  const off = client.on('apply', () => { seen.push('first'); return 'handled'; });
+  client.on('apply', () => { seen.push('second'); });
+  assert.strictEqual(messages.listeners.length, 1, 'one runtime listener routes all actions');
+  const listener = messages.listeners[0];
+  assert.strictEqual(listener({ type: 'wildfire:other' }, {}), undefined);
+  assert.strictEqual(listener({ type: 'other:apply' }, {}), undefined,
+    'unrelated prefixes are ignored');
+  assert.strictEqual(listener({ type: 'wildfire:apply' }, {}), 'handled');
+  assert.deepStrictEqual(seen, ['first', 'second']);
+  off();
+  seen.length = 0;
+  assert.strictEqual(listener({ type: 'wildfire:apply' }, {}), undefined);
+  assert.deepStrictEqual(seen, ['second'], 'off() removes only its own handler');
+  client.close();
+  assert.strictEqual(messages.listeners.length, 0, 'close() removes the runtime listener');
+
+  const customHub = hub();
+  const customSent = [];
+  const custom = WildFireWapiClient.create({
+    prefix: 'wf:',
+    browserApi: {
+      runtime: {
+        onMessage: customHub,
+        sendMessage: async message => { customSent.push(message); }
+      }
+    }
+  });
+  custom.on('apply', () => true);
+  const customListener = customHub.listeners[0];
+  assert.strictEqual(customListener({ type: 'wildfire:apply' }, {}), undefined,
+    'custom prefixes ignore the default prefix');
+  assert.strictEqual(customListener({ type: 'wf:apply' }, {}), true,
+    'custom prefixes route matching messages');
+  await custom.send('state');
+  assert.strictEqual(customSent[0].type, 'wf:state');
+  await assert.rejects(
+    () => WildFireWapiClient.create({ browserApi: {} }).send('state'),
+    /runtime\.sendMessage/,
+    'missing runtime messaging fails loudly');
+}
+
 async function testWapiContexts() {
   const sent = [];
   const wapiStub = {
@@ -3577,6 +3667,7 @@ Promise.resolve()
   .then(() => testRemoveRuntimeIntegration())
   .then(() => testPerSiteBadgeCounters())
   .then(() => testWapiBackbone())
+  .then(() => testWapiClient())
   .then(() => testWapiContexts())
   .then(() => testBackgroundControllerRobustness())
   .then(() => testPopupPerSiteDisplay())

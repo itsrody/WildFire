@@ -51,6 +51,7 @@ lib/
   wapi/                Firefox-native API backbone (wapi), no browser shims
     wapi.js            named listener registry, prefix router, tabs/alarms/content scripts
     wapi-contexts.js   per-frame content script context registry and frame targeting
+    wapi-client.js     client-side message API for extension pages and content scripts
   background/          background classic-script chain, load in order:
     helpers.js         counters/badge, snapshots, diagnostics and host helpers
     engine-host.js     engine lifecycle, compiler/cache, cosmetic and scriptlet sync
@@ -148,7 +149,11 @@ route frame-targeted messages. Action dispatch stays in `lib/background/messages
 The background chain owns both modules; do not add a Chromium shim or callback
 bridge there.
 
-Content scripts load in this order: `lib/engine/procedural/` chain (`text.js`,
+`wapi-client.js` is the matching client-side backbone: popup, options and content
+scripts use one prefix-filtered message API and one runtime listener instead of
+scattering `browser.runtime` calls. It does not replace the background router.
+
+Content scripts load in this order: `lib/wapi/wapi-client.js` → `lib/engine/procedural/` chain (`text.js`,
 `nodes.js`, `native.js`, `select.js`) → `content/cosmetic.js`, so the DOM
 evaluator exists before the content script runs. The chain shares one internal
 namespace, `window.WildFireProceduralCore`; `select.js` publishes the public
@@ -411,8 +416,8 @@ and fetching still requires a separate explicit step.
   a centered 760 px page. Reuse the existing CSS variables/colors rather than
   inventing a second palette.
 - Popup and options are classic scripts (no framework). They talk to the
-  background **only** through `browser.runtime.sendMessage` — never read
-  `browser.storage` or the engine directly.
+  background **only** through `wapi-client.js` — never read `browser.storage`
+  or the engine directly.
 - Keep user-facing strings branded WildFire, and keep the Firefox 153 / ESR
   note where it currently appears.
 

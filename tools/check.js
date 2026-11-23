@@ -31,6 +31,7 @@ function collectFiles(directory, skipDirs) {
 }
 
 const LOOP_STATEMENT = /^\s*(?:for\s*\(|while\s*\(|for\s+await\b|do\s*\{)/;
+const CLIENT_FILE = 'lib/wapi/wapi-client.js';
 const WAPI_FILES = [
   'lib/wapi/wapi.js',
   'lib/wapi/wapi-contexts.js'
@@ -88,10 +89,30 @@ if (manifest.background && manifest.background.scripts) {
   }
 }
 if (manifest.content_scripts) {
-  manifest.content_scripts.forEach(entry => (entry.js || []).forEach(value => referenced.add(value)));
+  manifest.content_scripts.forEach(entry => {
+    const files = entry.js || [];
+    files.forEach(value => referenced.add(value));
+    const clientIndex = files.indexOf(CLIENT_FILE);
+    const cosmeticIndex = files.indexOf('content/cosmetic.js');
+    if (clientIndex === -1 || (cosmeticIndex !== -1 && clientIndex > cosmeticIndex)) {
+      errors.push('wapi-client.js must load before content/cosmetic.js');
+    }
+  });
 }
+const clientTag = '<script src="../lib/wapi/wapi-client.js"></script>';
+[['popup/popup.html', '<script src="popup.js"></script>'],
+  ['options/options.html', '<script src="options.js"></script>']].forEach(([page, localTag]) => {
+  const source = fs.readFileSync(path.join(ROOT, page), 'utf8');
+  if (!source.includes(clientTag) || source.indexOf(localTag) < source.indexOf(clientTag)) {
+    errors.push(page + ' must load wapi-client.js before its own script');
+  }
+});
 
 const testSource = fs.readFileSync(path.join(ROOT, 'tools/test.js'), 'utf8');
+if (!testSource.includes("const CLIENT_FILE = '" + CLIENT_FILE + "';") ||
+    !testSource.includes('const loadClient = target => loadFiles(target, [CLIENT_FILE]);')) {
+  errors.push('tools/test.js must define the wapi-client fixture loader');
+}
 const testWapi = /const WAPI_FILES = \[([\s\S]*?)\];/.exec(testSource);
 if (!testWapi) {
   errors.push('tools/test.js must define WAPI_FILES');

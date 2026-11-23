@@ -1,6 +1,7 @@
 (function () {
   'use strict';
 
+  const client = WildFireWapiClient.create();
   const filters = document.getElementById('filters');
   const filterStatus = document.getElementById('filter-status');
   const sitesList = document.getElementById('sites');
@@ -62,7 +63,7 @@
       remove.type = 'button';
       remove.textContent = 'Remove';
       remove.addEventListener('click', async () => {
-        state = await browser.runtime.sendMessage({ type: 'wildfire:toggle-site', host: site });
+        state = await client.send('toggle-site', { host: site });
         renderSites();
       });
       item.append(label, remove);
@@ -89,7 +90,7 @@
       actions.className = 'list-actions';
       const added = lists.some(list => list.url === entry.url);
       const add = actionButton(added ? 'Added' : 'Add',
-        () => listAction('wildfire:add-list', entry.url));
+        () => listAction('add-list', entry.url));
       add.disabled = added;
       actions.appendChild(add);
       item.append(row, actions);
@@ -127,12 +128,12 @@
       const actions = document.createElement('div');
       actions.className = 'list-actions';
       actions.append(
-        actionButton(entry.text ? 'Update' : 'Fetch', () => listAction('wildfire:update-list', entry.url)),
+        actionButton(entry.text ? 'Update' : 'Fetch', () => listAction('update-list', entry.url)),
         actionButton(entry.enabled ? 'Disable' : 'Enable',
-          () => listAction('wildfire:set-list-enabled', entry.url, !entry.enabled)),
+          () => listAction('set-list-enabled', entry.url, !entry.enabled)),
         actionButton(entry.autoUpdate ? 'Auto: on' : 'Auto: off',
-          () => listAction('wildfire:set-list-auto', entry.url, !entry.autoUpdate)),
-        actionButton('Remove', () => listAction('wildfire:remove-list', entry.url))
+          () => listAction('set-list-auto', entry.url, !entry.autoUpdate)),
+        actionButton('Remove', () => listAction('remove-list', entry.url))
       );
       item.append(row, actions);
       listsList.appendChild(item);
@@ -140,13 +141,13 @@
   }
 
   async function listAction(type, url, value) {
-    const message = { type, url };
-    if (value !== undefined) message.value = value;
-    const result = await browser.runtime.sendMessage(message);
+    const payload = { url };
+    if (value !== undefined) payload.value = value;
+    const result = await client.send(type, payload);
     if (Array.isArray(result.lists)) lists = result.lists;
     if (result.state) state = result.state;
     if (result.ok === false) setListStatus(result.error || 'Action failed.');
-    else if (type === 'wildfire:update-list') setListStatus(result.changed ? 'Updated.' : 'Checked.');
+    else if (type === 'update-list') setListStatus(result.changed ? 'Updated.' : 'Checked.');
     else setListStatus('Saved.');
     renderLists();
     renderSuggested();
@@ -176,10 +177,7 @@
   }
 
   document.getElementById('save').addEventListener('click', async () => {
-    const result = await browser.runtime.sendMessage({
-      type: 'wildfire:set-filters',
-      value: filters.value
-    });
+    const result = await client.send('set-filters', { value: filters.value });
     state = result.state;
     filterStatus.textContent = 'Saved · ' + result.counts.network + ' network rules, ' +
       result.counts.cosmetic + ' cosmetic rules loaded.';
@@ -192,25 +190,19 @@
     event.preventDefault();
     const host = siteInput.value.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0];
     if (!host) return;
-    state = await browser.runtime.sendMessage({ type: 'wildfire:toggle-site', host });
+    state = await client.send('toggle-site', { host });
     siteInput.value = '';
     renderSites();
   });
 
   blockCspReports.addEventListener('change', async () => {
-    state = await browser.runtime.sendMessage({
-      type: 'wildfire:set-csp-report-blocking',
-      value: blockCspReports.checked
-    });
+    state = await client.send('set-csp-report-blocking', { value: blockCspReports.checked });
     renderCspReports();
   });
 
   cspReportForm.addEventListener('submit', async event => {
     event.preventDefault();
-    state = await browser.runtime.sendMessage({
-      type: 'wildfire:set-csp-report-allow',
-      value: cspReportAllow.value
-    });
+    state = await client.send('set-csp-report-allow', { value: cspReportAllow.value });
     renderCspReports();
     setCspReportStatus('Allowed endpoints saved.');
   });
@@ -219,19 +211,19 @@
     event.preventDefault();
     const url = listInput.value.trim();
     if (!url) return;
-    await listAction('wildfire:add-list', url);
+    await listAction('add-list', url);
     listInput.value = '';
   });
 
   document.getElementById('reset').addEventListener('click', async () => {
-    state = await browser.runtime.sendMessage({ type: 'wildfire:reset-stats' });
+    state = await client.send('reset-stats');
     render();
   });
 
   Promise.all([
-    browser.runtime.sendMessage({ type: 'wildfire:state' }),
-    browser.runtime.sendMessage({ type: 'wildfire:list-state' }),
-    browser.runtime.sendMessage({ type: 'wildfire:suggested-lists' })
+    client.send('state'),
+    client.send('list-state'),
+    client.send('suggested-lists')
   ])
     .then(results => {
       state = results[0].state;

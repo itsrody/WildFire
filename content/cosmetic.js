@@ -5,6 +5,7 @@
   if (window.__wildFireCosmeticReady) return;
   window.__wildFireCosmeticReady = true;
 
+  const client = WildFireWapiClient.create();
   const ATTRIBUTE_HIDE = '[data-wildfire-hidden]{display:none!important;}';
 
   let styleElement = null;
@@ -155,11 +156,9 @@
   if (typeof MutationObserver !== 'undefined') observer = new MutationObserver(scheduleReapply);
   watch(false, false, false);
 
-  browser.runtime.onMessage.addListener(message => {
-    if (message && message.type === 'wildfire:apply') apply(message.selectors, message.procedural);
-  });
+  client.on('apply', message => apply(message.selectors, message.procedural));
 
-  browser.runtime.sendMessage({ type: 'wildfire:cosmetic', url: location.href })
+  client.send('cosmetic', { url: location.href })
     .then(response => {
       if (response && response.ok) apply(response.selectors, response.procedural);
     })
