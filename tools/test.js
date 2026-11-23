@@ -202,7 +202,10 @@ plainEngineFast.load([
   '||ads.example/track.js',
   '|https://exact.example/ad.js|',
   '/banner/i',
-  '@@||ads.example/track.js$script'
+  '@@||ads.example/track.js$script',
+  'example.org*banner^',
+  '||wild.example^*/path/*/file.js',
+  '|https://start.example^*end|'
 ].join('\n'));
 assert.strictEqual(plainEngineFast.matchRequest('https://ads.example/track.js?x=1', 'script', '').blocked,
   false, 'plain host-anchor exception wins');
@@ -212,6 +215,22 @@ assert.strictEqual(plainEngineFast.matchRequest('https://exact.example/ad.js', '
   true, 'plain left+right anchor matches exactly');
 assert.strictEqual(plainEngineFast.matchRequest('https://cdn.example/BANNER.PNG', 'image', '').blocked,
   true, 'plain case-insensitive contains matches');
+assert.strictEqual(plainEngineFast.matchRequest('https://example.org/ads/banner/', 'image', '').blocked,
+  true, 'wildcard+separator regex matcher matches');
+const sepEngine = new FilterEngine();
+sepEngine.load('example.org*banner^');
+assert.strictEqual(sepEngine.matchRequest('https://example.org/ads/banner/', 'image', '').blocked,
+  true, 'separator matches /');
+assert.strictEqual(sepEngine.matchRequest('https://example.org/ads/bannerx.gif', 'image', '').blocked,
+  false, 'separator does not match alnum continuation');
+assert.strictEqual(sepEngine.matchRequest('https://example.org/ads/banner', 'image', '').blocked,
+  true, 'separator matches end of string');
+assert.strictEqual(plainEngineFast.matchRequest('https://wild.example/a/path/b/file.js', 'script', '').blocked,
+  true, 'host-anchor wildcard segments match');
+assert.strictEqual(plainEngineFast.matchRequest('https://start.example/a/b/end', 'script', '').blocked,
+  true, 'start+end anchored wildcard segments match');
+assert.strictEqual(plainEngineFast.matchRequest('https://start.example/a/b/end2', 'script', '').blocked,
+  false, 'end anchor is enforced for segment matcher');
 
 const importantEngine = new FilterEngine();
 importantEngine.load([
