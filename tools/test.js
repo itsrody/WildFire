@@ -728,6 +728,10 @@ assert.strictEqual(classify(nthRule, '/').mode, 'js', ':nth-ancestor stays in th
   const reRuleA = attrRules.find(r => r.steps.some(s => s.op==='matches-attr' && s.matcher));
   assert.strictEqual(WildFireProcedural.select(attrRoot, hasRuleA, '/').length, 2, 'matches-attr presence');
   assert.strictEqual(WildFireProcedural.select(attrRoot, reRuleA, '/').length, 1, 'matches-attr regex');
+  const attrPresence = attrEngine.getProcedural('example.com').find(r => r.steps.length===1 && r.steps[0].op==='matches-attr' && !r.steps[0].matcher);
+  const attrClass = WildFireProcedural.classify(attrPresence, '/');
+  assert.strictEqual(attrClass.mode, 'css', 'matches-attr presence compiles to native CSS');
+  assert.strictEqual(attrClass.selector, 'div[data-ad]', 'matches-attr native selector');
 
 const resolveCsp = alias => CspResources.resolve(alias);
 // Arrays built inside the vm realm have a different prototype than Node's.
