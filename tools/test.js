@@ -1785,6 +1785,33 @@ async function testRemoveRuntimeIntegration() {
   assert.ok(impBlock && impBlock.redirectUrl, 'important removeparam overrides exception');
   const impEx = apiHooks.onBeforeRequest({ url:'https://imp.example/x?id=1', type:'image', tabId:2, frameId:0, documentUrl:'https://site.test/' });
   assert.strictEqual(impEx, undefined, 'important remove exception wins');
+
+  // type scoping, navigation positive, removeheader badfilter/important, redirect precedence
+  api.setState({ enabled: true, customFilters: [
+    '||type.example^$removeparam=fbclid,image',
+    '||nav2.example^$removeparam=utm_source',
+    '||hdr.example^$removeheader=response:x-a',
+    '||hdr.example^$removeheader=response:x-a,badfilter',
+    '@@||hdr2.example^$removeheader=request:cookie',
+    '||hdr2.example^$removeheader=request:cookie,important',
+    '||mix.example^$removeparam=ad,script',
+    '||mix.example^$script'
+  ].join('\n'), disabledSites: [] });
+  await api.loadFilters(true); await new Promise(r=>setTimeout(r,30));
+  const typeNo = apiHooks.onBeforeRequest({ url:'https://type.example/x?fbclid=1', type:'script', tabId:2, frameId:0, documentUrl:'https://site.test/' });
+  assert.strictEqual(typeNo, undefined, 'removeparam type scope respected');
+  const typeYes = apiHooks.onBeforeRequest({ url:'https://type.example/x?fbclid=1', type:'image', tabId:2, frameId:0, documentUrl:'https://site.test/' });
+  assert.ok(typeYes && typeYes.redirectUrl, 'removeparam type scope matches');
+  const navPos = apiHooks.onBeforeRequest({ url:'https://nav2.example/?utm_source=x', type:'main_frame', tabId:2, frameId:0, documentUrl:'https://nav2.example/?utm_source=x' });
+  assert.ok(navPos && navPos.redirectUrl && !navPos.redirectUrl.includes('utm_source'), 'removeparam applies to navigation');
+  const hdrBad = apiHooks.onHeadersReceived({ url:'https://hdr.example/x', type:'xmlhttprequest', tabId:2, frameId:0, documentUrl:'https://site.test/', responseHeaders:[{name:'X-A',value:'1'}] });
+  assert.strictEqual(hdrBad, undefined, 'removeheader badfilter disables rule');
+  const hdrImp = apiHooks.onBeforeSendHeaders({ url:'https://hdr2.example/x', type:'xmlhttprequest', tabId:2, frameId:0, documentUrl:'https://site.test/', requestHeaders:[{name:'Cookie',value:'a=1'}] });
+  assert.ok(hdrImp && !hdrImp.requestHeaders.some(h=>h.name.toLowerCase()==='cookie'), 'important removeheader overrides exception');
+  const mix = apiHooks.onBeforeRequest({ url:'https://mix.example/app.js?ad=1', type:'script', tabId:2, frameId:0, documentUrl:'https://site.test/' });
+  assert.ok(mix && mix.redirectUrl && !mix.redirectUrl.includes('ad='), 'removeparam redirects before block evaluation');
+  const mix2 = apiHooks.onBeforeRequest({ url:'https://mix.example/app.js', type:'script', tabId:2, frameId:0, documentUrl:'https://site.test/' });
+  assert.ok(mix2 && mix2.cancel, 'cleaned URL is evaluated by normal blocking rules');
 }
 
 async function testIncrementalRemoteCompileSemantics() {
