@@ -291,12 +291,13 @@ fetched before consent, `data_collection_permissions.required` stays `["none"]`.
 | `*` wildcards, `^` separator | other advanced selectors |
 | `@@` exceptions | full EasyList-scale list curation |
 | `$script`, `$image`, `$~type`, other resource types | `domain=` with wildcard `.*` patterns |
-| `$third-party`, `$~third-party` | full EasyList-scale performance tuning |
+| `$third-party`, `$~third-party`, `$1p`, `$3p` | full EasyList-scale performance tuning |
 | `$domain=a\|~b` (`from=` alias) | |
-| `$document`, `$popup` | |
+| `$document`, `$popup`, `$important`, `$badfilter` | |
 | `$redirect=alias`, `$redirect-rule=alias` | |
 | `$rewrite=alias` (curated aliases only) | |
 | `$csp=alias` (curated aliases only) | |
+| `$removeparam`, `$removeheader` (capability-gated) | |
 | `/regex/` filters (`i`, `m`, `s`, `u` flags only) | |
 | `##selector`, `#@#selector` | |
 | `##sel:has-text("…")`, `##sel:matches-path(/re/)`, `##sel:has(sel)` | |
@@ -325,6 +326,14 @@ and WildFire-authored bytes. Unknown aliases are rejected into
 honor the usual type/domain/third-party options and `@@` exceptions, never
 apply to navigations, and count as one filtered request. `$rewrite-rule` and
 filter-supplied bodies are not supported.
+
+`$removeparam` and `$removeheader` are parsed/validated in the IR and applied
+only when compiled capabilities require them. `$removeparam` redirects to a
+cleaned URL when a request is not blocked/redirected by a normal rule;
+`$removeheader` strips validated request/response header names in
+`onBeforeSendHeaders`/`onHeadersReceived`. Both respect `@@`, `$important`,
+domain/type scoping, and compile-time `$badfilter`. Filter text cannot supply
+code or arbitrary header/body values.
 
 `$csp` rules name an alias from `lib/csp-resources.js`: `no-script`,
 `no-inline-script`, `no-frame`, `no-worker`, `no-object`, `no-font`, `no-media`,
