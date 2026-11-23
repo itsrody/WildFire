@@ -187,7 +187,7 @@
         matches: ['<all_urls>'],
         js: [
           { file: 'lib/scriptlets.js' },
-          { code: 'window.WildFireScriptlets.apply(' + JSON.stringify(fallbackRules) + ');' }
+          { code: '(() => { const api = window.WildFireScriptlets; try { delete window.WildFireScriptlets; } catch (e) {} if (api && typeof api.apply === "function") api.apply(' + JSON.stringify(fallbackRules) + '); })();' }
         ],
         runAt: 'document_start',
         allFrames: true

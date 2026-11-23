@@ -124,6 +124,9 @@ function smokeHtml() {
         contentMarker: document.documentElement.getAttribute('data-wf-content'),
         scriptletMarker: document.documentElement.getAttribute('data-wf-scriptlets'),
         wildFireApi: read(function () { return typeof window.WildFireScriptlets; }),
+        wildFireScriptletsOwn: read(function () {
+          return Object.prototype.hasOwnProperty.call(window, 'WildFireScriptlets');
+        }),
         wildFireGlobals: read(function () {
           return Object.getOwnPropertyNames(window).filter(function (name) {
             return /WildFire/i.test(name);
@@ -249,8 +252,12 @@ async function runCase(server, reports, extDir, name, tmpDir) {
 
 function summarize(report) {
   if (!report) return { ok: false, error: 'no report received' };
+  const leaked = report.wildFireApi !== 'undefined' ||
+    report.wildFireScriptletsOwn === true ||
+    (Array.isArray(report.wildFireGlobals) && report.wildFireGlobals.length > 0);
   return {
-    ok: report.windowValue === 'false' && report.bareValue === 'false',
+    ok: report.windowValue === 'false' && report.bareValue === 'false' && !leaked,
+    leaked,
     windowValue: report.windowValue,
     bareValue: report.bareValue,
     ownProperty: report.ownProperty,
@@ -258,6 +265,7 @@ function summarize(report) {
     contentMarker: report.contentMarker,
     scriptletMarker: report.scriptletMarker,
     wildFireApi: report.wildFireApi,
+    wildFireScriptletsOwn: report.wildFireScriptletsOwn,
     wildFireGlobals: report.wildFireGlobals
   };
 }
