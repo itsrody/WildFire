@@ -32,6 +32,9 @@
     fetchImpl: (url, options) => fetch(url, options),
     now: () => Date.now()
   });
+  const compiler = (typeof WildFireCompiler !== 'undefined' && WildFireCompiler.create)
+    ? WildFireCompiler.create({ browserApi: browser, timeoutMs: 15000 })
+    : null;
   const blockedPopups = new Set();
   // tabId -> source document URL for popups created by another browsing context.
   // onCreatedNavigationTarget gives us the source; onBeforeRequest gives us a
@@ -157,6 +160,25 @@
     }
   }
 
+  async function compileText(text) {
+    const source = String(text || '');
+    if (!source.trim()) return null;
+    if (compiler && typeof compiler.compile === 'function') {
+      try {
+        const result = await compiler.compile(source);
+        if (result && result.compiled) return result.compiled;
+      } catch (error) {
+        console.warn('WildFire: worker compile failed, using sync fallback', error);
+      }
+    }
+    try {
+      return WildFireCompiler.compileSync(source).compiled;
+    } catch (error) {
+      console.warn('WildFire: sync compile failed', error);
+      return null;
+    }
+  }
+
   async function loadFilters() {
     // Bundled rules first, then the user's own rules, then opted-in remote
     // lists. Exceptions still win regardless of where they were loaded.
@@ -176,7 +198,8 @@
         const response = await fetch(browser.runtime.getURL('filters/default.txt'));
         if (response.ok) {
           const bundled = await response.text();
-          engine.load(bundled);
+          const compiled = await compileText(bundled);
+          if (!compiled || !engine.loadCompiled(compiled)) engine.load(bundled);
         }
       } catch (error) {
         console.warn('WildFire: bundled filter list unavailable', error);
@@ -184,10 +207,16 @@
     }
 
     const custom = String(state.customFilters || '').trim();
-    if (custom) engine.load(custom, { append: true });
+    if (custom) {
+      const compiled = await compileText(custom);
+      if (!compiled || !engine.loadCompiled(compiled, { append: true })) engine.load(custom, { append: true });
+    }
     try {
       const remote = await remoteLists.enabledText();
-      if (remote) engine.load(remote, { append: true });
+      if (remote) {
+        const compiled = await compileText(remote);
+        if (!compiled || !engine.loadCompiled(compiled, { append: true })) engine.load(remote, { append: true });
+      }
     } catch (error) {
       console.warn('WildFire: remote list store unavailable', error);
     }

@@ -45,6 +45,7 @@
       "lib/csp-resources.js",
       "lib/scriptlets.js",
       "lib/rewrite-resources.js",
+      "lib/compiler.js",
       "background.js"
     ],
     "persistent": true
