@@ -38,6 +38,9 @@
   const compileCache = (typeof WildFireCompileCache !== 'undefined' && WildFireCompileCache.create)
     ? WildFireCompileCache.create({ browserApi: browser, version: FilterEngine.COMPILED_VERSION })
     : null;
+  let filterLoad = Promise.resolve();
+  let lastCustomHash = '';
+  let lastRemoteSignature = '';
   const blockedPopups = new Set();
   // tabId -> source document URL for popups created by another browsing context.
   // onCreatedNavigationTarget gives us the source; onBeforeRequest gives us a
@@ -201,50 +204,99 @@
     return compiled;
   }
 
-  async function loadFilters() {
-    // Bundled rules first, then the user's own rules, then opted-in remote
-    // lists. Exceptions still win regardless of where they were loaded.
-    engine.reset();
-    let bundledLoaded = false;
-    try {
-      const response = await fetch(browser.runtime.getURL('filters/default.compiled.json'));
-      if (response.ok) {
-        const compiled = await response.json();
-        bundledLoaded = engine.loadCompiled(compiled);
-      }
-    } catch (error) {
-      bundledLoaded = false;
+  function hashText(text) {
+    if (typeof WildFireCompileCache !== 'undefined' && typeof WildFireCompileCache.hashText === 'function') {
+      return WildFireCompileCache.hashText(text);
     }
-    if (!bundledLoaded) {
+    const str = String(text || '');
+    let h = 2166136261;
+    Array.from(str).forEach(ch => { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); });
+    return (h >>> 0).toString(16) + ':' + str.length;
+  }
+
+  async function remoteSignature() {
+    const snapshot = await remoteLists.get();
+    return snapshot.lists
+      .filter(entry => entry.enabled && entry.text)
+      .map(entry => entry.url + '\u001f' + (entry.hash || hashText(entry.text)))
+      .sort()
+      .join('\u001e');
+  }
+
+  async function loadFilters(force) {
+    const run = filterLoad.then(async () => {
+      const custom = String(state.customFilters || '').trim();
+      const customHash = custom ? hashText(custom) : '';
+      let remoteSig = '';
+      let remoteText = '';
       try {
-        const response = await fetch(browser.runtime.getURL('filters/default.txt'));
-        if (response.ok) {
-          const bundled = await response.text();
-          const compiled = await compileText(bundled);
-          if (!compiled || !engine.loadCompiled(compiled)) engine.load(bundled);
+        remoteSig = await remoteSignature();
+        if (remoteSig !== lastRemoteSignature || force) {
+          remoteText = await remoteLists.enabledText();
         }
       } catch (error) {
-        console.warn('WildFire: bundled filter list unavailable', error);
+        console.warn('WildFire: remote list state unavailable', error);
       }
-    }
 
-    const custom = String(state.customFilters || '').trim();
-    if (custom) {
-      const compiled = await compileText(custom);
-      if (!compiled || !engine.loadCompiled(compiled, { append: true })) engine.load(custom, { append: true });
-    }
-    try {
-      const remote = await remoteLists.enabledText();
-      if (remote) {
-        const compiled = await compileText(remote);
-        if (!compiled || !engine.loadCompiled(compiled, { append: true })) engine.load(remote, { append: true });
+      const customChanged = customHash !== lastCustomHash;
+      const remoteChanged = remoteSig !== lastRemoteSignature;
+      if (!force && !customChanged && !remoteChanged && ready) return;
+
+      engine.reset();
+      let bundledLoaded = false;
+      try {
+        const response = await fetch(browser.runtime.getURL('filters/default.compiled.json'));
+        if (response.ok) {
+          const compiled = await response.json();
+          bundledLoaded = engine.loadCompiled(compiled);
+        }
+      } catch (error) {
+        bundledLoaded = false;
       }
-    } catch (error) {
-      console.warn('WildFire: remote list store unavailable', error);
-    }
+      if (!bundledLoaded) {
+        try {
+          const response = await fetch(browser.runtime.getURL('filters/default.txt'));
+          if (response.ok) {
+            const bundled = await response.text();
+            const compiled = await compileText(bundled);
+            if (!compiled || !engine.loadCompiled(compiled)) engine.load(bundled);
+          }
+        } catch (error) {
+          console.warn('WildFire: bundled filter list unavailable', error);
+        }
+      }
 
-    await refreshAllCosmetic();
-    await syncScriptlets();
+      // Compile only when custom rules changed, or on forced rebuild.
+      if (custom && (customChanged || force || !ready)) {
+        const compiled = await compileText(custom);
+        if (!compiled || !engine.loadCompiled(compiled, { append: true })) engine.load(custom, { append: true });
+      } else if (custom) {
+        engine.load(custom, { append: true });
+      }
+
+      // Compile only when enabled remote list set/content changed, or on forced rebuild.
+      if (remoteSig) {
+        if (remoteChanged || force || !ready) {
+          if (!remoteText) remoteText = await remoteLists.enabledText();
+          if (remoteText) {
+            const compiled = await compileText(remoteText);
+            if (!compiled || !engine.loadCompiled(compiled, { append: true })) engine.load(remoteText, { append: true });
+          }
+        } else if (remoteText) {
+          engine.load(remoteText, { append: true });
+        } else {
+          const text = await remoteLists.enabledText();
+          if (text) engine.load(text, { append: true });
+        }
+      }
+
+      lastCustomHash = customHash;
+      lastRemoteSignature = remoteSig;
+      await refreshAllCosmetic();
+      await syncScriptlets();
+    });
+    filterLoad = run.catch(() => undefined);
+    return run;
   }
 
   // Firefox registers this content script at document_start so countermeasure
@@ -296,11 +348,20 @@
     }
   }
 
+  function remoteRulesChanged(result) {
+    if (!result || !result.ok) return false;
+    const action = result.action || '';
+    if (action === 'update') return Boolean(result.changed);
+    if (action === 'set-enabled' || action === 'remove') return true;
+    return false;
+  }
+
   async function applyRemoteResult(result) {
     if (!result.ok) {
       return { ok: false, error: result.error, lists: result.snapshot.lists };
     }
-    await loadFilters();
+    if (remoteRulesChanged(result)) await loadFilters();
+    else if (result.action === 'set-auto') await syncRemoteAlarm();
     try {
       await syncRemoteAlarm();
     } catch (error) {
