@@ -730,6 +730,245 @@ WildFireScriptlets.apply([
 assert.strictEqual(context.wildFireInvalidAlias, undefined,
   'invalid aliases never reach execution');
 
+function scriptletContext(hostname) {
+  const sandbox = {
+    console,
+    location: { hostname },
+    document: { currentScript: { textContent: 'page code', getAttribute: () => 'ad.js' } },
+    setTimeout: () => 42,
+    setInterval: () => 43,
+    open: () => ({ closed: false }),
+    addEventListener: () => 'listened'
+  };
+  sandbox.window = sandbox;
+  const vmContext = vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/scriptlets.js'), 'utf8'), vmContext, {
+    filename: 'scriptlets.js'
+  });
+  return vmContext;
+}
+
+assert.strictEqual(WildFireScriptlets.canonical('set'), 'set-constant',
+  'short aliases canonicalize to one behavior');
+assert.strictEqual(WildFireScriptlets.canonical('aopr'), 'abort-on-property-read',
+  'aopr maps to the property-read trap');
+assert.strictEqual(WildFireScriptlets.canonical('acs'), 'abort-current-script',
+  'acs maps to abort-current-script');
+assert.strictEqual(WildFireScriptlets.validate('set', ['wildFireFlag', 'false']), '',
+  'short aliases validate through the canonical definition');
+assert.strictEqual(WildFireScriptlets.validate('trusted-replace-fetch-response', ['x']),
+  'trusted scriptlets require a trusted source', 'trusted aliases stay rejected');
+assert.strictEqual(WildFireScriptlets.validate('noeval-if', ['/ads{2,3}/i']), '',
+  'safe regex needles validate');
+assert.notStrictEqual(WildFireScriptlets.validate('noeval-if', ['/(a+)+/']), '',
+  'nested quantifier needles are rejected');
+assert.notStrictEqual(WildFireScriptlets.validate('noeval-if', ['/x/gg']), '',
+  'stateful regex flags are rejected');
+assert.notStrictEqual(WildFireScriptlets.validate('noeval', ['extra']), '',
+  'wrong argument counts are rejected');
+
+const expandedContext = scriptletContext('page.example');
+expandedContext.WildFireScriptlets.apply([
+  { alias: 'set', args: ['wildFireEmptyArr', 'emptyArr'], domains: [], isException: false },
+  { alias: 'set-constant', args: ['wildFireEmptyObj', 'emptyObj'], domains: [], isException: false },
+  { alias: 'set-constant', args: ['wildFireEmptyStr', 'emptyStr'], domains: [], isException: false },
+  { alias: 'set-constant', args: ['wildFireUndefined', 'undefined'], domains: [], isException: false }
+]);
+assert.deepStrictEqual(Array.from(expandedContext.wildFireEmptyArr), [],
+  'emptyArr creates a fresh array');
+assert.deepStrictEqual(Object.keys(expandedContext.wildFireEmptyObj), [],
+  'emptyObj creates a fresh object');
+assert.strictEqual(expandedContext.wildFireEmptyStr, '', 'emptyStr freezes an empty string');
+assert.strictEqual(expandedContext.wildFireUndefined, undefined,
+  'undefined is a supported constant token');
+
+const scopeContext = scriptletContext('skip.page.example');
+scopeContext.WildFireScriptlets.apply([
+  { alias: 'set-constant', args: ['wildFireScopedFlag', 'true'],
+    domains: ['page.example', '~skip.page.example'], isException: false }
+]);
+assert.strictEqual(scopeContext.wildFireScopedFlag, undefined,
+  'a negated domain keeps the scriptlet off that host');
+
+const runtimeContext = scriptletContext('page.example');
+runtimeContext.WildFireScriptlets.apply([
+  { alias: 'noeval-if', args: ['/blocked/'], domains: [], isException: false },
+  { alias: 'prevent-setTimeout', args: ['/blockedTimer/'], domains: [], isException: false },
+  { alias: 'addEventListener-defuser', args: ['/blockedEvent/'], domains: [], isException: false },
+  { alias: 'prevent-window-open', args: ['/blocked-popup/'], domains: [], isException: false },
+  { alias: 'window.name-defuser', args: [], domains: [], isException: false }
+]);
+assert.strictEqual(runtimeContext.eval('blocked code'), undefined,
+  'noeval-if drops a matching eval');
+assert.strictEqual(runtimeContext.eval('1 + 1'), 2,
+  'noeval-if passes through other eval calls');
+assert.strictEqual(runtimeContext.setTimeout(() => {}, 100, 'blockedTimer'), 0,
+  'prevent-setTimeout defuses a matching timer');
+assert.strictEqual(runtimeContext.open('https://ads.example/blocked-popup'), null,
+  'prevent-window-open defuses a matching popup');
+assert.strictEqual(runtimeContext.name, '', 'window.name-defuser clears window.name');
+runtimeContext.addEventListener('blockedEvent', () => {});
+assert.strictEqual(runtimeContext.WildFireScriptlets.validate('abort-current-script',
+  ['wildFireProbe', '/page code/i', '/ad\\.js/i']), '',
+  'abort-current-script accepts literals and regex needles');
+
+const needleEngine = new FilterEngine(null, null, WildFireScriptlets);
+needleEngine.load([
+  'page.example##+js(prevent-setTimeout, /foo{2,3},bar/)',
+  'page.example##+js(set-constant, wildFireQuoted, "false")'
+].join('\n'));
+assert.strictEqual(needleEngine.rejectedScriptlets.length, 0,
+  'regex needles with commas are parsed as one argument');
+const needlePayload = Array.from(needleEngine.getScriptletPayload(), rule => ({
+  alias: rule.alias, args: Array.from(rule.args)
+}));
+assert.deepStrictEqual(needlePayload[0], {
+  alias: 'prevent-settimeout', args: ['/foo{2,3},bar/']
+}, 'commas inside a regex needle do not split arguments');
+assert.deepStrictEqual(needlePayload[1], {
+  alias: 'set-constant', args: ['wildFireQuoted', 'false']
+}, 'quoted arguments are unquoted before validation');
+
+assert.strictEqual(WildFireScriptlets.canonical('ra'), 'remove-attr',
+  'ra canonicalizes to remove-attr');
+assert.strictEqual(WildFireScriptlets.canonical('cookie-remover'), 'remove-cookie',
+  'cookie-remover canonicalizes to remove-cookie');
+assert.strictEqual(WildFireScriptlets.validate('set-attr', ['a', 'href', '/x']), '',
+  'set-attr accepts a plain attribute value');
+assert.notStrictEqual(WildFireScriptlets.validate('set-attr', ['a', 'onclick=alert(1)', '/x']), '',
+  'attribute names cannot contain injected code');
+assert.notStrictEqual(WildFireScriptlets.validate('set-cookie', ['a;b', 'x']), '',
+  'cookie names cannot inject attributes');
+assert.strictEqual(WildFireScriptlets.validate('href-sanitizer', ['a', '[href]', 'removeHash']), '',
+  'href-sanitizer accepts a curated transform');
+assert.notStrictEqual(WildFireScriptlets.validate('href-sanitizer', ['a', '[href]', 'eval(1)']), '',
+  'href-sanitizer rejects unknown transforms');
+
+function domScriptletContext() {
+  const sandbox = {
+    console,
+    URL,
+    Date,
+    location: { hostname: 'page.example', href: 'https://page.example/', pathname: '/', search: '' },
+    document: { cookie: '' },
+    setTimeout: (handler, delay) => { sandbox.timerDelay = delay; return 42; },
+    close: () => { sandbox.closed = true; },
+    alert: () => {},
+    confirm: () => false,
+    prompt: () => '',
+    localStorage: { getItem: () => null, setItem: (key, value) => { sandbox.stored = [key, value]; } },
+    sessionStorage: { getItem: () => null, setItem: () => {} }
+  };
+  sandbox.window = sandbox;
+  const vmContext = vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/scriptlets.js'), 'utf8'), vmContext, {
+    filename: 'scriptlets.js'
+  });
+  return vmContext;
+}
+
+const domContext = domScriptletContext();
+domContext.WildFireScriptlets.apply([
+  { alias: 'set-cookie', args: ['wildFireCookie', '1'], domains: [], isException: false },
+  { alias: 'set-local-storage-item', args: ['wildFireKey', 'value'], domains: [], isException: false }
+]);
+assert.ok(String(domContext.document.cookie).includes('wildFireCookie=1'),
+  'set-cookie writes the curated cookie through the page document');
+assert.deepStrictEqual(domContext.stored, ['wildFireKey', 'value'],
+  'set-local-storage-item writes validated data');
+
+const timerContext = domScriptletContext();
+timerContext.WildFireScriptlets.apply([
+  { alias: 'adjust-settimeout', args: ['', '1000', '0.5'], domains: [], isException: false }
+]);
+timerContext.setTimeout(() => {}, 1000);
+assert.strictEqual(timerContext.timerDelay, 500,
+  'adjust-settimeout multiplies a matching delay by the curated boost');
+
+const throwContext = domScriptletContext();
+throwContext.mightThrow = () => { throw new Error('page error'); };
+throwContext.WildFireScriptlets.apply([
+  { alias: 'call-nothrow', args: ['mightThrow'], domains: [], isException: false }
+]);
+assert.strictEqual(throwContext.mightThrow(), undefined,
+  'call-nothrow swallows the page exception');
+
+const alertContext = domScriptletContext();
+alertContext.WildFireScriptlets.apply([
+  { alias: 'alert-buster', args: [], domains: [], isException: false }
+]);
+assert.strictEqual(alertContext.confirm('sure'), true,
+  'alert-buster makes confirm return true');
+
+assert.notStrictEqual(WildFireScriptlets.validate('json-prune', ['ad', 'x; eval(1)']), '',
+  'prune paths cannot contain filter-supplied code');
+assert.strictEqual(WildFireScriptlets.validate('prevent-fetch', ['ads.example', 'emptyObj']), '',
+  'prevent-fetch accepts a curated response directive');
+assert.notStrictEqual(WildFireScriptlets.validate('prevent-fetch', ['ads', 'fetch(1)']), '',
+  'prevent-fetch rejects an unknown directive');
+assert.strictEqual(WildFireScriptlets.canonical('no-fetch-if'), 'prevent-fetch',
+  'no-fetch-if canonicalizes to prevent-fetch');
+
+function dataScriptletContext() {
+  const sandbox = {
+    console, Promise, WeakSet, URL, Date, Math,
+    JSON: { parse: (text, reviver) => JSON.parse(text, reviver), stringify: (value) => JSON.stringify(value) },
+    location: { hostname: 'page.example', href: 'https://page.example/' },
+    fetch: url => { sandbox.fetched = url; return 'original'; }
+  };
+  sandbox.window = sandbox;
+  const vmContext = vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/scriptlets.js'), 'utf8'), vmContext, {
+    filename: 'scriptlets.js'
+  });
+  return vmContext;
+}
+
+const pruneContext = dataScriptletContext();
+pruneContext.WildFireScriptlets.apply([
+  { alias: 'json-prune', args: ['ad'], domains: [], isException: false }
+]);
+assert.deepStrictEqual(pruneContext.JSON.parse('{"one":1,"ad":2}'), { one: 1 },
+  'json-prune removes a named property from parse results');
+
+const obligatoryContext = dataScriptletContext();
+obligatoryContext.WildFireScriptlets.apply([
+  { alias: 'json-prune', args: ['ad', 'ads.url'], domains: [], isException: false }
+]);
+assert.deepStrictEqual(obligatoryContext.JSON.parse('{"one":1,"ad":2,"ads":{}}'),
+  { one: 1, ad: 2, ads: {} },
+  'obligatory properties gate pruning');
+
+const wildcardContext = dataScriptletContext();
+wildcardContext.WildFireScriptlets.apply([
+  { alias: 'json-prune', args: ['a.*.ad'], domains: [], isException: false }
+]);
+assert.deepStrictEqual(
+  wildcardContext.JSON.parse('{"a":{"x":{"ad":1,"keep":2},"y":{"ad":3,"keep":4}}}'),
+  { a: { x: { keep: 2 }, y: { keep: 4 } } },
+  'json-prune expands wildcard path segments');
+
+const fetchContext = dataScriptletContext();
+fetchContext.WildFireScriptlets.apply([
+  { alias: 'prevent-fetch', args: ['ads.example', 'emptyObj'], domains: [], isException: false }
+]);
+assert.strictEqual(typeof fetchContext.fetch('https://ads.example/x.js').then, 'function',
+  'prevent-fetch defuses a matching call with a resolved response object');
+assert.strictEqual(fetchContext.fetched, undefined,
+  'the original fetch is never called for a matching URL');
+assert.strictEqual(fetchContext.fetch('https://page.example/data.json'), 'original',
+  'prevent-fetch passes through non-matching URLs');
+assert.strictEqual(fetchContext.fetched, 'https://page.example/data.json',
+  'the original fetch sees non-matching URLs');
+
+const detectorContext = dataScriptletContext();
+detectorContext.BlockAdblock = () => true;
+detectorContext.WildFireScriptlets.apply([
+  { alias: 'nobab', args: [], domains: [], isException: false }
+]);
+assert.strictEqual(detectorContext.BlockAdblock(), false,
+  'nobab defuses the BlockAdblock detector');
+
 const rewriteEngine = new FilterEngine(null, null, null,
   alias => RewriteResources.hasAlias(alias));
 rewriteEngine.load([

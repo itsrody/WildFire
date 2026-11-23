@@ -135,20 +135,35 @@ Some sites probe for blocker side effects. `##+js(alias, args)` lets a filter
 ask WildFire to neutralize those probes **before page scripts run**, using
 Firefox's `browser.contentScripts.register()` at `document_start`. The rules
 are accepted aliases and plain data only — no filter ever supplies code, and
-there is no `eval` in WildFire. `#@#+js(...)` cancels the same alias and
-arguments on matching domains.
+WildFire never executes filter text. `#@#+js(...)` cancels the same alias and
+arguments on matching domains, including short aliases (`set` cancels
+`set-constant`, `aopr` cancels `abort-on-property-read`).
 
-Available aliases:
+Implemented uBO-compatible alias families:
 
-| Alias | Effect |
+| Family | Examples |
 | --- | --- |
-| `set-constant(property, value)` | Freeze a property to `true`, `false`, `null`, `0`, or `1` |
-| `abort-on-property-read(property)` | Throw when a page reads the property |
-| `abort-on-property-write(property)` | Throw when a page writes the property |
+| Property traps | `set-constant` (`set`), `abort-on-property-read` (`aopr`), `abort-on-property-write` (`aopw`), `abort-on-stack-trace` (`aost`) |
+| Script guards | `abort-current-script` (`acs`), `noeval`, `noeval-silent`, `noeval-if` |
+| Timer / event defusers | `prevent-setTimeout`, `prevent-setInterval`, `adjust-setTimeout`, `adjust-setInterval`, `addEventListener-defuser`, `prevent-requestAnimationFrame`, `prevent-refresh` |
+| Window / browser defusers | `prevent-window-open`, `close-window`, `window.name-defuser`, `nowebrtc`, `webrtc-if`, `alert-buster`, `prevent-dialog` |
+| DOM / style | `remove-attr` (`ra`), `remove-class` (`rc`), `set-attr`, `remove-node-text` (`rmnt`), `disable-newtab-links`, `href-sanitizer`, `overlay-buster`, `spoof-css`, `prevent-canvas` |
+| Cookies / storage | `set-cookie`, `set-cookie-reload`, `remove-cookie`, `set-local-storage-item`, `set-session-storage-item` |
+| Data | `json-prune`, `evaldata-prune`, `prevent-fetch`, `prevent-xhr` |
+| Detectors | `nobab`, `nobab2`, `nofab`, `fingerprint2`, `fingerprint3`, `popads`, `prebid-ads`, `ampproject_v0` |
 
-Properties are plain dotted paths such as `adblockDetected` or
-`window.config.flag`; anything else is rejected when the filter list loads and
-again before it runs. Updated scriptlets apply to pages opened after the change.
+Constants include `true`, `false`, `null`, `undefined`, `0`, `1`, `emptyObj`,
+`emptyArr` and `emptyStr`. Needles can be case-insensitive literals or a
+conservative `/regex/` with `i`, `m`, `s` or `u` flags; unsafe patterns are
+rejected at load time and never reach a page. Properties are plain dotted paths,
+and prototype paths such as `__proto__` are rejected. Every alias is validated
+again before it runs. `trusted-*` aliases stay rejected until WildFire has an
+explicit source-trust model.
+
+WildFire is working toward the full uBO catalog; remaining aliases land in
+batches with validators, original implementations, tests and a row here.
+AdGuard's `#%#//scriptlet()` syntax is planned after uBO parity. Updated
+scriptlets apply to pages opened after the change.
 
 ## Design notes / limits
 

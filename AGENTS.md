@@ -331,14 +331,17 @@ weaker policy. `$csp` accepts the same type/domain/third-party options as
 network rules, and applies to main documents without `$document`.
 
 Scriptlet rules use `##+js(alias, args)` and may be scoped by comma-separated
-domains or negated with `#@#+js(...)`. The only aliases are
-`abort-on-property-read(property)`, `abort-on-property-write(property)` and
-`set-constant(property, value)` from `lib/scriptlets.js`; values are limited to
-`true`, `false`, `null`, `0`, `1`, and properties must be plain dotted paths.
-Bad aliases, wrong arity, injected code and unterminated rules go into
+domains or negated with `#@#+js(...)`. The registry in `lib/scriptlets.js` owns
+one canonical alias per behavior plus uBO short aliases (`aopr`, `acs`, `set`,
+…); the engine canonicalizes names so an exception matches either spelling.
+Arguments are validated data: plain dotted property paths, fixed constant tokens
+(`true`, `false`, `null`, `undefined`, `0`, `1`, `emptyObj`, `emptyArr`,
+`emptyStr`), and safe literal/regex "needles" using the same conservative regex
+subset as network filters. Bad aliases, wrong arity, unsafe regexes, injected
+code, unterminated rules and every `trusted-*` alias go into
 `engine.rejectedScriptlets`. A `#@#` exception cancels the same alias/arguments
-on matching domains. This exists for sites that probe blockers; no filter can
-supply script text.
+on matching domains. The catalog grows toward full uBO compatibility in the
+phases in §8; AdGuard syntax is phase 2. No filter can supply script text.
 
 Procedural cosmetic rules are parsed into a base selector plus ordered steps.
 `:has-text()` and `:contains()` accept a quoted literal (case-insensitive) or a
@@ -408,11 +411,37 @@ cosmetic hiding.
 
 ## 8. Where to extend next
 
-These are the natural WildFire-native growth paths, in roughly this order.
-Each one must be written from scratch and land with tests:
+The product direction is full uBO scriptlet compatibility, followed by AdGuard
+scriptlet compatibility. This is a multi-release expansion of the registry in
+`lib/scriptlets.js`; every alias lands with a validator, an original
+implementation, tests, and a README row. Keep these load-bearing rules:
 
-1. More curated scriptlet aliases, always implemented in `lib/scriptlets.js`
-   with validated data arguments and never from filter-supplied script.
+- **No upstream code.** Public syntax docs are fine; copying or adapting uBO or
+  AdGuard source is not. Write every implementation here.
+- **No code from filter text.** No `eval`, no `Function`, no filter-supplied
+  script. Alias arguments are validated data only.
+- **No `trusted-*` yet.** Trusted-only aliases are rejected into
+  `engine.rejectedScriptlets` until an explicit source-trust model exists.
+- **Aliases are canonicalized.** Short names (`aopr`, `acs`, `set`, …) map to a
+  canonical name so `#@#+js()` exceptions match regardless of spelling.
+
+Phase 1 — uBO syntax (`##+js()`), in batches:
+
+1. **1A, core runtime** — registry with validators, short-alias map, safe regex
+   needles, expanded `set-constant` tokens, property traps, `abort-current-script`,
+   `noeval*`, timer/event defusers, `window.name-defuser`, `prevent-window-open`.
+2. **1B, DOM and storage** — `remove-attr`, `remove-class`, `set-attr`,
+   `set-cookie`, `remove-cookie`, `set-local-storage-item`, link/newtab defusers.
+3. **1C, data and defusers** — `json-prune*`, `xml-prune`, `m3u-prune`,
+   `prevent-fetch`/`prevent-xhr`, `nobab`/`nofab`/fingerprint defusers, remaining
+   general aliases.
+
+Phase 2 — AdGuard syntax:
+
+4. Parse `[domains]#%#//scriptlet('name', 'arg', …)` and
+   `#@%#//scriptlet()` exceptions, add the AdGuard alias registry and its
+   string-only argument validation, and reuse the same Phase 1 runtime. AdGuard
+   trusted scriptlets stay rejected under the same rule as uBO `trusted-*`.
 
 Already implemented and tested: Firefox-native registrable-domain scoping
 (`publicSuffix`), `documentId`-keyed request scope, the 4-character token index,
@@ -422,8 +451,12 @@ procedural cosmetic selectors (including native-CSS compilation, `:contains()`,
 and `:nth-ancestor()`), opt-in remote lists with a deterministic update store
 and user consent, curated `$csp` response-header filtering on Firefox's
 `onHeadersReceived`, fixed-mapping `$rewrite` response bodies through Firefox's
-`filterResponseData()` stream filter, and a curated scriptlet alias registry
-injected at `document_start` through Firefox's `contentScripts.register()`.
+`filterResponseData()` stream filter, and a scriptlet alias registry injected at
+`document_start` through Firefox's `contentScripts.register()`. Phase 1A, 1B and
+the core of 1C are implemented: canonical short aliases, safe needles, property
+traps, eval/timer/event/window defusers, DOM/storage aliases, `json-prune` with
+wildcard paths, `prevent-fetch`/`prevent-xhr` and common detector defusers.
+Remaining general aliases and Phase 2 AdGuard syntax are still to come.
 
 Do not start a later item while an earlier one is only half-implemented. A
 small, correct, fully tested engine is the product.
