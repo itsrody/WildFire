@@ -17,7 +17,10 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/document-scope.js'), 'utf8'
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/redirect-resources.js'), 'utf8'), context, {
   filename: 'redirect-resources.js'
 });
-const { FilterEngine, mapResourceType, DocumentScope, RedirectResources } = context;
+vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/procedural.js'), 'utf8'), context, {
+  filename: 'procedural.js'
+});
+const { FilterEngine, mapResourceType, DocumentScope, RedirectResources, WildFireProcedural } = context;
 
 const engine = new FilterEngine();
 engine.load([
@@ -356,6 +359,85 @@ const unknownRedirect = redirectEngine.matchRequest(
 assert.strictEqual(unknownRedirect.blocked, true, 'unknown-alias rule still blocks');
 assert.strictEqual(redirectFor(unknownRedirect), '',
   'unknown alias falls back to a plain cancel');
+
+// Procedural cosmetic selectors are parsed into trees and evaluated by DOM code.
+const procEngine = new FilterEngine();
+procEngine.load([
+  'example.com##.ad:has-text("Buy now")',
+  'example.com##.promo:matches-path(/deals/)',
+  'example.com##.box:has(.inner)',
+  'example.com##.deep:has(.child:has-text("x"))',
+  'example.com##.also:has-text(/SALE/i):has(.tag)',
+  '##.generic:has-text("hi")',
+  'example.com##.bad:has-text("unclosed',
+  'example.com##.bad:matches-path(/(a+)+/)',
+  'example.com#@#.ad:has-text("Buy now")'
+].join('\n'));
+assert.strictEqual(procEngine.counts.cosmetic, 7, 'valid procedural rules are counted');
+assert.strictEqual(procEngine.rejectedCosmetic.length, 2, 'malformed procedural rules are rejected');
+assert.ok(procEngine.rejectedCosmetic.some(entry => entry.reason === 'unbalanced procedural selector'),
+  'unbalanced procedural selector is rejected');
+assert.ok(procEngine.rejectedCosmetic.some(entry => entry.reason === 'invalid :matches-path regex'),
+  'unsafe procedural regex is rejected');
+
+const procOnExample = procEngine.getProcedural('example.com');
+assert.strictEqual(procOnExample.length, 5, 'domain exception removes one procedural rule');
+assert.deepStrictEqual(Array.from(procOnExample, rule => rule.base),
+  ['.generic', '.promo', '.box', '.deep', '.also'], 'generic rules merge with domain rules');
+assert.deepStrictEqual(Array.from(procEngine.getCosmetic('example.com')), [],
+  'procedural rules are not injected as CSS');
+assert.deepStrictEqual(Array.from(procEngine.getProcedural('other.net'), rule => rule.base), ['.generic'],
+  'generic procedural rules apply to every host');
+
+const promoRule = procOnExample.find(rule => rule.base === '.promo');
+assert.strictEqual(promoRule.steps[0].op, 'matches-path', 'matches-path is parsed');
+assert.strictEqual(promoRule.steps[0].matcher.source, 'deals', 'procedural regex source is stored');
+assert.strictEqual(promoRule.steps[0].matcher.flags, 'i', 'procedural regex keeps safe flags');
+const hasRule = procOnExample.find(rule => rule.base === '.deep');
+assert.strictEqual(hasRule.steps[0].op, 'has', ':has is parsed');
+assert.strictEqual(hasRule.steps[0].inner.base, '.child', ':has stores its inner tree');
+assert.strictEqual(hasRule.steps[0].inner.steps[0].op, 'has-text',
+  'nested procedural selectors are parsed');
+
+function stubNode(selector, text, children) {
+  const list = children || [];
+  return {
+    selector,
+    textContent: text || '',
+    querySelector: query => (query === '*' ? list[0] || null : list.find(item => item.selector === query) || null),
+    querySelectorAll: query => (query === '*' ? list : list.filter(item => item.selector === query))
+  };
+}
+
+const innerNode = stubNode('.inner', '');
+const adNode = stubNode('.ad', 'Buy now');
+const promoNode = stubNode('.promo', 'Special deals today');
+const boxNode = stubNode('.box', '', [innerNode]);
+const childNode = stubNode('.child', 'x marks it');
+const deepNode = stubNode('.deep', '', [childNode]);
+const saleNode = stubNode('.also', 'BIG SALE', [stubNode('.tag', '')]);
+const genericNode = stubNode('.generic', 'Say hi there');
+const procRoot = stubNode('body', '', [adNode, promoNode, boxNode, deepNode, saleNode, genericNode]);
+
+function selected(base, path) {
+  const rule = procOnExample.find(item => item.base === base);
+  return WildFireProcedural.select(procRoot, rule, path);
+}
+assert.strictEqual(selected('.promo', '/deals/list')[0], promoNode,
+  'matches-path uses the current location path');
+assert.strictEqual(selected('.promo', '/nothing').length, 0,
+  'matches-path rejects a non-matching path');
+assert.strictEqual(selected('.box', '/')[0], boxNode, ':has checks descendants');
+assert.strictEqual(selected('.deep', '/')[0], deepNode,
+  'nested procedural :has selectors are evaluated');
+assert.strictEqual(selected('.also', '/')[0], saleNode,
+  'regex has-text is case-insensitive and composes with :has');
+assert.strictEqual(selected('.generic', '/')[0], genericNode,
+  'literal has-text is case-insensitive');
+assert.strictEqual(WildFireProcedural.select(procRoot, { base: '[', steps: [] }, '/').length, 0,
+  'an invalid base selector yields no matches');
+assert.strictEqual(WildFireProcedural.matches(boxNode, { plain: '.inner' }, '/'), true,
+  'plain :has inner trees match descendants');
 
 engine.load(fs.readFileSync(path.join(ROOT, 'filters/default.txt'), 'utf8'));
 assert.ok(engine.counts.network > 50, 'bundled list should contain network rules');

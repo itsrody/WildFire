@@ -76,6 +76,9 @@ options page (one per line):
 | `example.com##.promo` | Hide `.promo` on example.com |
 | `example.com#@#.promo` | Keep `.promo` on example.com |
 | `##.ad-container` | Hide everywhere (generic cosmetic rule) |
+| `example.com##.ad:has-text("Buy now")` | Hide `.ad` when its text contains the phrase |
+| `example.com##.promo:matches-path(/deals/)` | Hide `.promo` only on matching URL paths |
+| `example.com##.box:has(.inner)` | Hide `.box` when it contains `.inner` |
 
 Lines starting with `!` are comments.
 
@@ -85,8 +88,7 @@ This is deliberately a *minimal* engine, not a full uBO port:
 
 - Regex filters use a safe subset: backreferences, nested/alternated quantifiers,
   long patterns and stateful flags are rejected when the list loads.
-- `$csp`, `$rewrite`, `elemhide`, and procedural cosmetics such as `:has-text()`
-  are not supported.
+- `$csp`, `$rewrite`, and `elemhide` are not supported.
 - Rules are indexed by their `||host^` key and 4-character tokens; patterns with
   no usable token (including regex filters) are scanned per request.
 - No remote list fetching or auto-updating — `filters/default.txt` plus your custom
@@ -102,6 +104,10 @@ This is deliberately a *minimal* engine, not a full uBO port:
   `nooptext`, `noopjson`, `noophtml`, `1x1.gif`, `1x1.png`, `tagged.svg`); the
   response is a bundled `data:` URI, never a URL from the filter. Unknown
   aliases cancel normally.
+- Procedural cosmetic rules (`:has-text()`, `:matches-path()`, `:has()`) are
+  evaluated by WildFire's own DOM code and re-applied when the page changes;
+  no script from a filter is ever injected. `:contains()` and
+  `:nth-ancestor()` are not supported yet.
 
 ## Message API (internal)
 

@@ -50,6 +50,7 @@ background.js          blocking listener, counters/badge, message API
 lib/filter-engine.js   filter parser + matcher (self-contained, no deps)
 lib/document-scope.js  documentId -> document URL cache for request scope
 lib/redirect-resources.js  WildFire-owned data-URI redirect resources
+lib/procedural.js      DOM-based procedural cosmetic evaluator (no browser APIs)
 lib/store.js           browser.storage.local wrapper, key wildfire.state.v1
 content/cosmetic.js    injects hidden-element CSS in every frame
 filters/default.txt    bundled starter rules (~85 network rules)
@@ -76,6 +77,9 @@ used **only** by `tools/`.
 3. `lib/document-scope.js` → `window.DocumentScope`
 4. `lib/redirect-resources.js` → `window.RedirectResources`
 5. `background.js` → the engine instance and all listeners
+
+Content scripts load in this order: `lib/procedural.js` → `content/cosmetic.js`,
+so the DOM evaluator exists before the content script runs.
 
 Libraries export by attaching to `this` (the window/global in a classic
 script). Keep that pattern; do not introduce imports, `export`, or a module
@@ -144,6 +148,16 @@ on load via `wildfire:cosmetic` and re-applies on `wildfire:apply` broadcasts;
 it validates each selector with `CSS.supports('selector', …)` and
 `document.querySelector` before injecting a `<style id="wildfire-cosmetic">`.
 
+Procedural selectors (`:has-text()`, `:matches-path()`, `:has()`) are parsed in
+`lib/filter-engine.js` into trees with `base` plus ordered `steps`; malformed or
+unsafe ones are recorded in `engine.rejectedCosmetic` and never sent to pages.
+`getProcedural(host)` merges generic and domain trees and subtracts `#@#`
+exceptions. Background sends them in the same `wildfire:apply` message as CSS;
+`content/cosmetic.js` evaluates them with `WildFireProcedural.select()` and
+hides matches via a `data-wildfire-hidden` attribute plus a dedicated style.
+A `MutationObserver` re-applies after DOM changes without ever running script
+from filter text.
+
 ### State and messages
 
 Storage key `wildfire.state.v1` holds `{enabled, blocked, customFilters,
@@ -188,7 +202,7 @@ that behavior when adding popup actions.
 | --- | --- |
 | `||host^` domain anchors, subdomains | `$csp`, `$rewrite` |
 | `|url|` start/end anchors | `elemhide`, `generichide`, `ghide` |
-| `*` wildcards, `^` separator | `:has-text()`, `:matches-path()`, other procedural cosmetics |
+| `*` wildcards, `^` separator | `:contains()`, `:nth-ancestor()`, other advanced selectors |
 | `@@` exceptions | remote list fetching / auto-update |
 | `$script`, `$image`, `$~type`, other resource types | `domain=` with wildcard `.*` patterns |
 | `$third-party`, `$~third-party` | full EasyList-scale performance tuning |
@@ -197,6 +211,7 @@ that behavior when adding popup actions.
 | `$redirect=alias`, `$redirect-rule=alias` | |
 | `/regex/` filters (`i`, `m`, `s`, `u` flags only) | |
 | `##selector`, `#@#selector` | |
+| `##sel:has-text("…")`, `##sel:matches-path(/re/)`, `##sel:has(sel)` | |
 
 Regex filters are checked at load time. Backreferences, nested or alternated
 quantifiers, excessive quantifier/group counts, long patterns and stateful
@@ -209,6 +224,14 @@ Redirect rules name an alias from `lib/redirect-resources.js`: `noopjs`,
 `tagged.svg`. `$redirect-rule` uses regex captures to fill that resource's
 `{{1}}`–`{{9}}` placeholders; captures are percent-encoded before insertion.
 An unregistered alias cancels instead. No upstream resources are bundled.
+
+Procedural cosmetic rules are parsed into a base selector plus ordered steps.
+`:has-text()` accepts a quoted literal (case-insensitive) or a `/regex/` with
+the same safe subset as network regexes; `:matches-path()` takes a `/regex/`
+checked against `location.pathname + location.search`; `:has()` accepts another
+plain or procedural selector and can be nested up to eight levels. Invalid
+rules land in `engine.rejectedCosmetic`. Evaluation lives entirely in
+`lib/procedural.js` and `content/cosmetic.js` — never in injected script.
 
 Add new syntax by extending `lib/filter-engine.js` **and** `tools/test.js` in
 the same change. `README.md` gets a syntax-table row when the feature is
@@ -278,8 +301,9 @@ Each one must be written from scratch and land with tests:
 
 Already implemented and tested: Firefox-native registrable-domain scoping
 (`publicSuffix`), `documentId`-keyed request scope, the 4-character token index,
-safe regex filters, wider resource types with `$document`/`$popup`, and a
-from-scratch redirect engine with WildFire-owned data-URI resources.
+safe regex filters, wider resource types with `$document`/`$popup`, a
+from-scratch redirect engine with WildFire-owned data-URI resources, and
+DOM-based procedural cosmetic selectors.
 
 Do not start a later item while an earlier one is only half-implemented. A
 small, correct, fully tested engine is the product.

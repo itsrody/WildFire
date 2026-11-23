@@ -96,7 +96,8 @@
     try {
       await browser.tabs.sendMessage(tabId, {
         type: 'wildfire:apply',
-        selectors: engine.getCosmetic(host)
+        selectors: engine.getCosmetic(host),
+        procedural: engine.getProcedural(host)
       });
     } catch (error) {
       /* No content script in that tab/frame - safe to ignore. */
@@ -193,11 +194,14 @@
         await loadFilters();
         return snapshot();
 
-      case 'cosmetic':
+      case 'cosmetic': {
+        const host = safeHost(message.url || (sender.tab && sender.tab.url) || '');
         return {
           ok: true,
-          selectors: engine.getCosmetic(safeHost(message.url || (sender.tab && sender.tab.url) || ''))
+          selectors: engine.getCosmetic(host),
+          procedural: engine.getProcedural(host)
         };
+      }
 
       default:
         return { ok: false, error: 'Unknown action: ' + action };
