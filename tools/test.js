@@ -1461,6 +1461,7 @@ async function testStaleGenerationWorkerHang() {
   const workers = [];
   const WorkerCtor = class extends HangingWorker { constructor() { super(); workers.push(this); } };
 
+  const apiHooks = {};
   const ctx = vm.createContext({
     console, URL, setTimeout, clearTimeout, setImmediate, Promise,
     Map, Set, Array, Object, String, RegExp, JSON, Math, Boolean, Number, Error,
@@ -1580,6 +1581,7 @@ async function testBackgroundLoadFiltersIntegration() {
   const workers = [];
   const WorkerCtor = class extends FakeWorker { constructor() { super(); workers.push(this); } };
 
+  const apiHooks = {};
   const ctx = vm.createContext({
     console, URL, setTimeout, clearTimeout, setImmediate, Promise,
     Map, Set, Array, Object, String, RegExp, JSON, Math, Boolean, Number, Error,
@@ -1606,8 +1608,9 @@ async function testBackgroundLoadFiltersIntegration() {
     storage: { local: storage },
     browserAction: { setBadgeBackgroundColor: () => {}, setBadgeText: () => {} },
     webRequest: {
-      onBeforeRequest: { addListener: () => {} },
-      onHeadersReceived: { addListener: () => {} },
+      onBeforeRequest: { addListener: fn => { apiHooks.onBeforeRequest = fn; } },
+      onBeforeSendHeaders: { addListener: fn => { apiHooks.onBeforeSendHeaders = fn; } },
+      onHeadersReceived: { addListener: fn => { apiHooks.onHeadersReceived = fn; } },
       onCompleted: { addListener: () => {} },
       onErrorOccurred: { addListener: () => {} },
       onBeforeRedirect: { addListener: () => {} },
@@ -1645,6 +1648,7 @@ async function testBackgroundLoadFiltersIntegration() {
   await new Promise(resolve => setTimeout(resolve, 20));
   const api = ctx.__wildfireTest;
   assert.ok(api, 'background test hook exposed');
+  api._apiHooks = apiHooks;
 
   // Instrument compiler to count actual compiles
   const origCompile = api.compiler.compile.bind(api.compiler);
@@ -1696,6 +1700,54 @@ async function testBackgroundLoadFiltersIntegration() {
   await new Promise(resolve => setTimeout(resolve, 20));
   console.warn = origWarn;
   assert.strictEqual(api.engine.matchRequest('https://fallback.example/x.js', 'script', 'https://site.test/').blocked, true, 'fallback compile activates rules');
+}
+
+async function testRemoveRuntimeIntegration() {
+  function memoryStorage(initial) {
+    let data = Object.assign({}, initial || {});
+    return {
+      async get(key) { if (key === undefined) return Object.assign({}, data); return { [key]: data[key] }; },
+      async set(patch) { data = Object.assign({}, data, patch || {}); },
+      async remove(key) { (Array.isArray(key)?key:[key]).forEach(k => delete data[k]); }
+    };
+  }
+  const apiHooks = {};
+  const fakeCompiled = text => { const e=new FilterEngine(null,()=>'',null,()=>false); e.load(text); return e.toCompiled(); };
+  class FakeWorker { constructor(){this.terminated=false;} postMessage(msg){ if(msg.type==='ping') return this.onmessage({data:{id:msg.id,ok:true,type:'pong'}}); if(msg.type==='compile') setImmediate(()=>!this.terminated&&this.onmessage({data:{id:msg.id,ok:true,type:'compiled',compiled:fakeCompiled(msg.text),counts:{}}})); } terminate(){this.terminated=true;} }
+  const ctx = vm.createContext({ console, URL, setTimeout, clearTimeout, setImmediate, Promise, Map, Set, Array, Object, String, RegExp, JSON, Math, Boolean, Number, Error, TextEncoder, TextDecoder, Uint8Array, ArrayBuffer, fetch: async url => { const u=String(url); if(u.includes('default.compiled.json')) return {ok:true,json:async()=>fakeCompiled('')}; if(u.includes('default.txt')) return {ok:true,text:async()=>''}; return {ok:false,status:404,json:async()=>({}),text:async()=>''}; } });
+  ctx.globalThis=ctx; ctx.window=ctx; ctx.CSS={supports:()=>true}; ctx.location={hostname:'page.example'}; ctx.Worker=FakeWorker; ctx.indexedDB=undefined;
+  ctx.browser = {
+    runtime:{getURL:p=>'moz-extension://test/'+p,onMessage:{addListener:()=>{}}},
+    storage:{local:memoryStorage({})},
+    browserAction:{setBadgeBackgroundColor:()=>{},setBadgeText:()=>{}},
+    webRequest:{
+      onBeforeRequest:{addListener:fn=>{apiHooks.onBeforeRequest=fn;}},
+      onBeforeSendHeaders:{addListener:fn=>{apiHooks.onBeforeSendHeaders=fn;}},
+      onHeadersReceived:{addListener:fn=>{apiHooks.onHeadersReceived=fn;}},
+      onCompleted:{addListener:()=>{}}, onErrorOccurred:{addListener:()=>{}}, onBeforeRedirect:{addListener:()=>{}},
+      filterResponseData:()=>({ondata(){},onstop(){},onerror(){},write(){},close(){},disconnect(){}})
+    },
+    webNavigation:{onCreatedNavigationTarget:{addListener:()=>{}},onCommitted:{addListener:()=>{}},onReferenceFragmentUpdated:{addListener:()=>{}},onHistoryStateUpdated:{addListener:()=>{}}},
+    tabs:{query:async()=>[],onUpdated:{addListener:()=>{}},onRemoved:{addListener:()=>{}},sendMessage:async()=>{},remove:async()=>{}},
+    alarms:{onAlarm:{addListener:()=>{}},clear:async()=>{},get:async()=>null,create:async()=>{}},
+    contentScripts:{register:async()=>({unregister:async()=>{}})},
+    publicSuffix:{getDomain:host=>host.split('.').slice(-2).join('.')}
+  };
+  ['lib/store.js','lib/filter-engine.js','lib/document-scope.js','lib/redirect-resources.js','lib/remote-lists.js','lib/csp-resources.js','lib/scriptlets.js','lib/rewrite-resources.js','lib/compile-cache.js','lib/compiler.js']
+    .forEach(f=>vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),ctx,{filename:f}));
+  const bgSource = fs.readFileSync(path.join(ROOT,'background.js'),'utf8')
+    .replace(/  init\(\);\n}\)\(\);\s*$/, '  globalThis.__wildfireTest = { loadFilters, engine, getState: () => state, setState: p => { state = Object.assign({}, state, p); } }; init(); })();');
+  vm.runInContext(bgSource, ctx, { filename: 'background.js' });
+  await new Promise(r=>setTimeout(r,30));
+  const api = ctx.__wildfireTest;
+  api.setState({ enabled: true, customFilters: '||track.example^$removeparam=utm_source\n||api.example^$removeheader=response:x-track', disabledSites: [] });
+  await api.loadFilters(true); await new Promise(r=>setTimeout(r,30));
+
+  const br = apiHooks.onBeforeRequest({ url:'https://track.example/p.gif?utm_source=x&keep=1', type:'image', tabId:1, frameId:0, documentUrl:'https://site.test/' });
+  assert.ok(br && br.redirectUrl && br.redirectUrl.includes('keep=1') && !br.redirectUrl.includes('utm_source'), 'removeparam redirects cleaned URL');
+
+  const hr = apiHooks.onHeadersReceived({ url:'https://api.example/data', type:'xmlhttprequest', tabId:1, frameId:0, documentUrl:'https://site.test/', responseHeaders:[{name:'X-Track',value:'1'},{name:'Content-Type',value:'text/plain'}] });
+  assert.ok(hr && hr.responseHeaders && !hr.responseHeaders.some(h=>h.name.toLowerCase()==='x-track'), 'removeheader strips response header');
 }
 
 async function testIncrementalRemoteCompileSemantics() {
@@ -2229,6 +2281,7 @@ Promise.resolve()
   .then(() => testIncrementalRemoteCompileSemantics())
   .then(() => testBackgroundLoadFiltersIntegration())
   .then(() => testStaleGenerationWorkerHang())
+  .then(() => testRemoveRuntimeIntegration())
   .then(() => testRemoteLists())
   .then(() => console.log('WildFire tests passed (' + engine.counts.network + ' network rules loaded from bundled list).'))
   .catch(error => {
