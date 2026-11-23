@@ -35,6 +35,9 @@
   const compiler = (typeof WildFireCompiler !== 'undefined' && WildFireCompiler.create)
     ? WildFireCompiler.create({ browserApi: browser, timeoutMs: 15000 })
     : null;
+  const compileCache = (typeof WildFireCompileCache !== 'undefined' && WildFireCompileCache.create)
+    ? WildFireCompileCache.create({ browserApi: browser, version: FilterEngine.COMPILED_VERSION })
+    : null;
   const blockedPopups = new Set();
   // tabId -> source document URL for popups created by another browsing context.
   // onCreatedNavigationTarget gives us the source; onBeforeRequest gives us a
@@ -163,20 +166,39 @@
   async function compileText(text) {
     const source = String(text || '');
     if (!source.trim()) return null;
+
+    if (compileCache) {
+      try {
+        const cached = await compileCache.get(source);
+        if (cached && cached.v === FilterEngine.COMPILED_VERSION) return cached;
+      } catch (error) {
+        console.warn('WildFire: compile cache read failed', error);
+      }
+    }
+
+    let compiled = null;
     if (compiler && typeof compiler.compile === 'function') {
       try {
         const result = await compiler.compile(source);
-        if (result && result.compiled) return result.compiled;
+        if (result && result.compiled) compiled = result.compiled;
       } catch (error) {
         console.warn('WildFire: worker compile failed, using sync fallback', error);
       }
     }
-    try {
-      return WildFireCompiler.compileSync(source).compiled;
-    } catch (error) {
-      console.warn('WildFire: sync compile failed', error);
-      return null;
+    if (!compiled) {
+      try {
+        compiled = WildFireCompiler.compileSync(source).compiled;
+      } catch (error) {
+        console.warn('WildFire: sync compile failed', error);
+        return null;
+      }
     }
+
+    if (compileCache && compiled && compiled.v === FilterEngine.COMPILED_VERSION) {
+      compileCache.set(source, compiled).catch(error =>
+        console.warn('WildFire: compile cache write failed', error));
+    }
+    return compiled;
   }
 
   async function loadFilters() {
