@@ -45,6 +45,24 @@
   const remoteUpdating = new Set();
   let filterGeneration = 0;
   let activeFilterGeneration = 0;
+  const compilerStatus = {
+    lastMode: 'init',
+    lastError: '',
+    restarts: 0,
+    lastEvent: '',
+    lastAt: 0
+  };
+  if (compiler && typeof compiler.on === 'function') {
+    compiler.on(event => {
+      compilerStatus.lastEvent = event && event.type || 'unknown';
+      compilerStatus.lastAt = Date.now();
+      if (event && event.type === 'restart') compilerStatus.restarts += 1;
+      if (event && event.error) compilerStatus.lastError = String(event.error.message || event.error);
+      if (event && (event.type === 'compiled' || event.type === 'fallback' || event.type === 'worker-error' || event.type === 'restart')) {
+        console.debug('WildFire: compiler', event.type, event);
+      }
+    });
+  }
   const blockedPopups = new Set();
   // tabId -> source document URL for popups created by another browsing context.
   // onCreatedNavigationTarget gives us the source; onBeforeRequest gives us a
@@ -107,7 +125,8 @@
         customFilters: state.customFilters,
         disabledSites: state.disabledSites
       },
-      counts: Object.assign({}, engine.counts)
+      counts: Object.assign({}, engine.counts),
+      compiler: Object.assign({}, compilerStatus)
     };
   }
 
@@ -172,36 +191,52 @@
 
   function compileSyncSafe(text) {
     try {
-      return WildFireCompiler.compileSync(String(text || '')).compiled;
+      const compiled = WildFireCompiler.compileSync(String(text || '')).compiled;
+      compilerStatus.lastMode = 'sync';
+      compilerStatus.lastError = '';
+      return compiled;
     } catch (error) {
+      compilerStatus.lastMode = 'sync-error';
+      compilerStatus.lastError = String(error && error.message || error);
       console.warn('WildFire: sync compile failed', error);
       return null;
     }
   }
 
-  async function compileText(text, meta, generation) {
+  async function compileText(text, meta, generation, forceSync) {
     const source = String(text || '');
     if (!source.trim()) return null;
 
     if (compileCache) {
       try {
         const cached = await compileCache.get(source);
-        if (cached && cached.v === FilterEngine.COMPILED_VERSION) return cached;
+        if (cached && cached.v === FilterEngine.COMPILED_VERSION) {
+          compilerStatus.lastMode = 'cache';
+          compilerStatus.lastError = '';
+          return cached;
+        }
       } catch (error) {
         console.warn('WildFire: compile cache read failed', error);
       }
     }
 
     const isCurrent = generation === undefined || generation === activeFilterGeneration;
-    if (compiler && typeof compiler.compile === 'function' && isCurrent) {
+    if (!forceSync && compiler && typeof compiler.compile === 'function' && isCurrent) {
       if (compiler.pendingCount && compiler.pendingCount() > 0 && compiler.restart) {
         console.warn('WildFire: stale compile pending, restarting compiler worker');
         compiler.restart('stale filter generation');
+        compilerStatus.lastMode = 'stale-sync-fallback';
+        return compileSyncSafe(source);
       }
       try {
         const result = await compiler.compile(source);
-        if (generation !== undefined && generation !== activeFilterGeneration) return compileSyncSafe(source);
+        if (generation !== undefined && generation !== activeFilterGeneration) {
+          compilerStatus.lastMode = 'stale-sync-fallback';
+          return compileSyncSafe(source);
+        }
         if (result && result.compiled) {
+          compilerStatus.lastMode = 'worker';
+          compilerStatus.lastError = '';
           if (compileCache && result.compiled.v === FilterEngine.COMPILED_VERSION) {
             compileCache.set(source, result.compiled, meta).catch(error =>
               console.warn('WildFire: compile cache write failed', error));
@@ -209,10 +244,13 @@
           return result.compiled;
         }
       } catch (error) {
+        compilerStatus.lastMode = 'worker-fallback';
+        compilerStatus.lastError = String(error && error.message || error);
         console.warn('WildFire: worker compile failed, using sync fallback', error);
       }
     }
 
+    if (forceSync) compilerStatus.lastMode = 'forced-sync-fallback';
     const compiled = compileSyncSafe(source);
     if (compileCache && compiled && compiled.v === FilterEngine.COMPILED_VERSION) {
       compileCache.set(source, compiled, meta).catch(error =>
@@ -221,10 +259,10 @@
     return compiled;
   }
 
-  async function loadCompiledOrText(text, meta, append, generation) {
+  async function loadCompiledOrText(text, meta, append, generation, forceSync) {
     const source = String(text || '');
     if (!source.trim()) return false;
-    const compiled = await compileText(source, meta, generation);
+    const compiled = await compileText(source, meta, generation, forceSync);
     if (compiled && engine.loadCompiled(compiled, { append: Boolean(append) })) return true;
     if (append) engine.load(source, { append: true });
     else engine.load(source);
@@ -261,9 +299,15 @@
 
   async function loadFilters(force) {
     const generation = ++filterGeneration;
+    activeFilterGeneration = generation;
+    if (compiler && compiler.pendingCount && compiler.pendingCount() > 0 && compiler.restart) {
+      console.warn('WildFire: restarting compiler for new filter generation');
+      compiler.restart('new filter generation');
+    } else if (compiler && compiler.cancelAll) {
+      compiler.cancelAll('new filter generation');
+    }
     const run = filterLoad.then(async () => {
-      activeFilterGeneration = generation;
-      if (compiler && compiler.cancelAll) compiler.cancelAll('new filter load generation');
+      if (generation !== activeFilterGeneration) return;
 
       const custom = String(state.customFilters || '').trim();
       const customHash = custom ? hashText(custom) : '';
@@ -307,16 +351,18 @@
         }
       }
 
+      const forceSync = compiler && compiler.pendingCount && compiler.pendingCount() > 0;
+
       // Compile only when custom rules changed, or on forced rebuild; unchanged uses cache.
       if (custom) {
         const shouldCompile = customChanged || force || !ready;
         const compiled = shouldCompile
-          ? await compileText(custom, { source: 'custom', hash: customHash }, generation)
+          ? await compileText(custom, { source: 'custom', hash: customHash }, generation, forceSync)
           : (compileCache ? await compileCache.get(custom) : null);
         if (compiled && compiled.v === FilterEngine.COMPILED_VERSION) {
           engine.loadCompiled(compiled, { append: true });
         } else if (shouldCompile) {
-          const fresh = compiled || await compileText(custom, { source: 'custom', hash: customHash }, generation);
+          const fresh = compiled || await compileText(custom, { source: 'custom', hash: customHash }, generation, forceSync);
           if (!fresh || !engine.loadCompiled(fresh, { append: true })) engine.load(custom, { append: true });
         } else {
           engine.load(custom, { append: true });
@@ -326,9 +372,10 @@
       // Per-list incremental remote compile/load. Only changed/missing lists are compiled.
       await remoteEntries.reduce((chain, entry) => chain.then(async () => {
         const text = '! wildfire remote: ' + entry.url + '\n' + entry.text;
-        await loadCompiledOrText(text, { source: 'remote', url: entry.url, hash: entry.hash || hashText(entry.text) }, true, generation);
+        await loadCompiledOrText(text, { source: 'remote', url: entry.url, hash: entry.hash || hashText(entry.text) }, true, generation, forceSync);
       }), Promise.resolve());
 
+      if (generation !== activeFilterGeneration) return;
       lastCustomHash = customHash;
       lastRemoteSignature = remoteSig;
       await refreshAllCosmetic();
