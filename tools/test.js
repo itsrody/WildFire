@@ -2700,11 +2700,11 @@ async function testPhase0Foundation() {
 
   // Compiled IR round-trip preserves capabilities and diagnostics
   const compiled = ir.toCompiled();
-  assert.strictEqual(compiled.v, FilterEngine.COMPILED_VERSION, 'compiled v2');
+  assert.strictEqual(compiled.v, FilterEngine.COMPILED_VERSION, 'compiled version present');
   assert.strictEqual(compiled.cap, ir.getCapabilities(), 'compiled cap matches');
   assert.ok(Array.isArray(compiled.d), 'compiled diagnostics');
   const ir2 = new FilterEngine(null, () => 'script-src \'none\'', { validate: () => null }, () => true);
-  assert.strictEqual(ir2.loadCompiled(compiled), true, 'load compiled v2');
+  assert.strictEqual(ir2.loadCompiled(compiled), true, 'load compiled version');
   assert.strictEqual(ir2.getCapabilities(), ir.getCapabilities(), 'capabilities round-trip');
   assert.ok(ir2.getDiagnostics().length >= diags.length, 'diagnostics round-trip');
 
@@ -3111,6 +3111,93 @@ async function testPerSiteBadgeCounters() {
     'reset clears every site counter');
   assert.strictEqual(lastBadge(1).text, '0', 'reset returns the active site badge to zero');
 
+  const allowRule = await bgMessageHandler({
+    type: 'wildfire:set-site-rule',
+    site: 'https://www.example.com/',
+    resourceType: 'script',
+    action: 'allow'
+  });
+  assert.strictEqual(allowRule.site.rules.script, 'allow',
+    'a dynamic allow rule is returned with the active site');
+  assert.strictEqual(Object.keys(allowRule.site.rules).length, 1,
+    'only the changed resource type is returned');
+  assert.strictEqual(allowRule.state.siteRules['example.com'].script, 'allow',
+    'dynamic rules are stored by registrable domain');
+  assert.strictEqual(blockOn(1, 'https://www.example.com/'), undefined,
+    'a dynamic allow rule skips static blocking');
+  assert.strictEqual(api.getState().blocked, 0, 'dynamic allow does not count a block');
+
+  const blockRule = await bgMessageHandler({
+    type: 'wildfire:set-site-rule',
+    site: 'https://www.example.com/',
+    resourceType: 'script',
+    action: 'block'
+  });
+  assert.strictEqual(blockRule.site.rules.script, 'block',
+    'a dynamic allow rule can be flipped to block');
+  assert.ok(blockOn(1, 'https://www.example.com/').cancel,
+    'a dynamic block rule cancels before static matching');
+  const dynamicFrame = apiHooks.onBeforeRequest({
+    url: 'https://ads.test/iframe.js',
+    type: 'script',
+    tabId: 1,
+    frameId: 1,
+    documentUrl: 'https://embed.third.test/',
+    requestId: 'dynamic-iframe'
+  });
+  assert.ok(dynamicFrame.cancel, 'dynamic rules use the tab site for embedded frames');
+  assert.strictEqual(api.getState().blocked, 2, 'dynamic blocks count once each');
+
+  const clearedType = await bgMessageHandler({
+    type: 'wildfire:set-site-rule',
+    site: 'https://www.example.com/',
+    resourceType: 'script',
+    action: 'clear'
+  });
+  assert.strictEqual(Object.keys(clearedType.site.rules).length, 0,
+    'one dynamic type can be cleared');
+  assert.ok(blockOn(1, 'https://www.example.com/').cancel,
+    'static filtering resumes after a dynamic rule is cleared');
+
+  await bgMessageHandler({
+    type: 'wildfire:set-site-rule',
+    site: 'https://www.example.com/',
+    resourceType: 'script',
+    action: 'block'
+  });
+  await bgMessageHandler({
+    type: 'wildfire:set-site-rule',
+    site: 'https://www.example.com/',
+    resourceType: 'image',
+    action: 'allow'
+  });
+  const clearedSite = await bgMessageHandler({
+    type: 'wildfire:clear-site-rules',
+    site: 'https://www.example.com/'
+  });
+  assert.strictEqual(Object.keys(clearedSite.site.rules).length, 0,
+    'all dynamic rules can be cleared for a site');
+  assert.strictEqual(clearedSite.state.siteRules['example.com'], undefined,
+    'an empty site rule map is removed from storage');
+
+  const invalidRule = await bgMessageHandler({
+    type: 'wildfire:set-site-rule',
+    site: 'https://www.example.com/',
+    resourceType: 'document',
+    action: 'block'
+  });
+  assert.strictEqual(Object.keys(invalidRule.state.siteRules).length, 0,
+    'dynamic rules never apply to navigations');
+  const invalidAction = await bgMessageHandler({
+    type: 'wildfire:set-site-rule',
+    site: 'https://www.example.com/',
+    resourceType: 'script',
+    action: 'reject'
+  });
+  assert.strictEqual(Object.keys(invalidAction.state.siteRules).length, 0,
+    'unknown dynamic actions are ignored');
+
+  await bgMessageHandler({ type: 'wildfire:reset-stats' });
   const initialDiagnostics = await bgMessageHandler({ type: 'wildfire:diagnostics' }, {});
   assert.strictEqual(initialDiagnostics.diagnostics.enabled, false,
     'diagnostics are opt-in and off by default');
@@ -3186,20 +3273,24 @@ async function testPopupPerSiteDisplay() {
       title: '',
       disabled: false,
       listeners: {},
+      children: [],
       classList: { toggle() {} },
-      set textContent(value) { text = String(value); },
+      set textContent(value) { text = String(value); this.children.length = 0; },
       get textContent() { return text; },
-      addEventListener(type, handler) { this.listeners[type] = handler; }
+      addEventListener(type, handler) { this.listeners[type] = handler; },
+      appendChild(child) { this.children.push(child); return child; },
+      append(...children) { children.forEach(child => this.children.push(child)); }
     };
   }
   const elements = {};
   [
     'status', 'count', 'count-label', 'network-count', 'cosmetic-count',
     'exception-count', 'toggle', 'site', 'reload', 'options',
-    'inspector', 'inspect-toggle'
+    'inspector', 'inspect-toggle', 'site-rules', 'site-rules-site'
   ].forEach(id => { elements[id] = element(); });
 
   const sent = [];
+  const sentTypes = [];
   const openedWindows = [];
   const portListeners = [];
   const nativePort = {
@@ -3220,12 +3311,13 @@ async function testPopupPerSiteDisplay() {
     counts: { network: 10, cosmetic: 2, exceptions: 1 },
     site: {
       url: 'https://www.example.com/', host: 'www.example.com',
-      site: 'example.com', blocked: 4, disabled: false
+      site: 'example.com', blocked: 4, disabled: false,
+      rules: { script: 'block' }
     }
   };
   const ctx = vm.createContext({
     console, setTimeout,
-    document: { getElementById: id => elements[id] },
+    document: { getElementById: id => elements[id], createElement: () => element() },
     browser: {
       tabs: { query: async () => [{ url: 'https://www.example.com/' }] },
       windows: {
@@ -3238,7 +3330,8 @@ async function testPopupPerSiteDisplay() {
         connect: () => nativePort,
         getURL: path => 'moz-extension://wildfire/' + path,
         sendMessage: async message => {
-          sent.push(message.type);
+          sent.push(message);
+          sentTypes.push(message.type);
           if (message.type === 'wildfire:inspect') {
             return {
               ok: true,
@@ -3289,7 +3382,7 @@ async function testPopupPerSiteDisplay() {
   await new Promise(resolve => setImmediate(resolve));
   assert.strictEqual(elements.count.textContent, '4',
     'later popup actions preserve the active site counter');
-  assert.ok(sent.includes('wildfire:toggle'), 'popup toggle uses the message API');
+  assert.ok(sentTypes.includes('wildfire:toggle'), 'popup toggle uses the message API');
 
   elements.inspector.listeners.click();
   await new Promise(resolve => setImmediate(resolve));
@@ -3303,7 +3396,25 @@ async function testPopupPerSiteDisplay() {
   await new Promise(resolve => setImmediate(resolve));
   assert.strictEqual(elements['inspect-toggle'].textContent, 'Recording: on',
     'popup recording button toggles the local inspector');
-  assert.ok(sent.includes('wildfire:inspect'), 'recording toggle uses the message API');
+  assert.ok(sentTypes.includes('wildfire:inspect'), 'recording toggle uses the message API');
+
+  assert.strictEqual(elements['site-rules-site'].textContent, 'example.com',
+    'popup labels the site whose rules are shown');
+  assert.strictEqual(elements['site-rules'].children.length, 11,
+    'popup renders one rule control per dynamic resource type');
+  assert.match(elements['site-rules'].children[0].textContent, /^Script ✕/,
+    'popup shows the active dynamic rule state');
+  elements['site-rules'].children[1].listeners.click();
+  await new Promise(resolve => setImmediate(resolve));
+  const ruleMessage = sent.find(message => message.type === 'wildfire:set-site-rule');
+  assert.strictEqual(ruleMessage.type, 'wildfire:set-site-rule',
+    'rule controls send the dynamic rule action');
+  assert.strictEqual(ruleMessage.site, 'example.com',
+    'rule controls send the registrable site key');
+  assert.strictEqual(ruleMessage.resourceType, 'image',
+    'rule controls send the resource type outside the message type');
+  assert.strictEqual(ruleMessage.action, 'block',
+    'rule controls cycle from default to block');
 }
 
 async function testRemoteLists() {
@@ -4620,7 +4731,8 @@ async function testBackgroundControllerRobustness() {
     const actions = healthy.debug().wapiRouter.actions();
     assert.strictEqual(actions.join(','), [
       'state', 'toggle', 'toggle-site', 'set-filters',
-      'set-csp-report-blocking', 'set-csp-report-allow', 'reset-stats',
+      'set-csp-report-blocking', 'set-csp-report-allow', 'set-site-rule', 'clear-site-rules',
+      'reset-stats',
       'reload', 'suggested-lists', 'list-state', 'add-list', 'remove-list',
       'update-list', 'set-list-enabled', 'set-list-auto', 'cosmetic',
       'diagnostics', 'inspect'
@@ -4765,6 +4877,37 @@ async function testBackgroundControllerRobustness() {
   }
 }
 
+async function testCompilerTimeoutFallback() {
+  let worker = null;
+  class HangingWorker {
+    constructor() {
+      this.messages = [];
+      this.terminated = false;
+      worker = this;
+    }
+    postMessage(message) { this.messages.push(message); }
+    terminate() { this.terminated = true; }
+  }
+  const events = [];
+  const compiler = WildFireCompiler.create({
+    browserApi: { runtime: { getURL: path => path } },
+    Worker: HangingWorker,
+    setTimeout,
+    clearTimeout,
+    timeoutMs: 5
+  });
+  compiler.on(event => events.push(event.type));
+
+  const result = await compiler.compile('||timeout.example^');
+  assert.strictEqual(result.counts.network, 1,
+    'a timed-out worker compile falls back to the synchronous engine');
+  assert.strictEqual(result.id, 0, 'fallback results use the synchronous result id');
+  assert.ok(worker.terminated, 'a timed-out worker is terminated');
+  assert.ok(events.includes('worker-timeout'), 'worker timeout is reported locally');
+  assert.ok(events.includes('fallback'), 'timeout triggers the normal fallback path');
+  compiler.destroy();
+}
+
 Promise.resolve()
   .then(() => testPhase0Foundation())
   .then(() => testPhase1AAliases())
@@ -4772,6 +4915,7 @@ Promise.resolve()
   .then(() => testPhase1BBadfilter())
   .then(() => testPhase1CRemoveModifiers())
   .then(() => testCompileCacheAndCompiler())
+  .then(() => testCompilerTimeoutFallback())
   .then(() => testCompileCacheIdbLru())
   .then(() => testCompileInFlightDedup())
   .then(() => testIncrementalRemoteCompileSemantics())

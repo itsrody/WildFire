@@ -36,6 +36,12 @@
   </section>
 
   <section class="card">
+    <h2>Dynamic site rules</h2>
+    <p class="hint">Per-site <code>block</code> and <code>allow</code> rules override static filters for a resource type. Set them from the toolbar popup; navigation rules are never applied.</p>
+    <ul id="site-rules" class="sites"></ul>
+  </section>
+
+  <section class="card">
     <h2>CSP reports</h2>
     <p class="hint">CSP violation reports are development telemetry and can be used as a fingerprinting signal. WildFire removes report directives from CSP headers and cancels legacy CSP report requests. Enforcement directives stay intact.</p>
     <label class="toggle"><input id="block-csp-reports" type="checkbox"> Block CSP reports</label>

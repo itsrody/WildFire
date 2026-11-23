@@ -5,6 +5,7 @@
   const filters = document.getElementById('filters');
   const filterStatus = document.getElementById('filter-status');
   const sitesList = document.getElementById('sites');
+  const siteRulesList = document.getElementById('site-rules');
   const siteForm = document.getElementById('site-form');
   const siteInput = document.getElementById('site-input');
   const suggestedList = document.getElementById('suggested-lists');
@@ -68,6 +69,43 @@
       });
       item.append(label, remove);
       sitesList.appendChild(item);
+    });
+  }
+
+  function renderSiteRules() {
+    const rules = state.siteRules && typeof state.siteRules === 'object' &&
+      !Array.isArray(state.siteRules) ? state.siteRules : {};
+    const sites = Object.keys(rules);
+    siteRulesList.textContent = '';
+    if (!sites.length) {
+      const item = document.createElement('li');
+      item.className = 'empty';
+      item.textContent = 'No dynamic site rules.';
+      siteRulesList.appendChild(item);
+      return;
+    }
+    sites.forEach(site => {
+      const item = document.createElement('li');
+      item.className = 'list-item';
+      const row = document.createElement('div');
+      row.className = 'list-row';
+      const label = document.createElement('span');
+      label.className = 'list-label';
+      label.textContent = site;
+      const meta = document.createElement('span');
+      meta.className = 'list-meta';
+      meta.textContent = Object.keys(rules[site])
+        .map(type => type + ': ' + rules[site][type])
+        .join(' · ');
+      row.append(label, meta);
+      const actions = document.createElement('div');
+      actions.className = 'list-actions';
+      actions.append(actionButton('Clear all', async () => {
+        state = await client.send('clear-site-rules', { site });
+        renderSiteRules();
+      }));
+      item.append(row, actions);
+      siteRulesList.appendChild(item);
     });
   }
 
@@ -171,6 +209,7 @@
     statsText.textContent = Number(state.blocked || 0).toLocaleString() +
       ' requests blocked since tracking began.';
     renderSites();
+    renderSiteRules();
     renderLists();
     renderSuggested();
     renderCspReports();

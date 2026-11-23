@@ -352,8 +352,9 @@ anywhere;
 alias/arguments. Registrations are replaced whenever the engine reloads, and
 only future navigations receive updated scriptlets.
 
-`getCosmetic(host)` merges generic selectors with every parent-domain selector
-and subtracts applicable exceptions. `content/cosmetic.js` asks for them once
+`getCosmetic(host, policy)` merges generic selectors with every parent-domain
+selector and subtracts applicable exceptions, including hide modifiers from the
+policy. `content/cosmetic.js` asks for them once
 on load via `wildfire:cosmetic` and re-applies on `wildfire:apply` broadcasts;
 it validates each selector with `CSS.supports('selector', …)` and
 `document.querySelector` before injecting a `<style id="wildfire-cosmetic">`.
@@ -363,8 +364,9 @@ Procedural selectors (`:has-text()`, `:contains()`, `:matches-path()`, `:has()`,
 `:matches-css()`, `:xpath()`, `:not()`, `:matches-media()`) are parsed in
 `lib/engine/filter/parse-procedural.js` into trees with `base` plus ordered `steps`; malformed or
 unsafe ones are recorded in `engine.rejectedCosmetic` and never sent to pages.
-`getProcedural(host)` merges generic and domain trees and subtracts `#@#`
-exceptions. Background sends them in the same `wildfire:apply` message as CSS.
+`getProcedural(host, policy)` merges generic and domain trees and subtracts
+`#@#` exceptions and hide modifiers. Background sends them in the same
+`wildfire:apply` message as CSS.
 
 `WildFireProcedural.classify()` picks the cheapest Firefox-native route per
 rule. `:matches-path()` is a page constant, so it is matched once per apply and
@@ -404,14 +406,23 @@ Filter text is never executed.
 ### State and messages
 
 Storage key `wildfire.state.v1` holds `{enabled, blocked, blockedBySite,
-customFilters, disabledSites, blockCspReports, cspReportAllow}`. `blocked` is the
-lifetime total shown in Options;
+customFilters, disabledSites, siteRules, blockCspReports, cspReportAllow}`.
+`blocked` is the lifetime total shown in Options;
 `blockedBySite` maps registrable domains to per-site counters shown by the
 toolbar badge and popup. The badge is set per tab and refreshed on activation
 and navigation, so subdomains share one site count while each tab shows its own
 site. `persist(patch)` merges into the in-memory copy and writes a
 **full snapshot** — do not write partial objects directly, or parallel message
-handlers will clobber unrelated fields. Storage key `wildfire.remote.v1` holds
+handlers will clobber unrelated fields.
+
+`siteRules` maps registrable domains to validated per-resource-type `allow` or
+`block` actions. Dynamic rules are set from the popup, override static filter
+decisions before engine matching, and never apply to navigations or globally /
+per-site paused tabs. An `allow` rule also skips `$removeparam`, `$removeheader`,
+`$csp`, report stripping and rewrite/CSP header work; a `block` rule counts as
+one filtered request and is recorded as a local Inspector decision. Rules are
+keyed by the tab's top-level site even when the request comes from an embedded
+frame. Storage key `wildfire.remote.v1` holds
 `{lists: [{url, enabled, autoUpdate, etag, lastModified, text, updatedAt, hash}]}`
 and is owned entirely by `lib/state/remote-lists.js`.
 
@@ -419,12 +430,14 @@ Background listens for `wildfire:*` messages:
 
 | Action | Purpose |
 | --- | --- |
-| `state` | snapshot + active-tab `{url, host, site, blocked, disabled}` |
+| `state` | snapshot + active-tab `{url, host, site, blocked, disabled, rules}` |
 | `toggle` | flip global `enabled` |
 | `toggle-site` | add/remove a host in `disabledSites` |
 | `set-filters` | save custom filters, reload engine, refresh cosmetics |
 | `set-csp-report-blocking` | enable or disable default-on CSP report blocking |
 | `set-csp-report-allow` | replace the allowlist of report endpoint hosts |
+| `set-site-rule` | set/clear/flip one `resourceType` rule for a site |
+| `clear-site-rules` | remove every dynamic rule for a site |
 | `reset-stats` | zero the lifetime total and every site counter |
 | `reload` | rebuild from bundled + custom + enabled remote filters |
 | `list-state` | return registered remote lists |
@@ -493,10 +506,11 @@ and fetching still requires a separate explicit step.
 
 | Supported | Not supported (yet) |
 | --- | --- |
-| `||host^` domain anchors, subdomains | `elemhide`, `generichide`, `ghide` |
-| `|url|` start/end anchors | other advanced selectors |
-| `*` wildcards, `^` separator | full EasyList-scale list curation |
-| `@@` exceptions | full EasyList-scale performance tuning |
+| `||host^` domain anchors, subdomains | other advanced selectors |
+| `|url|` start/end anchors | full EasyList-scale list curation |
+| `*` wildcards, `^` separator | full EasyList-scale performance tuning |
+| `@@` exceptions | |
+| `@@||host^$elemhide`, `$generichide`, `$specifichide` document exceptions | |
 | `$script`, `$image`, `$~type`, other resource types | |
 | `$third-party`, `$~third-party`, `$1p`, `$3p` | |
 | `$domain=a\|~b` (`from=` alias), including `example.*` and `*.example.*` | |

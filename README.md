@@ -83,10 +83,16 @@ options page (one per line):
 | `/ads\.example\.com\/track$/` | Regular-expression match (safe subset) |
 | `@@||ads.example.com^` | Allow requests that would otherwise be blocked |
 | `@@/keep\.example\/ad/` | Regular-expression exception |
+| `@@||tracker.net^$elemhide` | Keep all elements visible on matching documents (`ehide`) |
+| `@@||tracker.net^$generichide` | Keep generic cosmetic rules from applying (`ghide`) |
+| `@@||tracker.net^$specifichide` | Keep domain-specific cosmetic rules from applying (`shide`) |
 | `||tracker.net^$script` | Only block scripts |
 | `||tracker.net^$~image` | Block everything except images |
+| `||tracker.net^$all` | Match every resource type, overriding earlier type filters |
+| `||tracker.net^$match-case` | Make the pattern case-sensitive |
 | `||tracker.net^$third-party` | Only block cross-site requests |
 | `||tracker.net^$domain=site.com\|~good.site.com` | Only on matching document hosts |
+| `||tracker.net^$from=site.com` | `domain=` alias |
 | `||tracker.net^$domain=site.*` | Match document hosts with any suffix |
 | `||tracker.net^$domain=*.site.*` | Match subdomains with any suffix |
 | `||landing.example^$document` | Block a top-level navigation to that host |
@@ -135,6 +141,20 @@ declares `data_collection_permissions: ["none"]`.
 Fetches bypass the HTTP cache, are size-capped and time-limited, and support
 `ETag`/`Last-Modified` revalidation. A `304` reuses the stored rules. The exact
 text is stored under `wildfire.remote.v1`, so the applied rules are reproducible.
+
+## Dynamic site rules
+
+The popup's **Site rules** grid sets per-site `block` or `allow` actions for a
+resource type. Click a type to cycle **default → block → allow**; rules apply to
+the tab's top-level site, including requests from embedded frames. Dynamic
+rules override static filters and are saved with the rest of WildFire's state.
+Options lists every site with rules and can clear them. Navigations are never
+affected, and paused tabs keep their existing pause behavior.
+
+An `allow` rule skips all WildFire handling for that type, including parameter
+and header edits, CSP injection/report stripping, redirects and rewrites. A
+`block` rule cancels the request, counts once, and appears in the local
+Inspector as a site-rule decision.
 
 ## Curated CSP rules
 

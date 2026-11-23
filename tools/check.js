@@ -52,6 +52,57 @@ const BACKGROUND_CHAIN = [
   'lib/background/messages.js',
   'lib/background/background.js'
 ];
+const ENGINE_CHAIN = [
+  'lib/engine/filter/constants.js',
+  'lib/engine/filter/utils.js',
+  'lib/engine/filter/pattern.js',
+  'lib/engine/filter/parse-network.js',
+  'lib/engine/filter/parse-procedural.js',
+  'lib/engine/filter/parse-scriptlet.js',
+  'lib/engine/filter/parse-cosmetic.js',
+  'lib/engine/filter/engine.js',
+  'lib/engine/filter/engine-compiled.js',
+  'lib/engine/filter/engine-match.js',
+  'lib/engine/filter/engine-cosmetic.js'
+];
+const PROCEDURAL_CHAIN = [
+  'lib/engine/procedural/text.js',
+  'lib/engine/procedural/nodes.js',
+  'lib/engine/procedural/native.js',
+  'lib/engine/procedural/select.js'
+];
+const SCRIPTLET_CHAIN = [
+  'lib/resources/scriptlets/core.js',
+  'lib/resources/scriptlets/runtime.js',
+  'lib/resources/scriptlets/transforms.js',
+  'lib/resources/scriptlets/adguard-helpers.js',
+  'lib/resources/scriptlets/definitions.js',
+  'lib/resources/scriptlets/adguard-definitions.js',
+  'lib/resources/scriptlets/api.js'
+];
+
+function chainAt(actual, start, expected) {
+  return start !== -1 && expected.every((file, index) => actual[start + index] === file);
+}
+
+function checkDeclaredChain(label, source, name, expected) {
+  const match = new RegExp('const ' + name + ' = \\[([\\s\\S]*?)\\];').exec(source);
+  if (!match) {
+    errors.push(label + ' must define ' + name);
+    return;
+  }
+  const declared = Array.from(match[1].matchAll(/'([^']+)'/g), entry => entry[1]);
+  if (!expected.every((file, index) => declared[index] === file)) {
+    errors.push(label + ' ' + name + ' load order mismatch');
+  }
+}
+
+function checkImportedChain(label, source, expected) {
+  const imported = Array.from(source.matchAll(/['"]([^'"]+)['"]/g), entry => entry[1]);
+  if (!chainAt(imported, imported.indexOf(expected[0]), expected)) {
+    errors.push(label + ' importScripts load order mismatch');
+  }
+}
 
 const manifest = readJSON('manifest.json');
 const gecko = manifest.browser_specific_settings && manifest.browser_specific_settings.gecko;
@@ -96,6 +147,12 @@ if (manifest.background && manifest.background.scripts) {
   if (backgroundScripts[backgroundScripts.length - 1] !== 'background.js') {
     errors.push('background.js must be the final background script');
   }
+  if (!chainAt(backgroundScripts, backgroundScripts.indexOf(ENGINE_CHAIN[0]), ENGINE_CHAIN)) {
+    errors.push('filter engine chain out of order in manifest');
+  }
+  if (!chainAt(backgroundScripts, backgroundScripts.indexOf(SCRIPTLET_CHAIN[0]), SCRIPTLET_CHAIN)) {
+    errors.push('scriptlet chain out of order in manifest');
+  }
   const rawBackend = /\bbrowserApi\.\w|\bwapi\.webRequest\b/;
   BACKGROUND_CHAIN.forEach(file => {
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
@@ -112,6 +169,9 @@ if (manifest.content_scripts) {
     const cosmeticIndex = files.indexOf('content/cosmetic.js');
     if (clientIndex === -1 || (cosmeticIndex !== -1 && clientIndex > cosmeticIndex)) {
       errors.push('wapi-client.js must load before content/cosmetic.js');
+    }
+    if (!chainAt(files, files.indexOf(PROCEDURAL_CHAIN[0]), PROCEDURAL_CHAIN)) {
+      errors.push('procedural evaluator chain out of order in manifest');
     }
   });
 }
@@ -156,6 +216,29 @@ if (!testChain) {
       errors.push('tools/test.js background chain out of order: expected ' + file);
     }
   });
+}
+checkDeclaredChain('tools/test.js', testSource, 'ENGINE_FILES', ENGINE_CHAIN);
+checkDeclaredChain('tools/test.js', testSource, 'PROCEDURAL_FILES', PROCEDURAL_CHAIN);
+checkDeclaredChain('tools/test.js', testSource, 'SCRIPTLET_FILES', SCRIPTLET_CHAIN);
+
+const workerSource = fs.readFileSync(path.join(ROOT, 'lib/compile/compiler-worker.js'), 'utf8');
+checkImportedChain('compiler worker', workerSource, ENGINE_CHAIN.map(file =>
+  file.replace('lib/engine/filter/', '../engine/filter/')));
+checkImportedChain('compiler worker', workerSource, SCRIPTLET_CHAIN.map(file =>
+  file.replace('lib/resources/scriptlets/', '../resources/scriptlets/')));
+
+const engineHostSource = fs.readFileSync(path.join(ROOT, 'lib/background/engine-host.js'), 'utf8');
+checkDeclaredChain('engine-host.js', engineHostSource, 'SCRIPTLET_FILES', SCRIPTLET_CHAIN);
+
+const buildSource = fs.readFileSync(path.join(ROOT, 'tools/build.js'), 'utf8');
+const compiledBuild = /function compiledDefault\(\)[\s\S]*?\[([\s\S]*?)\]\.forEach/.exec(buildSource);
+if (!compiledBuild) {
+  errors.push('tools/build.js must define the compiledDefault engine chain');
+} else {
+  const buildFiles = Array.from(compiledBuild[1].matchAll(/'([^']+)'/g), entry => entry[1]);
+  if (!ENGINE_CHAIN.every((file, index) => buildFiles[index] === file)) {
+    errors.push('tools/build.js filter engine chain out of order');
+  }
 }
 if (manifest.options_ui && manifest.options_ui.page) referenced.add(manifest.options_ui.page);
 referenced.add('ui/inspector/inspector.html');

@@ -14,8 +14,25 @@
     reload: document.getElementById('reload'),
     options: document.getElementById('options'),
     inspector: document.getElementById('inspector'),
-    inspectToggle: document.getElementById('inspect-toggle')
+    inspectToggle: document.getElementById('inspect-toggle'),
+    siteRules: document.getElementById('site-rules'),
+    siteRulesSite: document.getElementById('site-rules-site')
   };
+
+  const SITE_RULE_TYPES = [
+    ['script', 'Script'],
+    ['image', 'Image'],
+    ['subdocument', 'Frame'],
+    ['stylesheet', 'CSS'],
+    ['font', 'Font'],
+    ['media', 'Media'],
+    ['xmlhttprequest', 'XHR'],
+    ['websocket', 'Socket'],
+    ['object', 'Object'],
+    ['ping', 'Ping'],
+    ['other', 'Other']
+  ];
+  const RULE_CYCLE = ['', 'block', 'allow'];
 
   let current = null;
   let site = { url: '', host: '', disabled: false };
@@ -42,6 +59,32 @@
     if (message && message.state && message.counts) applyResult(message);
   });
 
+  function renderSiteRules(site) {
+    const rules = site && site.rules ? site.rules : {};
+    elements.siteRulesSite.textContent = site && site.site ? site.site : 'no site';
+    elements.siteRules.textContent = '';
+    SITE_RULE_TYPES.forEach(([type, label]) => {
+      const action = rules[type] || '';
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'button small rule' + (action ? ' active' : '');
+      button.textContent = label + ' ' +
+        (action === 'block' ? '✕' : action === 'allow' ? '✓' : '·');
+      button.title = label + ': ' + (action || 'default');
+      button.disabled = !site || !site.site || !current.state.enabled || site.disabled;
+      button.addEventListener('click', async () => {
+        const next = RULE_CYCLE[(RULE_CYCLE.indexOf(action) + 1) % RULE_CYCLE.length];
+        const result = await client.send('set-site-rule', {
+          site: site.site,
+          resourceType: type,
+          action: next || 'clear'
+        });
+        applyResult(result);
+      });
+      elements.siteRules.appendChild(button);
+    });
+  }
+
   function render() {
     if (!current) return;
     const { state, counts, site } = current;
@@ -63,6 +106,7 @@
     elements.site.disabled = !state.enabled || !site.host;
     elements.inspectToggle.textContent = inspecting ? 'Recording: on' : 'Recording: off';
     elements.inspectToggle.classList.toggle('active', inspecting);
+    renderSiteRules(site);
 
     if (!state.enabled) elements.status.textContent = 'Paused globally';
     else if (pausedHere) elements.status.textContent = 'Paused on ' + site.host;

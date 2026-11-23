@@ -53,4 +53,12 @@ h1 { margin: 0; font-size: 17px; letter-spacing: 0.2px; }
 .button.small { padding: 7px 8px; font-size: 12px; }
 .button.active { border-color: #ff8a4c; color: #ff8a4c; font-weight: 600; }
 
+.site-rules { margin: 0 0 14px; }
+.site-rules-head { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 11px; }
+.site-rules-head span { color: #9aa2b1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.site-rules-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+.button.rule { padding: 6px 4px; font-size: 10px; text-align: center; }
+.button.rule:disabled { opacity: 0.45; cursor: default; }
+.site-rules-hint { margin: 6px 0 0; color: #6d7482; font-size: 10px; }
+
 .footer { margin-top: 14px; color: #6d7482; font-size: 10px; text-align: center; }
