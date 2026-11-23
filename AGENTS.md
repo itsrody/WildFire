@@ -61,7 +61,11 @@ lib/
       engine-compiled.js   toCompiled/loadCompiled serialization
       engine-match.js  request matching hot path
       engine-cosmetic.js   cosmetic storage + per-host getters
-    procedural.js      DOM-based procedural cosmetic evaluator (no browser APIs)
+    procedural/        DOM-based procedural cosmetic evaluator module chain:
+      text.js          regex cache + text/path matchers
+      nodes.js         step evaluation + target-set traversal (XPath, ancestors)
+      native.js        native Gecko CSS compilation for safe steps
+      select.js        rule classification, grouped selection, public API
   compile/
     compiler.js        dynamic compile engine: worker with sync fallback
     compile-cache.js   compiled-filter cache (memory LRU + IndexedDB/local)
@@ -112,8 +116,12 @@ used **only** by `tools/`.
 10. `lib/compile/compiler.js` → `window.WildFireCompiler`
 11. `background.js` → the engine instance and all listeners
 
-Content scripts load in this order: `lib/engine/procedural.js` → `content/cosmetic.js`,
-so the DOM evaluator exists before the content script runs.
+Content scripts load in this order: `lib/engine/procedural/` chain (`text.js`,
+`nodes.js`, `native.js`, `select.js`) → `content/cosmetic.js`, so the DOM
+evaluator exists before the content script runs. The chain shares one internal
+namespace, `window.WildFireProceduralCore`; `select.js` publishes the public
+`window.WildFireProcedural` API. Load order is pinned in the manifest and in
+`tools/test.js` (`PROCEDURAL_FILES`) — keep both in sync.
 
 Libraries export by attaching to `this` (the window/global in a classic
 script). Keep that pattern; do not introduce imports, `export`, or a module
@@ -438,8 +446,8 @@ native `matchMedia`; the query is bounded data (≤256 chars, no control chars) 
 Gecko validates its syntax at runtime, so an invalid query never matches. It is
 viewport-dependent, so `content/cosmetic.js` re-applies on `resize` while such a
 rule is live. Invalid rules land in `engine.rejectedCosmetic`. Evaluation
-lives entirely in `lib/engine/procedural.js` and `content/cosmetic.js` — never in
-injected script.
+lives entirely in the `lib/engine/procedural/` chain and `content/cosmetic.js` —
+never in injected script.
 
 Add new syntax by extending the `lib/engine/filter/` chain (parser **and** the
 relevant engine part) **and** `tools/test.js` in the same change. `README.md`

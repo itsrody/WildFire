@@ -21,9 +21,17 @@ const ENGINE_FILES = [
   'lib/engine/filter/engine-match.js',
   'lib/engine/filter/engine-cosmetic.js'
 ];
-const loadEngine = target => ENGINE_FILES.forEach(file => {
+/* The procedural DOM evaluator is a second classic-script chain. */
+const PROCEDURAL_FILES = [
+  'lib/engine/procedural/text.js',
+  'lib/engine/procedural/nodes.js',
+  'lib/engine/procedural/native.js',
+  'lib/engine/procedural/select.js'
+];
+const loadFiles = (target, files) => files.forEach(file => {
   vm.runInContext(fs.readFileSync(path.join(ROOT, file), 'utf8'), target, { filename: file });
 });
+const loadEngine = target => loadFiles(target, ENGINE_FILES);
 const context = vm.createContext({
   console, URL, CSS: { supports: () => true }, location: { hostname: 'page.example' }
 });
@@ -35,9 +43,7 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/state/document-scope.js'), 
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/resources/redirect-resources.js'), 'utf8'), context, {
   filename: 'redirect-resources.js'
 });
-vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/engine/procedural.js'), 'utf8'), context, {
-  filename: 'procedural.js'
-});
+loadFiles(context, PROCEDURAL_FILES);
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/state/remote-lists.js'), 'utf8'), context, {
   filename: 'remote-lists.js'
 });

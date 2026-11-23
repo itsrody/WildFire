@@ -75,7 +75,13 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["lib/engine/procedural.js", "content/cosmetic.js"],
+      "js": [
+        "lib/engine/procedural/text.js",
+        "lib/engine/procedural/nodes.js",
+        "lib/engine/procedural/native.js",
+        "lib/engine/procedural/select.js",
+        "content/cosmetic.js"
+      ],
       "run_at": "document_idle",
       "all_frames": true
     }
