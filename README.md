@@ -207,6 +207,7 @@ This is deliberately a *minimal* engine, not a full uBO port:
   XHR, WebSockets, pings, CSP reports and manifests; unknown types fall into `other`.
 - Top-level navigations are only blocked by explicit `$document` or `$popup`
   rules, so plain network rules never cancel a page load.
+- `$important` blockers/redirects/rewrites override `@@` exceptions (uBO-style).
 - Redirect filters can only name WildFire-owned aliases (`noopjs`, `noopcss`,
   `nooptext`, `noopjson`, `noophtml`, `1x1.gif`, `1x1.png`, `tagged.svg`); the
   response is a bundled `data:` URI, never a URL from the filter. Unknown

@@ -196,6 +196,40 @@ assert.strictEqual(
   indexEngine.matchRequest('https://keep.example/popup.js', mapResourceType('script'), '').blocked,
   false, 'exceptions win through the token index');
 
+const plainEngineFast = new FilterEngine();
+plainEngineFast.load([
+  '||ads.example/track.js',
+  '|https://exact.example/ad.js|',
+  '/banner/i',
+  '@@||ads.example/track.js$script'
+].join('\n'));
+assert.strictEqual(plainEngineFast.matchRequest('https://ads.example/track.js?x=1', 'script', '').blocked,
+  false, 'plain host-anchor exception wins');
+assert.strictEqual(plainEngineFast.matchRequest('https://ads.example/track.js?x=1', 'image', '').blocked,
+  true, 'plain host-anchor rule matches path');
+assert.strictEqual(plainEngineFast.matchRequest('https://exact.example/ad.js', 'script', '').blocked,
+  true, 'plain left+right anchor matches exactly');
+assert.strictEqual(plainEngineFast.matchRequest('https://cdn.example/BANNER.PNG', 'image', '').blocked,
+  true, 'plain case-insensitive contains matches');
+
+const importantEngine = new FilterEngine();
+importantEngine.load([
+  '||ads.example^$script',
+  '@@||ads.example^$script',
+  '||ads.example^$script,important',
+  '||redir.example^$script,redirect=noopjs,important',
+  '@@||redir.example^$script'
+].join('\n'));
+assert.strictEqual(
+  importantEngine.matchRequest('https://ads.example/app.js', 'script', '').blocked,
+  true, '$important overrides an exception');
+assert.strictEqual(
+  importantEngine.matchRequest('https://ads.example/app.js', 'script', '').important,
+  true, '$important result is marked important');
+const importantRedirect = importantEngine.matchRequest('https://redir.example/app.js', 'script', '');
+assert.strictEqual(importantRedirect.blocked, true, '$important redirect blocks');
+assert.strictEqual(importantRedirect.redirect.alias, 'noopjs', '$important keeps redirect');
+
 const bigEngine = new FilterEngine();
 bigEngine.load(Array.from({ length: 2000 }, (_, i) => `${i}u.example/path`).join('\n'));
 assert.strictEqual(bigEngine.counts.network, 2000, 'large list loads every rule');
