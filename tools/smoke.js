@@ -22,6 +22,7 @@ const args = process.argv.slice(2);
 const keep = args.includes('--keep');
 const firefoxArgIndex = args.indexOf('--firefox');
 const firefoxBinary = firefoxArgIndex >= 0 ? args[firefoxArgIndex + 1] : '';
+const mode = args.includes('--native') ? 'native' : (args[args.indexOf('--mode') + 1] || 'compare');
 
 function die(message) {
   console.error(message);
@@ -273,25 +274,44 @@ function summarize(report) {
 async function main() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wildfire-smoke-'));
   const webDir = path.join(tmpDir, 'web');
-  const baselineDir = path.join(tmpDir, 'baseline');
-  const modifiedDir = path.join(tmpDir, 'modified');
   const reports = new Map();
 
   writeFile(path.join(webDir, 'smoke.html'), smokeHtml());
   writeFile(path.join(webDir, 'launcher.html'), launcherHtml());
-  copyDir(ROOT, baselineDir);
-  copyDir(ROOT, modifiedDir);
-  [baselineDir, modifiedDir].forEach(dir => {
-    addSmokeRules(dir);
-    addMarkers(dir);
-  });
-  patchMainWorld(modifiedDir);
 
   const server = await startServer(webDir, reports);
   try {
+    if (mode === 'native') {
+      const nativeDir = path.join(tmpDir, 'native');
+      copyDir(ROOT, nativeDir);
+      addSmokeRules(nativeDir);
+      addMarkers(nativeDir);
+      const nativeRun = await runCase(server, reports, nativeDir, 'native-bridge', tmpDir);
+      const output = {
+        mode,
+        firefox: firefoxBinary || 'default',
+        native: Object.assign(summarize(nativeRun.report), { logFile: nativeRun.logFile }),
+        tmpDir
+      };
+      console.log(JSON.stringify(output, null, 2));
+      if (!output.native.ok) process.exitCode = 1;
+      return;
+    }
+
+    const baselineDir = path.join(tmpDir, 'baseline');
+    const modifiedDir = path.join(tmpDir, 'modified');
+    copyDir(ROOT, baselineDir);
+    copyDir(ROOT, modifiedDir);
+    [baselineDir, modifiedDir].forEach(dir => {
+      addSmokeRules(dir);
+      addMarkers(dir);
+    });
+    patchMainWorld(modifiedDir);
+
     const baseline = await runCase(server, reports, baselineDir, 'baseline-isolated', tmpDir);
     const modified = await runCase(server, reports, modifiedDir, 'modified-main', tmpDir);
     const output = {
+      mode: 'compare',
       firefox: firefoxBinary || 'default',
       baseline: Object.assign(summarize(baseline.report), { logFile: baseline.logFile }),
       modified: Object.assign(summarize(modified.report), { logFile: modified.logFile }),

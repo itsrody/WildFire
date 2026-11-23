@@ -8,46 +8,65 @@ const MAX_RULES = 2048;
 const MAX_ARGS = 8;
 const MAX_STRING = 512;
 const ALLOWED_ALIASES = new Set(["set-constant"]);
+const CANONICAL = new Map([
+  ["set-constant", "set-constant"],
+  ["set", "set-constant"],
+]);
 const ALLOWED_CONSTANTS = new Set([
-  "true", "false", "null", "undefined", "0", "1", "", "[]", "{}", "noopFunc",
-  "yes", "no"
+  "undefined", "false", "true", "null", "noopFunc", "noopCallbackFunc",
+  "trueFunc", "falseFunc", "throwFunc", "noopPromiseResolve", "noopPromiseReject",
+  "emptyObj", "emptyArr", "emptyStr", "''", "0", "1", "-1", "NaN", "yes", "no",
+  "{}", "[]", ""
 ]);
 
 function isPlainString(value) {
   return typeof value === "string" && value.length <= MAX_STRING;
 }
 
+function isSafePropertyPath(value) {
+  const raw = String(value || "");
+  if (!raw || raw.length > 120) return false;
+  if (raw.includes("__proto__") || raw.includes("prototype") || raw.includes("constructor")) return false;
+  return /^[$_A-Za-z][$_0-9A-Za-z]*(?:\.(?:[$_A-Za-z][$_0-9A-Za-z]*|\[\d+\]))*$/.test(raw);
+}
+
 function validateEntry(entry, phase) {
   if (!entry || typeof entry !== "object") throw new Error("invalid scriptlet entry");
   if (!isPlainString(entry.alias)) throw new Error("invalid scriptlet alias");
   const syntax = entry.syntax === "adguard" ? "adguard" : "ubo";
-  const alias = entry.alias.trim().toLowerCase();
-  if (alias.startsWith("trusted-")) throw new Error("trusted scriptlets are not allowed");
+  const rawAlias = entry.alias.trim().toLowerCase();
+  if (rawAlias.startsWith("trusted-")) throw new Error("trusted scriptlets are not allowed");
+  const alias = CANONICAL.get(rawAlias);
+  if (!alias) throw new Error("unknown scriptlet alias: " + rawAlias);
   if (phase === "realmBirth" && !ALLOWED_ALIASES.has(alias)) {
     throw new Error("alias not allowed at realm birth: " + alias);
   }
   if (!Array.isArray(entry.args) || entry.args.length > MAX_ARGS) {
     throw new Error("invalid scriptlet args");
   }
-  for (const arg of entry.args) {
+  const args = entry.args.map(arg => {
     const ok = typeof arg === "string" || typeof arg === "number" ||
       typeof arg === "boolean" || arg === null;
     if (!ok || (typeof arg === "string" && arg.length > MAX_STRING)) {
       throw new Error("invalid scriptlet arg");
     }
-  }
+    return arg;
+  });
   if (alias === "set-constant") {
-    const value = String(entry.args[1] ?? "");
+    if (args.length < 2 || args.length > 3) throw new Error("invalid set-constant arity");
+    if (!isSafePropertyPath(args[0])) throw new Error("invalid set-constant property path");
+    const value = String(args[1] ?? "");
     if (!ALLOWED_CONSTANTS.has(value)) throw new Error("unsupported set-constant value");
+    if (args.length === 3 && typeof args[2] !== "string") throw new Error("invalid set-constant stack arg");
   }
   const domains = Array.isArray(entry.domains) ? entry.domains : [];
-  for (const domain of domains) {
+  domains.forEach(domain => {
     if (!isPlainString(domain)) throw new Error("invalid scriptlet domain");
-  }
+  });
   return {
     alias,
     syntax,
-    args: entry.args.slice(),
+    args,
     domains: domains.slice(),
     isException: !!entry.isException,
   };

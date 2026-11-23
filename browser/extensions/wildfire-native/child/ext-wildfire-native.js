@@ -4,8 +4,6 @@
 
 "use strict";
 
-const { AppConstants } = ChromeUtils.importESModule("resource://gre/modules/AppConstants.sys.mjs");
-
 const PAYLOADS = new Map();
 let debuggerInstalled = false;
 let dbg = null;
@@ -48,23 +46,51 @@ function sameRule(left, right) {
 
 function constantValue(token) {
   switch (String(token)) {
-    case "true": return true;
-    case "false": return false;
-    case "null": return null;
     case "undefined": return undefined;
+    case "false": return false;
+    case "true": return true;
+    case "null": return null;
+    case "noopFunc":
+    case "noopCallbackFunc":
+    case "trueFunc":
+    case "falseFunc":
+    case "throwFunc":
+    case "noopPromiseResolve":
+    case "noopPromiseReject":
+      return function () {
+        if (token === "trueFunc") return true;
+        if (token === "falseFunc") return false;
+        if (token === "throwFunc") throw new Error("");
+        if (token === "noopPromiseResolve") return Promise.resolve();
+        if (token === "noopPromiseReject") return Promise.reject();
+        return undefined;
+      };
+    case "emptyObj": return {};
+    case "{}": return {};
+    case "emptyArr": return [];
+    case "[]": return [];
+    case "emptyStr": return "";
+    case "''": return "";
+    case "": return "";
     case "0": return 0;
     case "1": return 1;
-    case "": return "";
-    case "[]": return [];
-    case "{}": return ({});
-    case "noopFunc": return function () {};
+    case "-1": return -1;
+    case "NaN": return NaN;
     case "yes": return "yes";
     case "no": return "no";
     default: return undefined;
   }
 }
 
+function isSafePropertyPath(value) {
+  const raw = String(value || "");
+  if (!raw || raw.length > 120) return false;
+  if (raw.includes("__proto__") || raw.includes("prototype") || raw.includes("constructor")) return false;
+  return /^[$_A-Za-z][$_0-9A-Za-z]*(?:\.(?:[$_A-Za-z][$_0-9A-Za-z]*|\[\d+\]))*$/.test(raw);
+}
+
 function defineConstant(globalDO, path, value) {
+  if (!isSafePropertyPath(path)) return;
   const parts = String(path || "").split(".");
   let target = globalDO;
   for (let i = 0; i < parts.length - 1; i++) {
@@ -86,11 +112,15 @@ function defineConstant(globalDO, path, value) {
   }
   const key = parts[parts.length - 1];
   if (!key) return;
+  let existing;
+  try { existing = target.getOwnPropertyDescriptor(key); } catch (_e) { existing = undefined; }
+  const configurable = existing ? !!existing.configurable : false;
+  const enumerable = existing ? !!existing.enumerable : true;
   target.defineProperty(key, {
     value: globalDO.makeDebuggeeValue(value),
     writable: false,
-    enumerable: true,
-    configurable: false,
+    enumerable,
+    configurable,
   });
 }
 

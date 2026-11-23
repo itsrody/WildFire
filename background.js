@@ -104,12 +104,24 @@
     ].join('\u001e')).join('\u001d');
   }
 
+  function normalizeScriptletRule(rule) {
+    const syntax = rule.syntax === 'adguard' ? 'adguard' : 'ubo';
+    const alias = WildFireScriptlets.canonical(rule.alias, syntax);
+    return {
+      alias,
+      syntax,
+      args: Array.isArray(rule.args) ? rule.args.slice() : [],
+      domains: Array.isArray(rule.domains) ? rule.domains.slice() : [],
+      isException: !!rule.isException
+    };
+  }
+
   function splitScriptletPayload(rules) {
     const payload = { realmBirth: [], documentStart: [] };
     rules.forEach(rule => {
-      const name = WildFireScriptlets.canonical(rule.alias, rule.syntax);
-      if (!rule.isException && REALM_BIRTH_ALIASES.has(name)) payload.realmBirth.push(rule);
-      else payload.documentStart.push(rule);
+      const normalized = normalizeScriptletRule(rule);
+      if (!normalized.isException && REALM_BIRTH_ALIASES.has(normalized.alias)) payload.realmBirth.push(normalized);
+      else payload.documentStart.push(normalized);
     });
     return payload;
   }
