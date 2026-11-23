@@ -31,6 +31,13 @@ function collectFiles(directory, skipDirs) {
 }
 
 const LOOP_STATEMENT = /^\s*(?:for\s*\(|while\s*\(|for\s+await\b|do\s*\{)/;
+const BACKGROUND_CHAIN = [
+  'lib/background/helpers.js',
+  'lib/background/engine-host.js',
+  'lib/background/requests.js',
+  'lib/background/messages.js',
+  'lib/background/background.js'
+];
 
 const manifest = readJSON('manifest.json');
 const gecko = manifest.browser_specific_settings && manifest.browser_specific_settings.gecko;
@@ -58,10 +65,34 @@ if (manifest.browser_action && manifest.browser_action.default_popup) {
   referenced.add(manifest.browser_action.default_popup);
 }
 if (manifest.background && manifest.background.scripts) {
-  manifest.background.scripts.forEach(value => referenced.add(value));
+  const backgroundScripts = manifest.background.scripts;
+  backgroundScripts.forEach(value => referenced.add(value));
+  const chainStart = backgroundScripts.indexOf(BACKGROUND_CHAIN[0]);
+  const actualChain = backgroundScripts.slice(chainStart, chainStart + BACKGROUND_CHAIN.length);
+  BACKGROUND_CHAIN.forEach((file, index) => {
+    if (actualChain[index] !== file) {
+      errors.push('background chain out of order: expected ' + file + ' after helpers.js');
+    }
+  });
+  if (backgroundScripts[backgroundScripts.length - 1] !== 'background.js') {
+    errors.push('background.js must be the final background script');
+  }
 }
 if (manifest.content_scripts) {
   manifest.content_scripts.forEach(entry => (entry.js || []).forEach(value => referenced.add(value)));
+}
+
+const testSource = fs.readFileSync(path.join(ROOT, 'tools/test.js'), 'utf8');
+const testChain = /const BACKGROUND_FILES = \[([\s\S]*?)\];/.exec(testSource);
+if (!testChain) {
+  errors.push('tools/test.js must define BACKGROUND_FILES');
+} else {
+  const testChainFiles = Array.from(testChain[1].matchAll(/'([^']+)'/g), match => match[1]);
+  BACKGROUND_CHAIN.forEach((file, index) => {
+    if (testChainFiles[index] !== file) {
+      errors.push('tools/test.js background chain out of order: expected ' + file);
+    }
+  });
 }
 if (manifest.options_ui && manifest.options_ui.page) referenced.add(manifest.options_ui.page);
 referenced.add('filters/default.txt');

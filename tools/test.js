@@ -38,6 +38,14 @@ const SCRIPTLET_FILES = [
   'lib/resources/scriptlets/adguard-definitions.js',
   'lib/resources/scriptlets/api.js'
 ];
+/* Background controller is a classic-script chain loaded before the bootstrap. */
+const BACKGROUND_FILES = [
+  'lib/background/helpers.js',
+  'lib/background/engine-host.js',
+  'lib/background/requests.js',
+  'lib/background/messages.js',
+  'lib/background/background.js'
+];
 const loadFiles = (target, files) => files.forEach(file => {
   vm.runInContext(fs.readFileSync(path.join(ROOT, file), 'utf8'), target, { filename: file });
 });
@@ -47,6 +55,9 @@ const context = vm.createContext({
   console, URL, CSS: { supports: () => true }, location: { hostname: 'page.example' }
 });
 context.window = context;
+vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/state/store.js'), 'utf8'), context, {
+  filename: 'store.js'
+});
 loadEngine(context);
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/state/page-store.js'), 'utf8'), context, {
   filename: 'page-store.js'
@@ -74,7 +85,8 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/compile/compile-cache.js'),
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/compile/compiler.js'), 'utf8'), context, {
   filename: 'compiler.js'
 });
-const { FilterEngine, mapResourceType, WildFirePageStore, RedirectResources, WildFireProcedural, RemoteLists, WildFireSuggestedLists, CspResources, WildFireScriptlets, RewriteResources, WildFireCompileCache, WildFireCompiler } = context;
+loadFiles(context, BACKGROUND_FILES);
+const { FilterEngine, mapResourceType, WildFirePageStore, RedirectResources, WildFireProcedural, RemoteLists, WildFireSuggestedLists, CspResources, WildFireScriptlets, RewriteResources, WildFireCompileCache, WildFireCompiler, WildFireStore, WildFireBackground } = context;
 
 const engine = new FilterEngine();
 engine.load([
@@ -1819,10 +1831,10 @@ async function testStaleGenerationWorkerHang() {
     contentScripts: { register: async () => ({ unregister: async () => {} }) },
     publicSuffix: { getDomain: host => host.split('.').slice(-2).join('.') }
   };
-  ['lib/state/store.js', ...ENGINE_FILES, 'lib/state/page-store.js', 'lib/resources/redirect-resources.js', 'lib/state/remote-lists.js', 'lib/state/suggested-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js', 'lib/compile/compile-cache.js', 'lib/compile/compiler.js']
+  ['lib/state/store.js', ...ENGINE_FILES, 'lib/state/page-store.js', 'lib/resources/redirect-resources.js', 'lib/state/remote-lists.js', 'lib/state/suggested-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js', 'lib/compile/compile-cache.js', 'lib/compile/compiler.js', ...BACKGROUND_FILES]
     .forEach(f => vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f }));
   const bgSource = fs.readFileSync(path.join(ROOT, 'background.js'), 'utf8')
-    .replace(/  init\(\);\n}\)\(\);\s*$/, '  globalThis.__wildfireTest = { loadFilters, engine, getState: () => state, setState: p => { state = Object.assign({}, state, p); }, compiler }; init(); })();');
+    .replace(/  wildfire\.start\(\);\n\}\)\(\);\s*$/, '  globalThis.__wildfireTest = wildfire.debug(); wildfire.start(); })();');
   const origDebug2 = console.debug;
   console.debug = () => {};
   vm.runInContext(bgSource, ctx, { filename: 'background.js' });
@@ -1976,11 +1988,11 @@ async function testBackgroundLoadFiltersIntegration() {
   [
     'lib/state/store.js', ...ENGINE_FILES, 'lib/state/page-store.js', 'lib/resources/redirect-resources.js',
     'lib/state/remote-lists.js', 'lib/state/suggested-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js',
-    'lib/compile/compile-cache.js', 'lib/compile/compiler.js'
+    'lib/compile/compile-cache.js', 'lib/compile/compiler.js', ...BACKGROUND_FILES
   ].forEach(f => vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f }));
 
   const bgSource = fs.readFileSync(path.join(ROOT, 'background.js'), 'utf8')
-    .replace(/  init\(\);\n}\)\(\);\s*$/, '  globalThis.__wildfireTest = { loadFilters, engine, getState: () => state, setState: p => { state = Object.assign({}, state, p); }, remoteLists, compiler, compileCache }; init(); })();');
+    .replace(/  wildfire\.start\(\);\n\}\)\(\);\s*$/, '  globalThis.__wildfireTest = wildfire.debug(); wildfire.start(); })();');
   vm.runInContext(bgSource, ctx, { filename: 'background.js' });
 
   // wait for init/load
@@ -2072,10 +2084,10 @@ async function testRemoveRuntimeIntegration() {
     contentScripts:{register:async()=>({unregister:async()=>{}})},
     publicSuffix:{getDomain:host=>host.split('.').slice(-2).join('.')}
   };
-  ['lib/state/store.js',...ENGINE_FILES,'lib/state/page-store.js','lib/resources/redirect-resources.js','lib/state/remote-lists.js', 'lib/state/suggested-lists.js','lib/resources/csp-resources.js',...SCRIPTLET_FILES,'lib/resources/rewrite-resources.js','lib/compile/compile-cache.js','lib/compile/compiler.js']
+  ['lib/state/store.js',...ENGINE_FILES,'lib/state/page-store.js','lib/resources/redirect-resources.js','lib/state/remote-lists.js', 'lib/state/suggested-lists.js','lib/resources/csp-resources.js',...SCRIPTLET_FILES,'lib/resources/rewrite-resources.js','lib/compile/compile-cache.js','lib/compile/compiler.js',...BACKGROUND_FILES]
     .forEach(f=>vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),ctx,{filename:f}));
   const bgSource = fs.readFileSync(path.join(ROOT,'background.js'),'utf8')
-    .replace(/  init\(\);\n}\)\(\);\s*$/, '  globalThis.__wildfireTest = { loadFilters, engine, getState: () => state, setState: p => { state = Object.assign({}, state, p); } }; init(); })();');
+    .replace(/  wildfire\.start\(\);\n\}\)\(\);\s*$/, '  globalThis.__wildfireTest = wildfire.debug(); wildfire.start(); })();');
   vm.runInContext(bgSource, ctx, { filename: 'background.js' });
   await new Promise(r=>setTimeout(r,30));
   const api = ctx.__wildfireTest;
@@ -2371,7 +2383,7 @@ async function testCompileInFlightDedup() {
   };
   ['lib/state/store.js', ...ENGINE_FILES, 'lib/state/page-store.js', 'lib/resources/redirect-resources.js',
     'lib/state/remote-lists.js', 'lib/state/suggested-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js',
-    'lib/compile/compile-cache.js']
+    'lib/compile/compile-cache.js', 'lib/compile/compiler.js', ...BACKGROUND_FILES]
     .forEach(f => vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f }));
 
   let compileCalls = 0;
@@ -2390,7 +2402,7 @@ async function testCompileInFlightDedup() {
     compileSync(text) { return mk(text); }
   };
   const bgSource = fs.readFileSync(path.join(ROOT, 'background.js'), 'utf8')
-    .replace(/  init\(\);\n}\)\(\);\s*$/, '  globalThis.__wildfireTest = { compileText }; init(); })();');
+    .replace(/  wildfire\.start\(\);\n\}\)\(\);\s*$/, '  globalThis.__wildfireTest = wildfire.debug(); wildfire.start(); })();');
   vm.runInContext(bgSource, ctx, { filename: 'background.js' });
   await new Promise(r => setTimeout(r, 20));
   const api = ctx.__wildfireTest;
@@ -2908,10 +2920,10 @@ async function testPerSiteBadgeCounters() {
     'lib/resources/redirect-resources.js', 'lib/state/remote-lists.js',
     'lib/state/suggested-lists.js', 'lib/resources/csp-resources.js',
     ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js',
-    'lib/compile/compile-cache.js', 'lib/compile/compiler.js'
+    'lib/compile/compile-cache.js', 'lib/compile/compiler.js', ...BACKGROUND_FILES
   ]);
   const bgSource = fs.readFileSync(path.join(ROOT, 'background.js'), 'utf8')
-    .replace(/  init\(\);\n}\)\(\);\s*$/, '  globalThis.__wildfireTest = { getState: () => state, setState: patch => { state = Object.assign({}, state, patch); }, loadFilters }; init(); })();');
+    .replace(/  wildfire\.start\(\);\n\}\)\(\);\s*$/, '  globalThis.__wildfireTest = wildfire.debug(); wildfire.start(); })();');
   vm.runInContext(bgSource, ctx, { filename: 'background.js' });
   await new Promise(resolve => setTimeout(resolve, 30));
   const api = ctx.__wildfireTest;
@@ -3292,6 +3304,155 @@ async function testRemoteLists() {
   assert.strictEqual(await remote.enabledText(), '', 'removed lists contribute no filters');
 }
 
+async function testBackgroundControllerRobustness() {
+  const eventHub = () => {
+    const listeners = [];
+    return {
+      listeners,
+      addListener(listener) { listeners.push(listener); },
+      removeListener(listener) {
+        const index = listeners.indexOf(listener);
+        if (index !== -1) listeners.splice(index, 1);
+      }
+    };
+  };
+  const makeLocalStore = () => {
+    let data = {};
+    return {
+      get: async key => ({ [key]: data[key] }),
+      set: async patch => { data = Object.assign({}, data, patch); }
+    };
+  };
+  const makeBrowser = () => ({
+    runtime: { getURL: path => 'moz-extension://test/' + path, onMessage: eventHub() },
+    storage: { local: makeLocalStore() },
+    browserAction: {
+      setBadgeBackgroundColor: () => {},
+      setBadgeText: () => {}
+    },
+    webRequest: {
+      onBeforeRequest: eventHub(),
+      onBeforeSendHeaders: eventHub(),
+      onHeadersReceived: eventHub(),
+      onCompleted: eventHub(),
+      onErrorOccurred: eventHub(),
+      onBeforeRedirect: eventHub()
+    },
+    webNavigation: {
+      onCreatedNavigationTarget: eventHub(),
+      onCommitted: eventHub(),
+      onReferenceFragmentUpdated: eventHub(),
+      onHistoryStateUpdated: eventHub()
+    },
+    tabs: {
+      query: async () => [],
+      get: async id => ({ id, url: '' }),
+      onUpdated: eventHub(),
+      onActivated: eventHub(),
+      onRemoved: eventHub(),
+      sendMessage: async () => {},
+      remove: async () => {}
+    },
+    alarms: {
+      onAlarm: eventHub(),
+      clear: async () => {},
+      get: async () => null,
+      create: async () => {}
+    },
+    contentScripts: { register: async () => ({ unregister: async () => {} }) },
+    publicSuffix: { getDomain: host => host.split('.').slice(-2).join('.') }
+  });
+
+  const defaults = WildFireStore.defaults;
+  const makeStore = (getImpl) => ({
+    defaults,
+    get: getImpl,
+    save: async patch => patch
+  });
+  const defaultText = fs.readFileSync(path.join(ROOT, 'filters/default.txt'), 'utf8');
+  const savedFetch = context.fetch;
+  const savedError = console.error;
+  const savedWarn = console.warn;
+  console.error = () => {};
+  console.warn = () => {};
+  context.fetch = async url => String(url).includes('default.compiled.json')
+    ? { ok: false }
+    : { ok: true, text: async () => defaultText };
+
+  try {
+    const failingBrowser = makeBrowser();
+    const failing = WildFireBackground.create({
+      browserApi: failingBrowser,
+      store: makeStore(async () => { throw new Error('storage unavailable'); })
+    });
+    await failing.start();
+    assert.ok(failingBrowser.webRequest.onBeforeRequest.listeners.length > 0,
+      'blocking listeners are registered before async initialization');
+    assert.ok(failingBrowser.runtime.onMessage.listeners.length > 0,
+      'message listeners are registered before async initialization');
+    const failedState = await failing.debug().onMessage({ type: 'wildfire:state' }, {});
+    assert.strictEqual(failedState.ok, false, 'messages report initialization failure');
+    assert.ok(/storage unavailable/.test(failedState.error), 'the failure reason is included');
+    assert.strictEqual(failing.context.startup.ok, false,
+      'a failed startup is recorded in diagnostics state');
+    assert.strictEqual(failing.context.startup.total,
+      Object.values(failing.context.startup.counts)
+        .reduce((sum, value) => sum + (Number(value) || 0), 0),
+      'startup counts use the same shape on failure');
+
+    const healthyBrowser = makeBrowser();
+    const healthy = WildFireBackground.create({
+      browserApi: healthyBrowser,
+      store: makeStore(async () => Object.assign({}, defaults))
+    });
+    await healthy.start();
+    const firstCount = healthy.debug().getListenerCount();
+    assert.ok(firstCount > 0, 'a healthy startup registers listeners');
+    await healthy.start();
+    assert.strictEqual(healthy.debug().getListenerCount(), firstCount,
+      'starting twice does not register duplicate listeners');
+    const diagnostics = await healthy.debug().onMessage({ type: 'wildfire:diagnostics' }, {});
+    assert.strictEqual(diagnostics.diagnostics.startup.ok, true,
+      'diagnostics report engine health');
+    assert.ok(diagnostics.diagnostics.startup.total > 0,
+      'a healthy startup loads bundled rules');
+
+    let unregistered = 0;
+    const previous = { unregister: async () => { unregistered += 1; } };
+    healthy.context.scriptletRegistration = previous;
+    healthy.context.engine.getScriptletPayload = () => [{
+      alias: 'set-constant',
+      args: ['foo', '1'],
+      domains: ['example.com'],
+      isException: false
+    }];
+    let registerCalls = 0;
+    let registered;
+    const next = { unregister: async () => {} };
+    healthyBrowser.contentScripts.register = async registration => {
+      registered = registration;
+      registerCalls += 1;
+      if (registerCalls === 1) throw new Error('registration failed');
+      return next;
+    };
+    await healthy.context.syncScriptlets();
+    assert.strictEqual(healthy.context.scriptletRegistration, previous,
+      'a failed scriptlet swap keeps the previous registration');
+    assert.strictEqual(unregistered, 0, 'the previous registration is not closed on failure');
+    await healthy.context.syncScriptlets();
+    assert.strictEqual(healthy.context.scriptletRegistration, next,
+      'a successful swap installs the new registration');
+    assert.strictEqual(unregistered, 1, 'the previous registration is closed after success');
+    const injectedCode = registered.js[registered.js.length - 1].code;
+    assert.ok(injectedCode.includes('__wildfireScriptletGeneration'),
+      'overlapping registrations are guarded by a generation stamp');
+  } finally {
+    context.fetch = savedFetch;
+    console.error = savedError;
+    console.warn = savedWarn;
+  }
+}
+
 Promise.resolve()
   .then(() => testPhase0Foundation())
   .then(() => testPhase1AAliases())
@@ -3306,6 +3467,7 @@ Promise.resolve()
   .then(() => testStaleGenerationWorkerHang())
   .then(() => testRemoveRuntimeIntegration())
   .then(() => testPerSiteBadgeCounters())
+  .then(() => testBackgroundControllerRobustness())
   .then(() => testPopupPerSiteDisplay())
   .then(() => testRemoteLists())
   .then(() => console.log('WildFire tests passed (' + engine.counts.network + ' network rules loaded from bundled list).'))
