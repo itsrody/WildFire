@@ -32,6 +32,10 @@
     'tracking_content', 'emailtracking', 'emailtracking_content',
     'any_basic_tracking', 'any_strict_tracking', 'any_social_tracking'
   ]);
+  const CSP_REPORT_DIRECTIVES = new Set(['report-uri', 'report-to']);
+  const CSP_HEADER_NAMES = new Set([
+    'content-security-policy', 'content-security-policy-report-only'
+  ]);
 
   function registrableDomain(host) {
     try {
@@ -115,6 +119,10 @@
     classified: 0,
     byFlag: {}
   };
+  const cspReportsObserved = {
+    headersStripped: 0,
+    requestsCancelled: 0
+  };
 
   function monotonicMs() {
     return typeof performance !== 'undefined' && performance && typeof performance.now === 'function'
@@ -151,7 +159,8 @@
         byError: copyCounts(etpObserved.byError),
         classified: etpObserved.classified,
         byFlag: copyCounts(etpObserved.byFlag)
-      }
+      },
+      cspReports: Object.assign({}, cspReportsObserved)
     };
   }
 
@@ -207,11 +216,13 @@
     if (sawKnownFlag) etpObserved.classified += 1;
   }
 
-  function resetEtpObservation() {
+  function resetObservations() {
     etpObserved.blocked = 0;
     etpObserved.byError = {};
     etpObserved.classified = 0;
     etpObserved.byFlag = {};
+    cspReportsObserved.headersStripped = 0;
+    cspReportsObserved.requestsCancelled = 0;
   }
 
   const blockedPopups = new Set();
@@ -243,6 +254,22 @@
     if (!host) return false;
     const list = Array.isArray(state.disabledSites) ? state.disabledSites : [];
     return list.some(site => host === site || host.endsWith('.' + site));
+  }
+
+  function parseHostList(value) {
+    const raw = Array.isArray(value) ? value : String(value || '').split(/[\s,]+/);
+    return Array.from(new Set(raw.map(entry => String(entry || '')
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .split('/')[0])
+      .filter(Boolean)));
+  }
+
+  function hostMatchesList(host, list) {
+    if (!host) return false;
+    const hosts = Array.isArray(list) ? list : [];
+    return hosts.some(entry => host === entry || host.endsWith('.' + entry));
   }
 
   // "Site" means registrable domain, so subdomains share one counter. Firefox
@@ -353,7 +380,9 @@
         blockedBySite: Object.assign({}, state.blockedBySite && typeof state.blockedBySite === 'object'
           ? state.blockedBySite : {}),
         customFilters: state.customFilters,
-        disabledSites: state.disabledSites
+        disabledSites: state.disabledSites,
+        blockCspReports: state.blockCspReports,
+        cspReportAllow: Array.isArray(state.cspReportAllow) ? state.cspReportAllow.slice() : []
       },
       counts: Object.assign({}, engine.counts),
       compiler: Object.assign({}, compilerStatus)
@@ -815,6 +844,7 @@
   }
 
   function onBeforeRequest(details) {
+    if (details.type === 'csp_report') return undefined;
     documentScope.rememberFromRequest(details);
     if (!state.enabled || blockedPopups.has(details.tabId)) return undefined;
 
@@ -929,6 +959,82 @@
     return requestHeaders === reqHeaders ? undefined : { requestHeaders };
   }
 
+  function reportEndpointHost(value, baseUrl) {
+    try {
+      return new URL(String(value || ''), baseUrl).hostname.toLowerCase();
+    } catch (error) {
+      return '';
+    }
+  }
+
+  function reportingEndpoints(headers) {
+    return headers.reduce((endpoints, header) => {
+      if (String(header && header.name || '').toLowerCase() !== 'reporting-endpoints') return endpoints;
+      const matches = String(header && header.value || '')
+        .matchAll(/([A-Za-z0-9_-]+)\s*=\s*"([^"]+)"/g);
+      Array.from(matches).forEach(match => { endpoints[match[1]] = match[2]; });
+      return endpoints;
+    }, Object.create(null));
+  }
+
+  function parseCspDirectives(value) {
+    return String(value || '')
+      .split(';')
+      .map(part => part.trim())
+      .filter(Boolean)
+      .map(raw => {
+        const match = /^(\S+)(?:\s+([\s\S]*))?$/.exec(raw);
+        return match
+          ? { raw, name: match[1].toLowerCase(), value: match[2] || '' }
+          : null;
+      })
+      .filter(Boolean);
+  }
+
+  function reportDirectiveAllowed(directive, endpoints, baseUrl) {
+    const allowed = Array.isArray(state.cspReportAllow) ? state.cspReportAllow : [];
+    if (!allowed.length) return false;
+    const values = directive.value.split(/\s+/).filter(Boolean);
+    if (!values.length) return false;
+    if (directive.name === 'report-uri') {
+      return values.every(value => hostMatchesList(reportEndpointHost(value, baseUrl), allowed));
+    }
+    return values.every(name => {
+      const endpoint = endpoints[name];
+      return Boolean(endpoint) && hostMatchesList(reportEndpointHost(endpoint, baseUrl), allowed);
+    });
+  }
+
+  function stripCspReportDirectives(headers, baseUrl) {
+    if (!Array.isArray(headers) || !state.blockCspReports) return headers;
+    const endpoints = reportingEndpoints(headers);
+    let stripped = 0;
+    const next = headers.map(header => {
+      const name = String(header && header.name || '').toLowerCase();
+      if (!CSP_HEADER_NAMES.has(name)) return header;
+      const directives = parseCspDirectives(header.value);
+      const kept = directives
+        .filter(directive => !CSP_REPORT_DIRECTIVES.has(directive.name) ||
+          reportDirectiveAllowed(directive, endpoints, baseUrl))
+        .map(directive => directive.raw);
+      if (kept.length === directives.length) return header;
+      stripped += 1;
+      return Object.assign({}, header, { value: kept.join('; ') });
+    });
+    if (stripped && diagnostics.enabled) cspReportsObserved.headersStripped += stripped;
+    return stripped ? next : headers;
+  }
+
+  function onCspReportRequest(details) {
+    if (!state.enabled || !state.blockCspReports) return undefined;
+    const endpointHost = safeHost(details.url);
+    if (!endpointHost || hostMatchesList(endpointHost, state.cspReportAllow)) return undefined;
+    const documentUrl = documentScope.documentUrl(details);
+    if (siteDisabled(safeHost(documentUrl))) return undefined;
+    if (diagnostics.enabled) cspReportsObserved.requestsCancelled += 1;
+    return { cancel: true };
+  }
+
   function onHeadersReceived(details) {
     if (details.type === 'csp_report') return undefined;
     // A rewrite stream may already exist even if the user just paused the
@@ -951,6 +1057,10 @@
     }
 
     if (state.enabled && !disabled) {
+      if (state.blockCspReports) {
+        const stripped = stripCspReportDirectives(headers, details.url);
+        if (stripped !== headers) { headers = stripped; changed = true; }
+      }
       if (engine.capabilities & FilterEngine.CAP.REMOVEHEADER) {
         const rh = measuredMatch('removeheader-response', () => engine.matchRemoveheader(details.url, type, documentUrl));
         if (rh.headers.length) {
@@ -1025,6 +1135,15 @@
         await loadFilters();
         return snapshot();
 
+      case 'set-csp-report-blocking': {
+        const result = await persist({ blockCspReports: Boolean(message.value) });
+        ensureHeadersListener();
+        return result;
+      }
+
+      case 'set-csp-report-allow':
+        return persist({ cspReportAllow: parseHostList(message.value) });
+
       case 'reset-stats':
         return persist({ blocked: 0, blockedBySite: {} });
 
@@ -1084,7 +1203,7 @@
         if (message.reset === true) {
           diagnostics.phases = emptyPhaseStats();
           diagnostics.samples = [];
-          resetEtpObservation();
+          resetObservations();
         }
         if (typeof message.value === 'boolean') {
           diagnostics.enabled = message.value;
@@ -1101,8 +1220,9 @@
 
   function ensureHeadersListener() {
     const cap = engine.getCapabilities ? engine.getCapabilities() : (engine.capabilities || 0);
-    const needed = Boolean(cap & (FilterEngine.CAP.CSP |
-      FilterEngine.CAP.REWRITE | FilterEngine.CAP.REMOVEHEADER)) || rewrites.size > 0;
+    const needed = Boolean(state.blockCspReports) ||
+      Boolean(cap & (FilterEngine.CAP.CSP |
+        FilterEngine.CAP.REWRITE | FilterEngine.CAP.REMOVEHEADER)) || rewrites.size > 0;
     if (needed && !headersListenerRegistered) {
       browser.webRequest.onHeadersReceived.addListener(
         onHeadersReceived,
@@ -1154,6 +1274,11 @@
       browser.webRequest.onBeforeRequest.addListener(
         onBeforeRequest,
         { urls: ['<all_urls>'] },
+        ['blocking']
+      );
+      browser.webRequest.onBeforeRequest.addListener(
+        onCspReportRequest,
+        { urls: ['<all_urls>'], types: ['csp_report'] },
         ['blocking']
       );
 

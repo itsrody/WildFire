@@ -36,6 +36,18 @@
   </section>
 
   <section class="card">
+    <h2>CSP reports</h2>
+    <p class="hint">CSP violation reports are development telemetry and can be used as a fingerprinting signal. WildFire removes report directives from CSP headers and cancels legacy CSP report requests. Enforcement directives stay intact.</p>
+    <label class="toggle"><input id="block-csp-reports" type="checkbox"> Block CSP reports</label>
+    <p class="hint allow-hint">Comma-separated report endpoint hosts that may still receive reports.</p>
+    <form id="csp-report-allow-form" class="actions">
+      <input id="csp-report-allow" type="text" placeholder="reports.example.com, stats.example.net" autocomplete="off" spellcheck="false">
+      <button class="button" type="submit">Save allowed endpoints</button>
+      <span id="csp-report-status" class="status" role="status"></span>
+    </form>
+  </section>
+
+  <section class="card">
     <h2>Suggested lists</h2>
     <p class="hint">Shortcuts to well-known community lists. Adding one only registers its URL — nothing is downloaded or enabled until you choose Fetch, then Enable.</p>
     <ul id="suggested-lists" class="sites"></ul>

@@ -238,7 +238,20 @@ rather than becoming a blocker. Background calls the synchronously registered
 `webRequest.onHeadersReceived` listener with `['blocking', 'responseHeaders']`
 and appends the directives as extra enforcing `Content-Security-Policy`
 headers without touching the site's own headers. CSP report requests are
-skipped. Filter text can never supply a header value itself.
+skipped by the general blocking listener and handled by a separate
+type-filtered `csp_report` listener. Filter text can never supply a header value
+itself.
+
+CSP report blocking is a default-on local privacy toggle, independent of `$csp`.
+The existing blocking `onHeadersReceived` listener removes only `report-uri` and
+`report-to` directives from CSP headers, leaving every enforcement directive and
+all other headers intact. A separate `webRequest.onBeforeRequest` listener
+registered for `types: ['csp_report']` cancels legacy report requests as a
+backstop. Endpoint hosts in `state.cspReportAllow` are allowed; paused sites and
+a global pause skip both behaviors. Report blocking counts only in local
+diagnostics (`cspReports.headersStripped` and `cspReports.requestsCancelled`),
+never in `blocked` or `blockedBySite`. WildFire does not change Firefox ETP or
+native CSP preferences.
 
 `getScriptletPayload()` returns plain `{alias, args, domains, isException}`
 data. Background registers the `lib/resources/scriptlets/` module chain through
@@ -307,7 +320,8 @@ Filter text is never executed.
 ### State and messages
 
 Storage key `wildfire.state.v1` holds `{enabled, blocked, blockedBySite,
-customFilters, disabledSites}`. `blocked` is the lifetime total shown in Options;
+customFilters, disabledSites, blockCspReports, cspReportAllow}`. `blocked` is the
+lifetime total shown in Options;
 `blockedBySite` maps registrable domains to per-site counters shown by the
 toolbar badge and popup. The badge is set per tab and refreshed on activation
 and navigation, so subdomains share one site count while each tab shows its own
@@ -325,6 +339,8 @@ Background listens for `wildfire:*` messages:
 | `toggle` | flip global `enabled` |
 | `toggle-site` | add/remove a host in `disabledSites` |
 | `set-filters` | save custom filters, reload engine, refresh cosmetics |
+| `set-csp-report-blocking` | enable or disable default-on CSP report blocking |
+| `set-csp-report-allow` | replace the allowlist of report endpoint hosts |
 | `reset-stats` | zero the lifetime total and every site counter |
 | `reload` | rebuild from bundled + custom + enabled remote filters |
 | `list-state` | return registered remote lists |
@@ -335,7 +351,7 @@ Background listens for `wildfire:*` messages:
 | `set-list-enabled` | apply or stop a fetched list |
 | `set-list-auto` | opt a fetched, enabled list into daily checks |
 | `cosmetic` | return selectors for a URL |
-| `diagnostics` | toggle/reset in-memory request metrics and ETP observation |
+| `diagnostics` | toggle/reset in-memory request metrics, ETP observation and CSP report counts |
 
 `state`-only fields are not on other responses. The popup keeps the tab info
 it got from `state` and merges it into later responses (`applyResult`); keep
@@ -345,8 +361,9 @@ that behavior when adding popup actions.
 disabled by default, and are never persisted or reported. WildFire never
 changes Firefox's ETP settings. ETP block errors and `urlClassification` flags
 are observed as hints only; they must never affect `blocked`, `blockedBySite`,
-or filter decisions. `onHeadersReceived` is registered only while loaded rules
-need `$csp`, `$rewrite`, or `$removeheader`.
+or filter decisions. `onHeadersReceived` is registered while loaded rules need
+`$csp`, `$rewrite`, or `$removeheader`, and also while CSP report blocking is
+enabled.
 
 Remote lists are strictly opt-in. The bundled `lib/state/suggested-lists.js`
 catalog is inert: Options shows its URLs as shortcuts, and clicking one only

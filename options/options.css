@@ -57,6 +57,9 @@ input { max-width: 260px; }
 .button.primary { border-color: #e2511d; background: #e2511d; color: #fff; font-weight: 600; }
 .button.primary:hover { background: #f0602b; }
 .status { color: #8bd48a; font-size: 12px; }
+.toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.toggle input[type="checkbox"] { width: auto; max-width: none; margin: 0; accent-color: #e2511d; }
+.allow-hint { margin-top: 12px; }
 
 .sites { margin: 0; padding: 0; list-style: none; }
 .sites li {

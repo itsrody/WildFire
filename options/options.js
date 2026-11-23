@@ -12,6 +12,10 @@
   const listInput = document.getElementById('list-url');
   const listStatus = document.getElementById('list-status');
   const statsText = document.getElementById('stats-text');
+  const blockCspReports = document.getElementById('block-csp-reports');
+  const cspReportAllow = document.getElementById('csp-report-allow');
+  const cspReportForm = document.getElementById('csp-report-allow-form');
+  const cspReportStatus = document.getElementById('csp-report-status');
 
   let state = null;
   let lists = [];
@@ -149,6 +153,18 @@
     return result;
   }
 
+  function renderCspReports() {
+    blockCspReports.checked = state.blockCspReports !== false;
+    cspReportAllow.value = (Array.isArray(state.cspReportAllow) ? state.cspReportAllow : []).join(', ');
+  }
+
+  function setCspReportStatus(message) {
+    cspReportStatus.textContent = message;
+    setTimeout(() => {
+      if (cspReportStatus.textContent === message) cspReportStatus.textContent = '';
+    }, 4000);
+  }
+
   function render() {
     filters.value = state.customFilters || '';
     statsText.textContent = Number(state.blocked || 0).toLocaleString() +
@@ -156,6 +172,7 @@
     renderSites();
     renderLists();
     renderSuggested();
+    renderCspReports();
   }
 
   document.getElementById('save').addEventListener('click', async () => {
@@ -178,6 +195,24 @@
     state = await browser.runtime.sendMessage({ type: 'wildfire:toggle-site', host });
     siteInput.value = '';
     renderSites();
+  });
+
+  blockCspReports.addEventListener('change', async () => {
+    state = await browser.runtime.sendMessage({
+      type: 'wildfire:set-csp-report-blocking',
+      value: blockCspReports.checked
+    });
+    renderCspReports();
+  });
+
+  cspReportForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    state = await browser.runtime.sendMessage({
+      type: 'wildfire:set-csp-report-allow',
+      value: cspReportAllow.value
+    });
+    renderCspReports();
+    setCspReportStatus('Allowed endpoints saved.');
   });
 
   listForm.addEventListener('submit', async event => {

@@ -1902,7 +1902,7 @@ async function testBackgroundLoadFiltersIntegration() {
     storage: { local: storage },
     browserAction: { setBadgeBackgroundColor: () => {}, setBadgeText: () => {} },
     webRequest: {
-      onBeforeRequest: { addListener: fn => { apiHooks.onBeforeRequest = fn; } },
+      onBeforeRequest: { addListener: (fn, filter) => { if (filter && filter.types && filter.types.indexOf('csp_report') !== -1) apiHooks.onCspReportRequest = fn; else apiHooks.onBeforeRequest = fn; } },
       onBeforeSendHeaders: { addListener: fn => { apiHooks.onBeforeSendHeaders = fn; } },
       onHeadersReceived: { addListener: fn => { apiHooks.onHeadersReceived = fn; } },
       onCompleted: { addListener: () => {} },
@@ -2015,7 +2015,7 @@ async function testRemoveRuntimeIntegration() {
     storage:{local:memoryStorage({})},
     browserAction:{setBadgeBackgroundColor:()=>{},setBadgeText:()=>{}},
     webRequest:{
-      onBeforeRequest:{addListener:fn=>{apiHooks.onBeforeRequest=fn;}},
+      onBeforeRequest:{addListener:(fn,filter)=>{if(filter&&filter.types&&filter.types.indexOf('csp_report')!==-1)apiHooks.onCspReportRequest=fn;else apiHooks.onBeforeRequest=fn;}},
       onBeforeSendHeaders:{addListener:fn=>{apiHooks.onBeforeSendHeaders=fn;}},
       onHeadersReceived:{addListener:fn=>{apiHooks.onHeadersReceived=fn;}},
       onCompleted:{addListener:()=>{}}, onErrorOccurred:{addListener:()=>{}}, onBeforeRedirect:{addListener:()=>{}},
@@ -2042,6 +2042,45 @@ async function testRemoveRuntimeIntegration() {
 
   const hr = apiHooks.onHeadersReceived({ url:'https://api.example/data', type:'xmlhttprequest', tabId:1, frameId:0, documentUrl:'https://site.test/', responseHeaders:[{name:'X-Track',value:'1'},{name:'Content-Type',value:'text/plain'}] });
   assert.ok(hr && hr.responseHeaders && !hr.responseHeaders.some(h=>h.name.toLowerCase()==='x-track'), 'removeheader strips response header');
+
+  const cspHeaderInput = [
+    {name:'Content-Security-Policy',value:"default-src 'self'; report-uri https://reports.example/csp; script-src 'self'"},
+    {name:'Content-Security-Policy-Report-Only',value:'report-to csp-endpoint; default-src *'},
+    {name:'Reporting-Endpoints',value:'csp-endpoint="https://reports.example/csp"'},
+    {name:'X-Track',value:'1'}
+  ];
+  const cspHeaders = apiHooks.onHeadersReceived({
+    url:'https://api.example/page', type:'xmlhttprequest', tabId:1, frameId:0, documentUrl:'https://site.test/',
+    responseHeaders: cspHeaderInput
+  });
+  const csp = name => cspHeaders.responseHeaders.find(h => h.name.toLowerCase() === name).value;
+  assert.ok(!/report-(uri|to)/i.test(csp('content-security-policy')), 'report directives are stripped from enforcing CSP headers');
+  assert.ok(csp('content-security-policy').includes("default-src 'self'") &&
+    csp('content-security-policy').includes("script-src 'self'"), 'CSP enforcement directives stay intact');
+  assert.ok(!/report-to/i.test(csp('content-security-policy-report-only')), 'report directives are stripped from report-only headers');
+  assert.ok(csp('reporting-endpoints').includes('reports.example'), 'Reporting-Endpoints headers are untouched');
+  const cspReport = apiHooks.onCspReportRequest({
+    url:'https://reports.example/csp', type:'csp_report', tabId:1, frameId:0, documentUrl:'https://site.test/'
+  });
+  assert.ok(cspReport && cspReport.cancel, 'legacy CSP report requests are cancelled');
+  api.setState({ cspReportAllow: ['reports.example'] });
+  assert.strictEqual(apiHooks.onCspReportRequest({
+    url:'https://reports.example/csp', type:'csp_report', tabId:1, frameId:0, documentUrl:'https://site.test/'
+  }), undefined, 'allowed report endpoints receive reports');
+  const allowedCspHeaders = apiHooks.onHeadersReceived({
+    url:'https://api.example/page', type:'xmlhttprequest', tabId:1, frameId:0, documentUrl:'https://site.test/',
+    responseHeaders: cspHeaderInput
+  });
+  const allowedCsp = name => allowedCspHeaders.responseHeaders.find(h => h.name.toLowerCase() === name).value;
+  assert.ok(allowedCsp('content-security-policy').includes('report-uri https://reports.example/csp'),
+    'allowed report-uri directives are preserved');
+  assert.ok(allowedCsp('content-security-policy-report-only').includes('report-to csp-endpoint'),
+    'allowed report-to directives are preserved through Reporting-Endpoints');
+  api.setState({ cspReportAllow: [], enabled: false });
+  assert.strictEqual(apiHooks.onCspReportRequest({
+    url:'https://reports.example/csp', type:'csp_report', tabId:1, frameId:0, documentUrl:'https://site.test/'
+  }), undefined, 'global pause also pauses CSP report blocking');
+  api.setState({ enabled: true });
 
   // request header removal + exception/precedence
   api.setState({ enabled: true, customFilters: [
@@ -2778,7 +2817,7 @@ async function testPerSiteBadgeCounters() {
       setBadgeText: options => badgeTexts.push(Object.assign({}, options))
     },
     webRequest: {
-      onBeforeRequest: { addListener: fn => { apiHooks.onBeforeRequest = fn; } },
+      onBeforeRequest: { addListener: (fn, filter) => { if (filter && filter.types && filter.types.indexOf('csp_report') !== -1) apiHooks.onCspReportRequest = fn; else apiHooks.onBeforeRequest = fn; } },
       onBeforeSendHeaders: { addListener: fn => { apiHooks.onBeforeSendHeaders = fn; } },
       onHeadersReceived: {
         addListener: fn => { apiHooks.onHeadersReceived = fn; },
@@ -2906,8 +2945,8 @@ async function testPerSiteBadgeCounters() {
   const initialDiagnostics = await bgMessageHandler({ type: 'wildfire:diagnostics' }, {});
   assert.strictEqual(initialDiagnostics.diagnostics.enabled, false,
     'diagnostics are opt-in and off by default');
-  assert.strictEqual(apiHooks.onHeadersReceived, undefined,
-    'the header listener stays unregistered without CSP/rewrite/removeheader rules');
+  assert.strictEqual(typeof apiHooks.onHeadersReceived, 'function',
+    'the header listener is registered for CSP report stripping');
 
   await bgMessageHandler({ type: 'wildfire:diagnostics', value: true }, {});
   blockOn(1, 'https://www.example.com/');
@@ -2941,6 +2980,21 @@ async function testPerSiteBadgeCounters() {
   assert.strictEqual(api.getState().blocked, 1,
     'ETP observation never changes the WildFire counter');
 
+  apiHooks.onHeadersReceived({
+    url:'https://www.example.com/', type:'main_frame', tabId:1, frameId:0,
+    documentUrl:'https://www.example.com/',
+    responseHeaders:[{name:'Content-Security-Policy',value:"default-src 'self'; report-uri https://reports.example/csp"}]
+  });
+  apiHooks.onCspReportRequest({
+    url:'https://reports.example/csp', type:'csp_report', tabId:1, frameId:0,
+    documentUrl:'https://www.example.com/'
+  });
+  const cspDiagnostics = await bgMessageHandler({ type: 'wildfire:diagnostics' }, {});
+  assert.strictEqual(cspDiagnostics.diagnostics.cspReports.headersStripped, 1,
+    'CSP report header stripping is counted in local diagnostics');
+  assert.strictEqual(cspDiagnostics.diagnostics.cspReports.requestsCancelled, 1,
+    'CSP report request cancels are counted in local diagnostics');
+
   api.setState({
     customFilters: '||ads.test^$script\n||csp.test^$csp=no-script'
   });
@@ -2949,8 +3003,11 @@ async function testPerSiteBadgeCounters() {
     'the header listener is registered when CSP rules are loaded');
   api.setState({ customFilters: '||ads.test^$script' });
   await api.loadFilters(true);
+  assert.strictEqual(typeof apiHooks.onHeadersReceived, 'function',
+    'CSP report stripping keeps the header listener registered without filter capabilities');
+  await bgMessageHandler({ type: 'wildfire:set-csp-report-blocking', value: false }, {});
   assert.strictEqual(apiHooks.onHeadersReceived, undefined,
-    'the header listener is removed when header capabilities disappear');
+    'the header listener is removed when CSP report blocking is off and no capabilities remain');
 }
 
 async function testPopupPerSiteDisplay() {

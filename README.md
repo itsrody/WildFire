@@ -138,6 +138,21 @@ are accepted: `no-script`, `no-inline-script`, `no-frame`, `no-worker`,
 `no-object`, `no-font`, `no-media`, `no-connect`. Unknown aliases are rejected
 when the list loads and never turn into request blockers.
 
+## Block CSP reports
+
+Options → **CSP reports** is on by default. WildFire removes only `report-uri`
+and `report-to` directives from `Content-Security-Policy` and
+`Content-Security-Policy-Report-Only` headers. Enforcement directives and all
+other headers — including `Reporting-Endpoints` — are left alone, so pages keep
+working while violation reports are not sent. A type-filtered
+`webRequest.onBeforeRequest` listener also cancels legacy `csp_report` requests
+as a backstop for cached pages.
+
+Report endpoint hosts can be allowlisted in Options, and a global pause also
+pauses this feature. Blocked report requests and stripped headers are counted
+only in local diagnostics; they never change `blocked` or `blockedBySite`.
+WildFire does not change Firefox's ETP settings or native CSP preferences.
+
 ## Curated response rewrites
 
 `$rewrite=alias` replaces a matching response **body** using Firefox's native
@@ -245,8 +260,9 @@ This is deliberately a *minimal* engine, not a full uBO port:
   rules apply. WildFire stores the exact text and a hash of each applied list.
 - Firefox ETP is left untouched. WildFire observes ETP block errors and
   classifications only while diagnostics are enabled, and never adds them to
-  WildFire's counters. Header listeners are registered only when loaded rules
-  need CSP, rewrite or request/response-header handling.
+  WildFire's counters. Header listeners are registered when loaded rules need
+  CSP, rewrite or request/response-header handling, or while CSP report
+  blocking is enabled.
 - No hand-written `for`/`while`/`do` loops; iteration uses native helpers
   (`map`, `filter`, `reduce`, `forEach`, `find`, `flatMap`, `Array.from`).
   `npm run check` enforces this across all scripts.
@@ -283,7 +299,9 @@ This is deliberately a *minimal* engine, not a full uBO port:
 ## Message API (internal)
 
 Background listens for `wildfire:*` messages: `state`, `toggle`, `toggle-site`,
-`set-filters`, `reset-stats`, `reload`, `list-state`, `suggested-lists`, `add-list`, `remove-list`,
+`set-filters`, `set-csp-report-blocking`, `set-csp-report-allow`, `reset-stats`,
+`reload`, `list-state`, `suggested-lists`, `add-list`, `remove-list`,
 `update-list`, `set-list-enabled`, `set-list-auto`, `cosmetic`, and `diagnostics`.
 `diagnostics` accepts an optional boolean `value` to enable/disable in-memory
-request metrics and ETP observation, and an optional `reset: true` to clear them.
+request metrics, ETP observation and CSP report counts, and an optional
+`reset: true` to clear them.
