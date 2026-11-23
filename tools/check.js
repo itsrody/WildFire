@@ -31,7 +31,10 @@ function collectFiles(directory, skipDirs) {
 }
 
 const LOOP_STATEMENT = /^\s*(?:for\s*\(|while\s*\(|for\s+await\b|do\s*\{)/;
-const WAPI_FILE = 'lib/wapi/wapi.js';
+const WAPI_FILES = [
+  'lib/wapi/wapi.js',
+  'lib/wapi/wapi-contexts.js'
+];
 const BACKGROUND_CHAIN = [
   'lib/background/helpers.js',
   'lib/background/engine-host.js',
@@ -68,10 +71,11 @@ if (manifest.browser_action && manifest.browser_action.default_popup) {
 if (manifest.background && manifest.background.scripts) {
   const backgroundScripts = manifest.background.scripts;
   backgroundScripts.forEach(value => referenced.add(value));
-  const wapiIndex = backgroundScripts.indexOf(WAPI_FILE);
+  const wapiIndex = backgroundScripts.indexOf(WAPI_FILES[0]);
+  const contextsIndex = backgroundScripts.indexOf(WAPI_FILES[1]);
   const chainStart = backgroundScripts.indexOf(BACKGROUND_CHAIN[0]);
-  if (wapiIndex === -1 || chainStart === -1 || wapiIndex + 1 !== chainStart) {
-    errors.push('wapi.js must load immediately before the background chain');
+  if (wapiIndex === -1 || contextsIndex !== wapiIndex + 1 || chainStart !== contextsIndex + 1) {
+    errors.push('wapi files must load immediately before the background chain');
   }
   const actualChain = backgroundScripts.slice(chainStart, chainStart + BACKGROUND_CHAIN.length);
   BACKGROUND_CHAIN.forEach((file, index) => {
@@ -88,8 +92,21 @@ if (manifest.content_scripts) {
 }
 
 const testSource = fs.readFileSync(path.join(ROOT, 'tools/test.js'), 'utf8');
-if (!/const WAPI_FILES = \[[\s\S]*?lib\/wapi\/wapi\.js/.test(testSource)) {
-  errors.push('tools/test.js must define WAPI_FILES for ' + WAPI_FILE);
+const testWapi = /const WAPI_FILES = \[([\s\S]*?)\];/.exec(testSource);
+if (!testWapi) {
+  errors.push('tools/test.js must define WAPI_FILES');
+} else {
+  const testWapiFiles = Array.from(testWapi[1].matchAll(/'([^']+)'/g), match => match[1]);
+  WAPI_FILES.forEach((file, index) => {
+    if (testWapiFiles[index] !== file) {
+      errors.push('tools/test.js wapi load order mismatch: expected ' + file);
+    }
+  });
+}
+const backgroundFixtureCount = (testSource.match(/\.\.\.BACKGROUND_FILES/g) || []).length;
+const wapiFixtureCount = (testSource.match(/\.\.\.WAPI_FILES, \.\.\.BACKGROUND_FILES/g) || []).length;
+if (backgroundFixtureCount !== wapiFixtureCount) {
+  errors.push('tools/test.js fixtures must spread WAPI_FILES before BACKGROUND_FILES');
 }
 const testChain = /const BACKGROUND_FILES = \[([\s\S]*?)\];/.exec(testSource);
 if (!testChain) {

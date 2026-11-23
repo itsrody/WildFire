@@ -65,6 +65,7 @@
       "lib/compile/compile-cache.js",
       "lib/compile/compiler.js",
       "lib/wapi/wapi.js",
+      "lib/wapi/wapi-contexts.js",
       "lib/background/helpers.js",
       "lib/background/engine-host.js",
       "lib/background/requests.js",

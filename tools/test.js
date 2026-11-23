@@ -40,7 +40,8 @@ const SCRIPTLET_FILES = [
 ];
 /* Background controller is a classic-script chain loaded before the bootstrap. */
 const WAPI_FILES = [
-  'lib/wapi/wapi.js'
+  'lib/wapi/wapi.js',
+  'lib/wapi/wapi-contexts.js'
 ];
 const BACKGROUND_FILES = [
   'lib/background/helpers.js',
@@ -89,7 +90,7 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/compile/compiler.js'), 'utf
   filename: 'compiler.js'
 });
 loadFiles(context, [...WAPI_FILES, ...BACKGROUND_FILES]);
-const { FilterEngine, mapResourceType, WildFirePageStore, RedirectResources, WildFireProcedural, RemoteLists, WildFireSuggestedLists, CspResources, WildFireScriptlets, RewriteResources, WildFireCompileCache, WildFireCompiler, WildFireStore, WildFireBackground, WildFireWapi, wapi } = context;
+const { FilterEngine, mapResourceType, WildFirePageStore, RedirectResources, WildFireProcedural, RemoteLists, WildFireSuggestedLists, CspResources, WildFireScriptlets, RewriteResources, WildFireCompileCache, WildFireCompiler, WildFireStore, WildFireBackground, WildFireWapi, wapi, WildFireWapiContexts, wapiContexts } = context;
 
 const engine = new FilterEngine();
 engine.load([
@@ -3352,6 +3353,21 @@ async function testWapiBackbone() {
   assert.strictEqual(instance.messages(noop), true);
   assert.strictEqual(instance.messages(noop), false, 'one message router is installed');
   assert.strictEqual(onMessage.listeners.length, 1);
+  const customHub = hub();
+  const custom = WildFireWapi.create({
+    browserApi: Object.assign({}, browserApi, {
+      runtime: { getURL: path => path, onMessage: customHub }
+    }),
+    prefix: 'wf:'
+  });
+  const routed = [];
+  custom.messages(message => { routed.push(message); return true; });
+  const customListener = customHub.listeners[0];
+  assert.strictEqual(customListener({ type: 'wildfire:state' }, {}), undefined,
+    'a custom prefix ignores unrelated messages');
+  assert.strictEqual(customListener({ type: 'wf:state' }, {}), true,
+    'a custom prefix routes matching messages to the one handler');
+  assert.strictEqual(routed.length, 1);
   assert.strictEqual(instance.events.remove('test.event'), true);
   assert.strictEqual(instance.events.count(), 2);
   assert.throws(() => WildFireWapi.create({ browserApi: {} }).messages(noop),
@@ -3360,6 +3376,41 @@ async function testWapiBackbone() {
   await instance.tabs.send(1, { type: 'wildfire:apply' });
   await instance.settle();
   await instance.ready;
+}
+
+async function testWapiContexts() {
+  const sent = [];
+  const wapiStub = {
+    tabs: {
+      send: async (tabId, payload, options) => {
+        sent.push({ tabId, payload, options });
+        return { ok: true };
+      }
+    }
+  };
+  assert.strictEqual(wapiContexts, WildFireWapiContexts,
+    'wapi-contexts is exposed as a canonical backbone module');
+  const contexts = WildFireWapiContexts.create({ wapi: wapiStub });
+  const sender = { tab: { id: 7, url: 'https://page.test/' }, frameId: 0 };
+  const observed = contexts.observe({ type: 'wildfire:cosmetic', url: 'https://page.test/ad' }, sender);
+  assert.strictEqual(observed.tabId, 7);
+  assert.strictEqual(observed.frameId, 0);
+  assert.strictEqual(observed.url, 'https://page.test/ad');
+  assert.strictEqual(contexts.size(), 1);
+  contexts.observe({ type: 'wildfire:cosmetic', url: 'https://page.test/frame' },
+    { tab: { id: 7, url: 'https://page.test/' }, frameId: 2 });
+  assert.strictEqual(contexts.framesForTab(7).length, 2,
+    'each content script frame is tracked separately');
+  assert.strictEqual(contexts.find(7, 2).url, 'https://page.test/frame');
+  await contexts.send(7, 2, { type: 'wildfire:apply' });
+  assert.strictEqual(sent[0].options.frameId, 2,
+    'frame-targeted messages use Firefox native frame options');
+  await contexts.broadcast({ type: 'wildfire:apply' });
+  assert.strictEqual(sent.length, 3, 'broadcast reaches every registered frame');
+  assert.strictEqual(contexts.forgetFrame(7, 2), true);
+  assert.strictEqual(contexts.size(), 1);
+  contexts.forgetTab(7);
+  assert.strictEqual(contexts.size(), 0, 'tab removal forgets all frame contexts');
 }
 
 async function testBackgroundControllerRobustness() {
@@ -3526,6 +3577,7 @@ Promise.resolve()
   .then(() => testRemoveRuntimeIntegration())
   .then(() => testPerSiteBadgeCounters())
   .then(() => testWapiBackbone())
+  .then(() => testWapiContexts())
   .then(() => testBackgroundControllerRobustness())
   .then(() => testPopupPerSiteDisplay())
   .then(() => testRemoteLists())

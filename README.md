@@ -13,7 +13,7 @@ APIs and a small filter engine.
 ```
 manifest.json          Firefox MV2 manifest, gecko floor 153.0
 background.js          thin bootstrap for the background controller
-lib/wapi/              Firefox-native API backbone (wapi)
+lib/wapi/              Firefox-native API backbone (wapi) and per-frame context registry
 lib/background/        background chain: helpers, engine lifecycle, requests, messages, controller
 lib/engine/            filter engine module chain (filter/), procedural DOM evaluator
 lib/compile/           filter compiler, worker, compiled-filter cache
@@ -261,8 +261,10 @@ This is deliberately a *minimal* engine, not a full uBO port:
   lifetimes, frame URLs, top-level site attribution, popup state, and per-page
   cosmetic/scriptlet caches; nothing about visited pages is persisted.
 - `wapi` is the Firefox-native API backbone: named idempotent listener
-  registration, a single message router, and promise wrappers for tabs, alarms,
-  content scripts and response streams. There is no Chrome shim or callback bridge.
+  registration, a single prefix-filtered message listener, and promise wrappers
+  for tabs, alarms, content scripts and response streams. `wapi-contexts` tracks
+  per-frame content script contexts so cosmetic updates can be targeted precisely.
+  There is no Chrome shim or callback bridge.
 - The background controller owns startup, listener registration and engine
   lifecycle through `wapi`. The blocking listener stays synchronous; listener
   registration is idempotent, a failed init settles readiness with a recorded
