@@ -44,6 +44,7 @@
       "lib/remote-lists.js",
       "lib/csp-resources.js",
       "lib/scriptlets.js",
+      "lib/rewrite-resources.js",
       "background.js"
     ],
     "persistent": true

@@ -73,6 +73,7 @@ options page (one per line):
 | `||popup.example^$popup` | Close a new tab/window opened as a popup |
 | `||tracker.net^$script,redirect=noopjs` | Serve WildFire's empty script instead of cancelling |
 | `/ads\.example/([^/]+)\.js/$script,redirect-rule=tagged.svg` | Fill a redirect resource from regex captures |
+| `||tracker.net^$script,rewrite=blank-js` | Replace the response body with WildFire's empty script |
 | `||tracker.net^$script,csp=no-script` | Add WildFire's `script-src 'none'` CSP header to matching script responses |
 | `site.example##+js(set-constant, adblockDetected, false)` | Freeze a detection flag before page scripts run |
 | `site.example#@#+js(set-constant, adblockDetected, false)` | Cancel that scriptlet on the matching site |
@@ -112,6 +113,22 @@ are accepted: `no-script`, `no-inline-script`, `no-frame`, `no-worker`,
 `no-object`, `no-font`, `no-media`, `no-connect`. Unknown aliases are rejected
 when the list loads and never turn into request blockers.
 
+## Curated response rewrites
+
+`$rewrite=alias` replaces a matching response **body** using Firefox's native
+`webRequest.filterResponseData()` stream filter. WildFire sets up the filter in
+the synchronous request listener, discards the original chunks, writes its own
+body, and fixes the response headers (removing stale length/encoding headers and
+setting the right MIME type). The site's other headers are left alone. Rewrites
+count as one filtered request and honor the usual resource type, domain,
+third-party and `@@` options; navigations are never rewritten.
+
+Filter text can never supply a body, URL, or header value. Only these
+WildFire-owned aliases are accepted: `blank-js`, `blank-css`, `blank-text`,
+`blank-json`, `blank-html`, `blank-image`. Unknown aliases are rejected when the
+list loads and never turn into request blockers. `$rewrite-rule` is not
+supported.
+
 ## Curated scriptlets
 
 Some sites probe for blocker side effects. `##+js(alias, args)` lets a filter
@@ -139,7 +156,7 @@ This is deliberately a *minimal* engine, not a full uBO port:
 
 - Regex filters use a safe subset: backreferences, nested/alternated quantifiers,
   long patterns and stateful flags are rejected when the list loads.
-- `$rewrite` and `elemhide` are not supported.
+- `$rewrite-rule` and `elemhide` are not supported.
 - Rules are indexed by their `||host^` key and 4-character tokens; patterns with
   no usable token (including regex filters) are scanned per request.
 - Remote lists are opt-in: no URL is bundled, nothing is fetched until you add a

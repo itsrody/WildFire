@@ -23,7 +23,8 @@
   const engine = new FilterEngine(
     registrableDomain,
     alias => typeof CspResources !== 'undefined' ? CspResources.resolve(alias) : '',
-    typeof WildFireScriptlets !== 'undefined' ? WildFireScriptlets : null
+    typeof WildFireScriptlets !== 'undefined' ? WildFireScriptlets : null,
+    alias => typeof RewriteResources !== 'undefined' ? RewriteResources.hasAlias(alias) : false
   );
   const documentScope = new DocumentScope();
   const remoteLists = RemoteLists.create({
@@ -32,6 +33,9 @@
     now: () => Date.now()
   });
   const blockedPopups = new Set();
+  // requestId -> MIME type, so onHeadersReceived can normalize the headers of
+  // responses whose body WildFire is replacing.
+  const rewrites = new Map();
   let state = Object.assign({}, WildFireStore.defaults);
   let flushTimer = null;
   let ready = false;
@@ -186,6 +190,47 @@
     await Promise.all(tabs.map(tab => tab.url ? sendCosmetic(tab.id, tab.url) : Promise.resolve()));
   }
 
+  // Firefox streams the response through StreamFilter. Everything is set up
+  // synchronously here; incoming chunks are discarded and the curated WildFire
+  // body is written when the stream stops. The listener stays synchronous.
+  function startRewrite(requestId, resource) {
+    if (!browser.webRequest || typeof browser.webRequest.filterResponseData !== 'function') {
+      return false;
+    }
+    let filter;
+    try {
+      filter = browser.webRequest.filterResponseData(requestId);
+    } catch (error) {
+      console.warn('WildFire: rewrite filter failed', error);
+      return false;
+    }
+
+    rewrites.set(requestId, resource.type);
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      rewrites.delete(requestId);
+    };
+
+    filter.ondata = () => { /* the original body is intentionally dropped */ };
+    filter.onstop = () => {
+      try {
+        filter.write(resource.bytes);
+        filter.close();
+      } catch (error) {
+        console.warn('WildFire: rewrite write failed', error);
+        try { filter.disconnect(); } catch (ignored) { /* stream already gone */ }
+      }
+      finish();
+    };
+    filter.onerror = () => {
+      try { filter.disconnect(); } catch (ignored) { /* stream already gone */ }
+      finish();
+    };
+    return true;
+  }
+
   function onBeforeRequest(details) {
     documentScope.rememberFromRequest(details);
     if (!state.enabled || blockedPopups.has(details.tabId)) return undefined;
@@ -199,6 +244,11 @@
     const result = engine.matchRequest(details.url, type, documentUrl);
     if (!result.blocked) return undefined;
 
+    const rewrite = result.rewrite && type !== 'document' &&
+      typeof RewriteResources !== 'undefined'
+      ? RewriteResources.resolve(result.rewrite.alias)
+      : null;
+
     // Only WildFire-owned data-URI resources can be served, and never for
     // navigations. An unknown alias falls back to a plain cancel.
     const redirectUrl = type !== 'document' && result.redirect &&
@@ -209,6 +259,9 @@
     state.blocked = (state.blocked || 0) + 1;
     updateBadge();
     scheduleFlush();
+    if (rewrite) {
+      return startRewrite(details.requestId, rewrite) ? undefined : { cancel: true };
+    }
     return redirectUrl ? { redirectUrl } : { cancel: true };
   }
 
@@ -216,19 +269,33 @@
   // WildFire header tightens a response without rewriting the site's headers.
   // This listener is synchronous, like onBeforeRequest.
   function onHeadersReceived(details) {
-    if (!state.enabled || details.type === 'csp_report') return undefined;
+    if (details.type === 'csp_report') return undefined;
+    // A rewrite stream may already exist even if the user just paused the
+    // extension; its headers still need normalizing so the body stays valid.
+    const rewriteType = rewrites.get(details.requestId);
+    if (!state.enabled && !rewriteType) return undefined;
 
     const type = mapResourceType(details.type);
     // For a main document the response itself is the scope; for subresources
     // the embedding page is.
     const documentUrl = type === 'document' ? details.url : documentScope.documentUrl(details);
-    if (siteDisabled(safeHost(documentUrl))) return undefined;
+    const disabled = siteDisabled(safeHost(documentUrl));
+    if (disabled && !rewriteType) return undefined;
 
-    const result = engine.matchCsp(details.url, type, documentUrl);
-    if (!result.directives.length) return undefined;
-    return {
-      responseHeaders: CspResources.withDirective(details.responseHeaders, result.directives)
-    };
+    const result = state.enabled && !disabled
+      ? engine.matchCsp(details.url, type, documentUrl)
+      : { directives: [] };
+    let headers = details.responseHeaders || [];
+    let changed = false;
+    if (rewriteType && typeof RewriteResources !== 'undefined') {
+      headers = RewriteResources.withHeaders(headers, rewriteType);
+      changed = true;
+    }
+    if (result.directives.length) {
+      headers = CspResources.withDirective(headers, result.directives);
+      changed = true;
+    }
+    return changed ? { responseHeaders: headers } : undefined;
   }
 
   function onPopupNavigation(details) {
@@ -347,6 +414,14 @@
         { urls: ['<all_urls>'] },
         ['blocking', 'responseHeaders']
       );
+
+      [browser.webRequest.onCompleted,
+        browser.webRequest.onErrorOccurred,
+        browser.webRequest.onBeforeRedirect]
+        .forEach(event => event.addListener(
+          details => rewrites.delete(details.requestId),
+          { urls: ['<all_urls>'] }
+        ));
 
       browser.runtime.onMessage.addListener(onMessage);
 

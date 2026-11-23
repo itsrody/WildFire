@@ -32,7 +32,10 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/csp-resources.js'), 'utf8')
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/scriptlets.js'), 'utf8'), context, {
   filename: 'scriptlets.js'
 });
-const { FilterEngine, mapResourceType, DocumentScope, RedirectResources, WildFireProcedural, RemoteLists, CspResources, WildFireScriptlets } = context;
+vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/rewrite-resources.js'), 'utf8'), context, {
+  filename: 'rewrite-resources.js'
+});
+const { FilterEngine, mapResourceType, DocumentScope, RedirectResources, WildFireProcedural, RemoteLists, CspResources, WildFireScriptlets, RewriteResources } = context;
 
 const engine = new FilterEngine();
 engine.load([
@@ -726,6 +729,78 @@ WildFireScriptlets.apply([
 ]);
 assert.strictEqual(context.wildFireInvalidAlias, undefined,
   'invalid aliases never reach execution');
+
+const rewriteEngine = new FilterEngine(null, null, null,
+  alias => RewriteResources.hasAlias(alias));
+rewriteEngine.load([
+  '||tracker.example^$rewrite=blank-js',
+  '||cdn.example^$script,rewrite=blank-image',
+  '||promo.example^$rewrite=blank-json',
+  '@@||promo.example^$script',
+  '||doc.example^$document,rewrite=blank-js',
+  '||evil.example^$rewrite=alert(1)',
+  '||rule.example^$rewrite-rule=blank-js'
+].join('\n'));
+assert.strictEqual(rewriteEngine.counts.rewrite, 4, 'valid $rewrite rules are counted');
+assert.strictEqual(rewriteEngine.rejectedRewrite.length, 1,
+  'an alias that is not curated is rejected');
+assert.ok(/^unknown rewrite alias/.test(rewriteEngine.rejectedRewrite[0].reason),
+  'rejected rewrite aliases record a clear reason');
+
+const rewritten = rewriteEngine.matchRequest(
+  'https://tracker.example/x.js', 'script', 'https://page.example/');
+assert.strictEqual(rewritten.blocked, true, 'rewrite rules are still matched filters');
+assert.strictEqual(rewritten.rewrite.alias, 'blank-js', 'the curated alias reaches the listener');
+assert.strictEqual(rewritten.redirect, null, 'a rewrite rule is not also a redirect');
+assert.deepStrictEqual(
+  Array.from(rewriteEngine.matchCsp(
+    'https://tracker.example/x.js', 'script', 'https://page.example/').directives), [],
+  '$rewrite rules never become CSP rules');
+assert.strictEqual(rewriteEngine.matchRequest(
+  'https://cdn.example/pic.png', 'image', 'https://page.example/').rewrite, null,
+  '$rewrite respects resource type options');
+assert.strictEqual(rewriteEngine.matchRequest(
+  'https://promo.example/a.js', 'script', 'https://page.example/').blocked, false,
+  'an exception stops a rewrite');
+assert.strictEqual(rewriteEngine.matchRequest(
+  'https://doc.example/', 'document', 'https://page.example/').blocked, false,
+  'navigations are never rewritten');
+const ignoredOption = rewriteEngine.matchRequest(
+  'https://rule.example/a.js', 'script', 'https://page.example/');
+assert.strictEqual(ignoredOption.blocked, true, 'unknown $rewrite-rule is ignored like other options');
+assert.strictEqual(ignoredOption.rewrite, null, 'unknown $rewrite-rule never rewrites');
+
+const noRewriteEngine = new FilterEngine();
+noRewriteEngine.load('||unavailable.example^$rewrite=blank-js');
+assert.strictEqual(noRewriteEngine.rejectedRewrite.length, 1,
+  'rewrite rules are rejected without a curated registry');
+
+assert.strictEqual(RewriteResources.resolve('BLANK-JS').type,
+  'application/javascript; charset=utf-8', 'aliases are normalized without trusting filter casing');
+assert.strictEqual(RewriteResources.resolve('https://evil.example/x'), null,
+  'filter text cannot supply its own response body');
+const jsonBody = RewriteResources.resolve('blank-json').bytes;
+assert.strictEqual(Array.from(jsonBody, code => String.fromCharCode(code)).join(''), '{}',
+  'the JSON body is authored by WildFire');
+const imageBody = RewriteResources.resolve('blank-image').bytes;
+assert.strictEqual(Array.from(imageBody.slice(0, 3), code => String.fromCharCode(code)).join(''), 'GIF',
+  'the image body is a real 1x1 GIF');
+
+const originalRewriteHeaders = [
+  { name: 'Content-Type', value: 'application/javascript' },
+  { name: 'Content-Length', value: '9102' },
+  { name: 'Content-Encoding', value: 'gzip' },
+  { name: 'Transfer-Encoding', value: 'chunked' },
+  { name: 'X-Page', value: 'kept' }
+];
+const normalizedHeaders = RewriteResources.withHeaders(originalRewriteHeaders, 'text/css; charset=utf-8');
+assert.strictEqual(originalRewriteHeaders.length, 5, 'rewrite headers are not mutated in place');
+assert.deepStrictEqual(Array.from(normalizedHeaders, header => ({
+  name: header.name, value: header.value
+})), [
+  { name: 'X-Page', value: 'kept' },
+  { name: 'Content-Type', value: 'text/css; charset=utf-8' }
+], 'length and encoding headers are dropped and the MIME type is replaced');
 
 engine.load(fs.readFileSync(path.join(ROOT, 'filters/default.txt'), 'utf8'));
 assert.ok(engine.counts.network > 50, 'bundled list should contain network rules');

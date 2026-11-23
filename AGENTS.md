@@ -52,6 +52,7 @@ lib/document-scope.js  documentId -> document URL cache for request scope
 lib/redirect-resources.js  WildFire-owned data-URI redirect resources
 lib/csp-resources.js   curated CSP directives for $csp response headers
 lib/scriptlets.js      WildFire-owned scriptlet aliases (no filter-supplied code)
+lib/rewrite-resources.js  WildFire-owned bodies for $rewrite responses
 lib/procedural.js      DOM-based procedural cosmetic evaluator (no browser APIs)
 lib/remote-lists.js    opt-in remote list store, key wildfire.remote.v1
 lib/store.js           browser.storage.local wrapper, key wildfire.state.v1
@@ -82,7 +83,8 @@ used **only** by `tools/`.
 5. `lib/remote-lists.js` → `window.RemoteLists`
 6. `lib/csp-resources.js` → `window.CspResources`
 7. `lib/scriptlets.js` → `window.WildFireScriptlets`
-8. `background.js` → the engine instance and all listeners
+8. `lib/rewrite-resources.js` → `window.RewriteResources`
+9. `background.js` → the engine instance and all listeners
 
 Content scripts load in this order: `lib/procedural.js` → `content/cosmetic.js`,
 so the DOM evaluator exists before the content script runs.
@@ -107,8 +109,13 @@ graph without a deliberate redesign.
 - On a block: increment `state.blocked`, refresh the badge, schedule a
   debounced stats save (1.5 s), return `{cancel:true}` — or `{redirectUrl}` when
   the rule has `$redirect`/`$redirect-rule` and the alias resolves to a
-  WildFire-owned data-URI resource. Navigations are never redirected, and an
-  unknown alias falls back to a cancel.
+  WildFire-owned data-URI resource. When the rule has `$rewrite`, create a
+  `filterResponseData()` stream filter **synchronously**, discard the original
+  chunks, and write the curated WildFire body on `onstop`; `onHeadersReceived`
+  then drops length/encoding headers and sets the resource's MIME type. Return
+  no blocking response so the request continues with the substituted body.
+  Navigations are never redirected or rewritten, and an unknown alias falls
+  back to a cancel.
 - Exceptions (`@@`) always win; the engine returns early on the first match.
 
 **Never make the blocking listener async.** Engine state lives in memory and
@@ -133,16 +140,16 @@ rules cannot cancel navigation. `$popup` is evaluated from
 - `cosmeticByDomain` / `cosmeticExceptionsByDomain: Map<domain, selector[]>`
   plus `genericCosmetic` / `genericCosmeticExceptions`.
 - `scriptletRules`/`rejectedScriptlets` for `##+js(alias, args)` rules.
-- `counts: {network, exceptions, cosmetic, csp, scriptlets}` for the UI.
+- `counts: {network, exceptions, cosmetic, csp, scriptlets, rewrite}` for the UI.
 
-`FilterEngine` accepts injected registrable-domain, CSP and scriptlet
+`FilterEngine` accepts injected registrable-domain, CSP, scriptlet and rewrite
 resolvers so the engine stays self-contained and unit-testable. Background
 supplies Firefox 153's synchronous `browser.publicSuffix.getDomain()` (with IP,
-plain-suffix and unknown-suffix lookups enabled), `CspResources.resolve()` and
-`WildFireScriptlets.validate()`. The engine falls back to a last-two-label scope
-when no domain resolver is given or a lookup fails, and rejects `$csp`/
-`##+js()` rules when their registry is unavailable. Never call `browser.*` from
-`lib/filter-engine.js`.
+plain-suffix and unknown-suffix lookups enabled), `CspResources.resolve()`,
+`WildFireScriptlets.validate()` and `RewriteResources.hasAlias()`. The engine
+falls back to a last-two-label scope when no domain resolver is given or a
+lookup fails, and rejects `$csp`, `##+js()` and `$rewrite` rules when their
+registry is unavailable. Never call `browser.*` from `lib/filter-engine.js`.
 
 `matchRequest()` returns `redirect: {alias, captures}` when the winning rule
 carries `$redirect` or `$redirect-rule`. `RedirectResources.resolve()` is the
@@ -150,6 +157,18 @@ only place redirect targets are defined: it serves WildFire-authored `data:`
 URIs, fills `{{1}}`–`{{9}}` placeholders from regex captures with
 percent-encoding, and returns `''` for unknown aliases so the listener falls
 back to a cancel. Filter text can never supply a redirect URL itself.
+
+`matchRequest()` also returns `rewrite: {alias}` for the winning `$rewrite`
+rule. `RewriteResources.resolve()` is the only place substitute bodies and MIME
+types are defined; it returns a copied `Uint8Array` so no caller can mutate the
+registry. Background creates the stream filter from `onBeforeRequest`,
+normalizes headers through `RewriteResources.withHeaders()` in the existing
+blocking `onHeadersReceived` listener, and lets `onCompleted`/`onErrorOccurred`/
+`onBeforeRedirect` forget the request id. Unknown aliases are rejected at load
+time into `engine.rejectedRewrite` instead of becoming blockers. `$rewrite` does
+not accept captures (`$rewrite-rule` is not supported), never applies to
+navigations, and counts as one filtered/blocked request. Filter text can never
+supply a response body.
 
 `matchCsp()` is the response-header counterpart: any applicable `@@` exception
 stops injection, otherwise all matching curated directives are returned once
@@ -264,7 +283,7 @@ fetched before consent, `data_collection_permissions.required` stays `["none"]`.
 
 | Supported | Not supported (yet) |
 | --- | --- |
-| `||host^` domain anchors, subdomains | `$rewrite` |
+| `||host^` domain anchors, subdomains | `$rewrite-rule` |
 | `|url|` start/end anchors | `elemhide`, `generichide`, `ghide` |
 | `*` wildcards, `^` separator | other advanced selectors |
 | `@@` exceptions | full EasyList-scale list curation |
@@ -273,6 +292,7 @@ fetched before consent, `data_collection_permissions.required` stays `["none"]`.
 | `$domain=a\|~b` (`from=` alias) | |
 | `$document`, `$popup` | |
 | `$redirect=alias`, `$redirect-rule=alias` | |
+| `$rewrite=alias` (curated aliases only) | |
 | `$csp=alias` (curated aliases only) | |
 | `/regex/` filters (`i`, `m`, `s`, `u` flags only) | |
 | `##selector`, `#@#selector` | |
@@ -291,6 +311,16 @@ Redirect rules name an alias from `lib/redirect-resources.js`: `noopjs`,
 `tagged.svg`. `$redirect-rule` uses regex captures to fill that resource's
 `{{1}}`–`{{9}}` placeholders; captures are percent-encoded before insertion.
 An unregistered alias cancels instead. No upstream resources are bundled.
+
+`$rewrite=alias` replaces a matching response body through Firefox's
+`webRequest.filterResponseData()` stream filter. The only aliases are
+`blank-js`, `blank-css`, `blank-text`, `blank-json`, `blank-html` and
+`blank-image` from `lib/rewrite-resources.js`; each maps to a fixed MIME type
+and WildFire-authored bytes. Unknown aliases are rejected into
+`engine.rejectedRewrite` at load time instead of becoming blockers. Rewrites
+honor the usual type/domain/third-party options and `@@` exceptions, never
+apply to navigations, and count as one filtered request. `$rewrite-rule` and
+filter-supplied bodies are not supported.
 
 `$csp` rules name an alias from `lib/csp-resources.js`: `no-script`,
 `no-inline-script`, `no-frame`, `no-worker`, `no-object`, `no-font`, `no-media`,
@@ -381,9 +411,7 @@ cosmetic hiding.
 These are the natural WildFire-native growth paths, in roughly this order.
 Each one must be written from scratch and land with tests:
 
-1. `$rewrite`-style response rewriting with a fixed WildFire-owned mapping, if
-   the owner decides the extra header-processing path is worth it.
-2. More curated scriptlet aliases, always implemented in `lib/scriptlets.js`
+1. More curated scriptlet aliases, always implemented in `lib/scriptlets.js`
    with validated data arguments and never from filter-supplied script.
 
 Already implemented and tested: Firefox-native registrable-domain scoping
@@ -393,8 +421,9 @@ from-scratch redirect engine with WildFire-owned data-URI resources, DOM-based
 procedural cosmetic selectors (including native-CSS compilation, `:contains()`,
 and `:nth-ancestor()`), opt-in remote lists with a deterministic update store
 and user consent, curated `$csp` response-header filtering on Firefox's
-`onHeadersReceived`, and a curated scriptlet alias registry injected at
-`document_start` through Firefox's `contentScripts.register()`.
+`onHeadersReceived`, fixed-mapping `$rewrite` response bodies through Firefox's
+`filterResponseData()` stream filter, and a curated scriptlet alias registry
+injected at `document_start` through Firefox's `contentScripts.register()`.
 
 Do not start a later item while an earlier one is only half-implemented. A
 small, correct, fully tested engine is the product.
