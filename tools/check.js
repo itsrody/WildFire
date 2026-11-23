@@ -19,16 +19,18 @@ function readJSON(relative) {
 
 function collectFiles(directory, skipDirs) {
   const result = [];
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+  fs.readdirSync(directory, { withFileTypes: true }).forEach(entry => {
     const full = path.join(directory, entry.name);
     if (entry.isDirectory()) {
       if (!skipDirs.has(entry.name)) result.push(...collectFiles(full, skipDirs));
     } else if (entry.isFile()) {
       result.push(full);
     }
-  }
+  });
   return result;
 }
+
+const LOOP_STATEMENT = /^\s*(?:for\s*\(|while\s*\(|for\s+await\b|do\s*\{)/;
 
 const manifest = readJSON('manifest.json');
 const gecko = manifest.browser_specific_settings && manifest.browser_specific_settings.gecko;
@@ -59,19 +61,25 @@ if (manifest.content_scripts) {
 if (manifest.options_ui && manifest.options_ui.page) referenced.add(manifest.options_ui.page);
 referenced.add('filters/default.txt');
 
-for (const relative of referenced) {
+referenced.forEach(relative => {
   if (!fs.existsSync(path.join(ROOT, relative))) errors.push('missing referenced file: ' + relative);
-}
+});
 
-const allFiles = collectFiles(ROOT, new Set(['.git', 'node_modules', 'dist', 'tools']));
+const allFiles = collectFiles(ROOT, new Set(['.git', 'node_modules', 'dist']));
 const scripts = allFiles.filter(file => file.endsWith('.js'));
-for (const script of scripts) {
+scripts.forEach(script => {
   try {
     execFileSync(process.execPath, ['--check', script], { stdio: 'pipe' });
   } catch (error) {
     errors.push(path.relative(ROOT, script) + ': ' + String(error.stderr || error.message).trim());
   }
-}
+
+  const hasExplicitLoop = fs.readFileSync(script, 'utf8').split(/\r?\n/)
+    .some(line => LOOP_STATEMENT.test(line));
+  if (hasExplicitLoop) {
+    errors.push(path.relative(ROOT, script) + ': explicit loop found; use native helpers');
+  }
+});
 
 if (errors.length) {
   console.error('WildFire check failed:');

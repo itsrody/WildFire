@@ -191,6 +191,10 @@ user-visible.
    derive the XPI filename.
 9. **Unknown filter options are ignored**, not fatal. Preserve that forgiving
    behavior unless there is a reason to reject a rule.
+10. **No hand-written `for` / `while` / `do` loops.** Express iteration with
+    native helpers — `map`, `filter`, `reduce`, `forEach`, `some`, `every`,
+    `find`, `flatMap`, `Array.from({length: n})`. `tools/check.js` fails on any
+    line that starts an explicit loop, in runtime code *and* tools.
 
 ---
 
@@ -204,8 +208,9 @@ web-ext lint --source-dir . --output text
 
 The bar is: tests pass, build succeeds, `web-ext lint` reports **0 errors and
 0 warnings**. `tools/check.js` asserts MV2, the 153.0 floor, the gecko id,
-data-collection disclosure, every manifest-referenced file, and `node --check`
-on all scripts. If any of those change, update the check in the same commit.
+data-collection disclosure, every manifest-referenced file, `node --check` on
+all scripts, and the loop-free rule across every `.js` file (including tools).
+If any of those change, update the check in the same commit.
 
 For manual testing: `npm run dev` (or load `manifest.json` through
 `about:debugging → This Firefox → Load Temporary Add-on`). Exercise blocking

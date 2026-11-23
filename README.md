@@ -83,6 +83,9 @@ This is deliberately a *minimal* engine, not a full uBO port:
   Importing a full EasyList-sized list will work but is not optimized for that scale.
 - No remote list fetching or auto-updating — `filters/default.txt` plus your custom
   filters are the complete rule set.
+- No hand-written `for`/`while`/`do` loops; iteration uses native helpers
+  (`map`, `filter`, `reduce`, `forEach`, `find`, `flatMap`, `Array.from`).
+  `npm run check` enforces this across all scripts.
 - Resource type detection relies on `webRequest` details; the `other` bucket covers
   types this engine does not model separately.
 

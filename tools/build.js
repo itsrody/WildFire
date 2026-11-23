@@ -11,12 +11,9 @@ const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'tools']);
 const SKIP_FILES = new Set(['.DS_Store', '.gitignore', 'package-lock.json']);
 
 function crc32(buffer) {
-  let crc = ~0;
-  for (let i = 0; i < buffer.length; i++) {
-    crc ^= buffer[i];
-    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (0xEDB88320 & -(crc & 1));
-  }
-  return (~crc) >>> 0;
+  const mixByte = (crc, byte) => Array.from({ length: 8 })
+    .reduce(value => (value >>> 1) ^ (0xEDB88320 & -(value & 1)), crc ^ byte);
+  return (~buffer.reduce(mixByte, ~0)) >>> 0;
 }
 
 function dosTime(date) {
@@ -34,7 +31,7 @@ function createZip(entries) {
   const date = dosDate(new Date());
   let offset = 0;
 
-  for (const entry of entries) {
+  entries.forEach(entry => {
     const name = Buffer.from(entry.name, 'utf8');
     const compressed = zlib.deflateRawSync(entry.data, { level: 9 });
     const checksum = crc32(entry.data);
@@ -69,7 +66,7 @@ function createZip(entries) {
     centrals.push(central, name);
 
     offset += local.length + name.length + compressed.length;
-  }
+  });
 
   const centralDirectory = Buffer.concat(centrals);
   const end = Buffer.alloc(22);
@@ -83,7 +80,7 @@ function createZip(entries) {
 }
 
 function walk(directory, base, output) {
-  for (const item of fs.readdirSync(directory, { withFileTypes: true })) {
+  fs.readdirSync(directory, { withFileTypes: true }).forEach(item => {
     const full = path.join(directory, item.name);
     const relative = base ? base + '/' + item.name : item.name;
     if (item.isDirectory()) {
@@ -91,7 +88,7 @@ function walk(directory, base, output) {
     } else if (item.isFile() && !SKIP_FILES.has(item.name) && !item.name.endsWith('.md')) {
       output.push({ name: relative, data: fs.readFileSync(full) });
     }
-  }
+  });
 }
 
 execFileSync(process.execPath, [path.join(__dirname, 'check.js')], { stdio: 'inherit' });

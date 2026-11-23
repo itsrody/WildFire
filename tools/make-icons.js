@@ -10,12 +10,9 @@ const SIZES = [16, 32, 48, 96, 128];
 const SUPERSAMPLE = 4;
 
 function crc32(buffer) {
-  let crc = ~0;
-  for (let i = 0; i < buffer.length; i++) {
-    crc ^= buffer[i];
-    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (0xEDB88320 & -(crc & 1));
-  }
-  return (~crc) >>> 0;
+  const mixByte = (crc, byte) => Array.from({ length: 8 })
+    .reduce(value => (value >>> 1) ^ (0xEDB88320 & -(value & 1)), crc ^ byte);
+  return (~buffer.reduce(mixByte, ~0)) >>> 0;
 }
 
 function chunk(type, data) {
@@ -39,18 +36,19 @@ function encodePNG(width, height, pixels) {
   header[12] = 0;
 
   const stride = width * 4 + 1;
-  const raw = Buffer.alloc(stride * height);
-  let position = 0;
-  for (let y = 0; y < height; y++) {
-    raw[position++] = 0; // filter: none
-    for (let x = 0; x < width; x++) {
-      const index = (y * width + x) * 4;
-      raw[position++] = pixels[index];
-      raw[position++] = pixels[index + 1];
-      raw[position++] = pixels[index + 2];
-      raw[position++] = pixels[index + 3];
-    }
-  }
+  const raw = Buffer.concat(Array.from({ length: height }, (_, y) => {
+    const row = Buffer.alloc(stride);
+    row[0] = 0; // filter: none
+    Array.from({ length: width }, (_, x) => {
+      const source = (y * width + x) * 4;
+      const target = x * 4 + 1;
+      row[target] = pixels[source];
+      row[target + 1] = pixels[source + 1];
+      row[target + 2] = pixels[source + 2];
+      row[target + 3] = pixels[source + 3];
+    });
+    return row;
+  }));
 
   return Buffer.concat([
     signature,
@@ -72,38 +70,40 @@ function sample(nx, ny) {
     : [242 - Math.round(ny * 30), 104 - Math.round(ny * 50), 32];
 }
 
+function pixelColor(x, y, size) {
+  const samples = Array.from({ length: SUPERSAMPLE }, (_, sy) =>
+    Array.from({ length: SUPERSAMPLE }, (_, sx) =>
+      sample((x + (sx + 0.5) / SUPERSAMPLE) / size, (y + (sy + 0.5) / SUPERSAMPLE) / size)
+    )
+  ).flat().filter(Boolean);
+
+  if (!samples.length) return [0, 0, 0, 0];
+
+  const sum = samples.reduce(
+    (total, color) => [total[0] + color[0], total[1] + color[1], total[2] + color[2]],
+    [0, 0, 0]
+  );
+  return [
+    Math.round(sum[0] / samples.length),
+    Math.round(sum[1] / samples.length),
+    Math.round(sum[2] / samples.length),
+    Math.round((samples.length / (SUPERSAMPLE * SUPERSAMPLE)) * 255)
+  ];
+}
+
 function render(size) {
-  const pixels = Buffer.alloc(size * size * 4);
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      let red = 0, green = 0, blue = 0, coverage = 0;
-      for (let sy = 0; sy < SUPERSAMPLE; sy++) {
-        for (let sx = 0; sx < SUPERSAMPLE; sx++) {
-          const nx = (x + (sx + 0.5) / SUPERSAMPLE) / size;
-          const ny = (y + (sy + 0.5) / SUPERSAMPLE) / size;
-          const color = sample(nx, ny);
-          if (!color) continue;
-          red += color[0];
-          green += color[1];
-          blue += color[2];
-          coverage++;
-        }
-      }
-      const index = (y * size + x) * 4;
-      const count = SUPERSAMPLE * SUPERSAMPLE;
-      pixels[index] = coverage ? Math.round(red / coverage) : 0;
-      pixels[index + 1] = coverage ? Math.round(green / coverage) : 0;
-      pixels[index + 2] = coverage ? Math.round(blue / coverage) : 0;
-      pixels[index + 3] = Math.round((coverage / count) * 255);
-    }
-  }
+  const pixels = Buffer.from(
+    Array.from({ length: size }, (_, y) =>
+      Array.from({ length: size }, (_, x) => pixelColor(x, y, size))
+    ).flat(2)
+  );
   return encodePNG(size, size, pixels);
 }
 
 const outDir = path.join(ROOT, 'assets');
 fs.mkdirSync(outDir, { recursive: true });
-for (const size of SIZES) {
+SIZES.forEach(size => {
   const file = path.join(outDir, `icon-${size}.png`);
   fs.writeFileSync(file, render(size));
   console.log('wrote', path.relative(ROOT, file));
-}
+});
