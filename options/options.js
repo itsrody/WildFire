@@ -83,9 +83,12 @@
       label.textContent = entry.url;
       const meta = document.createElement('span');
       meta.className = 'list-meta';
-      meta.textContent = !entry.text ? 'Not fetched'
-        : (entry.enabled ? 'Active' : 'Fetched') + ' · ' +
-          new Date(entry.updatedAt).toLocaleString() + ' · ' + String(entry.hash || '').slice(0, 8);
+      const when = entry.checkedAt || entry.updatedAt;
+      const status = !entry.text ? 'Not fetched' : (entry.enabled ? 'Active' : 'Fetched');
+      const time = when ? new Date(when).toLocaleString() : 'never';
+      const hash = entry.hash ? ' · ' + String(entry.hash).slice(0, 8) : '';
+      const err = entry.lastError ? ' · Error: ' + entry.lastError : '';
+      meta.textContent = status + ' · ' + time + hash + err;
       row.append(label, meta);
 
       const actions = document.createElement('div');
@@ -109,7 +112,9 @@
     const result = await browser.runtime.sendMessage(message);
     if (Array.isArray(result.lists)) lists = result.lists;
     if (result.state) state = result.state;
-    setListStatus(result.ok === false ? (result.error || 'Action failed.') : 'Saved.');
+    if (result.ok === false) setListStatus(result.error || 'Action failed.');
+    else if (type === 'wildfire:update-list') setListStatus(result.changed ? 'Updated.' : 'Checked.');
+    else setListStatus('Saved.');
     renderLists();
     return result;
   }

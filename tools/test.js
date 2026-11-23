@@ -1506,7 +1506,9 @@ async function testRemoteLists() {
   const revalidated = await remote.update('https://fresh.example/list.txt');
   assert.strictEqual(revalidated.ok, true, 'a 304 reuses the stored text');
   assert.strictEqual(revalidated.list.text, '||tracker.example^', '304 keeps previous rules');
-  assert.strictEqual(revalidated.list.updatedAt, 2000, '304 still records check time');
+  assert.strictEqual(revalidated.list.updatedAt, 1000, '304 keeps previous content time');
+  assert.strictEqual(revalidated.list.checkedAt, 2000, '304 records check time');
+  assert.strictEqual(revalidated.list.lastError, '', '304 clears previous error');
   assert.strictEqual(fetchCalls[1].options.headers['If-None-Match'], '"v1"',
     'revalidation sends the stored ETag');
 
@@ -1523,9 +1525,19 @@ async function testRemoteLists() {
   assert.strictEqual(auto.list.autoUpdate, true);
 
   fetchMode = '500';
+  clock = 3000;
   const failed = await remote.update('https://fresh.example/list.txt');
   assert.strictEqual(failed.ok, false, 'an HTTP error is reported');
   assert.strictEqual(failed.list.text, '||tracker.example^', 'a failed fetch keeps old rules');
+  assert.strictEqual(failed.list.lastError, 'HTTP 500', 'a failed fetch records error');
+  assert.strictEqual(failed.list.checkedAt, 3000, 'a failed fetch records check time');
+
+  fetchMode = 'ok';
+  clock = 4000;
+  const due = await remote.updateDue();
+  assert.strictEqual(due.ok, true, 'due updates succeed');
+  assert.strictEqual(due.changed, false, 'unchanged auto-update does not mark rules changed');
+  assert.strictEqual(due.results.length, 1, 'only auto-enabled fetched lists are due');
 
   const sizeStorage = memoryStorage({
     [RemoteLists.KEY]: { lists: [{ url: 'https://size.example/list' }] }

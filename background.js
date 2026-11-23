@@ -41,6 +41,8 @@
   let filterLoad = Promise.resolve();
   let lastCustomHash = '';
   let lastRemoteSignature = '';
+  let remoteUpdate = Promise.resolve();
+  const remoteUpdating = new Set();
   const blockedPopups = new Set();
   // tabId -> source document URL for popups created by another browsing context.
   // onCreatedNavigationTarget gives us the source; onBeforeRequest gives us a
@@ -266,27 +268,38 @@
         }
       }
 
-      // Compile only when custom rules changed, or on forced rebuild.
-      if (custom && (customChanged || force || !ready)) {
-        const compiled = await compileText(custom);
-        if (!compiled || !engine.loadCompiled(compiled, { append: true })) engine.load(custom, { append: true });
-      } else if (custom) {
-        engine.load(custom, { append: true });
+      // Compile only when custom rules changed, or on forced rebuild; unchanged uses cache.
+      if (custom) {
+        const shouldCompile = customChanged || force || !ready;
+        const compiled = shouldCompile
+          ? await compileText(custom)
+          : (compileCache ? await compileCache.get(custom) : null);
+        if (compiled && compiled.v === FilterEngine.COMPILED_VERSION) {
+          engine.loadCompiled(compiled, { append: true });
+        } else if (shouldCompile) {
+          const fresh = compiled || await compileText(custom);
+          if (!fresh || !engine.loadCompiled(fresh, { append: true })) engine.load(custom, { append: true });
+        } else {
+          engine.load(custom, { append: true });
+        }
       }
 
       // Compile only when enabled remote list set/content changed, or on forced rebuild.
       if (remoteSig) {
-        if (remoteChanged || force || !ready) {
-          if (!remoteText) remoteText = await remoteLists.enabledText();
-          if (remoteText) {
-            const compiled = await compileText(remoteText);
-            if (!compiled || !engine.loadCompiled(compiled, { append: true })) engine.load(remoteText, { append: true });
+        const shouldCompile = remoteChanged || force || !ready;
+        if (!remoteText) remoteText = await remoteLists.enabledText();
+        if (remoteText) {
+          const compiled = shouldCompile
+            ? await compileText(remoteText)
+            : (compileCache ? await compileCache.get(remoteText) : null);
+          if (compiled && compiled.v === FilterEngine.COMPILED_VERSION) {
+            engine.loadCompiled(compiled, { append: true });
+          } else if (shouldCompile) {
+            const fresh = compiled || await compileText(remoteText);
+            if (!fresh || !engine.loadCompiled(fresh, { append: true })) engine.load(remoteText, { append: true });
+          } else {
+            engine.load(remoteText, { append: true });
           }
-        } else if (remoteText) {
-          engine.load(remoteText, { append: true });
-        } else {
-          const text = await remoteLists.enabledText();
-          if (text) engine.load(text, { append: true });
         }
       }
 
@@ -358,16 +371,37 @@
 
   async function applyRemoteResult(result) {
     if (!result.ok) {
-      return { ok: false, error: result.error, lists: result.snapshot.lists };
+      return Object.assign(snapshot(), {
+        ok: false,
+        error: result.error,
+        lists: (result.snapshot && result.snapshot.lists) || (await remoteLists.get()).lists
+      });
     }
     if (remoteRulesChanged(result)) await loadFilters();
-    else if (result.action === 'set-auto') await syncRemoteAlarm();
     try {
       await syncRemoteAlarm();
     } catch (error) {
       console.warn('WildFire: remote update schedule failed', error);
     }
     return Object.assign(snapshot(), { ok: true, lists: result.snapshot.lists });
+  }
+
+  async function runRemoteUpdates(options) {
+    const opts = options || {};
+    const run = remoteUpdate.then(async () => {
+      const result = await remoteLists.updateDue({
+        force: Boolean(opts.force)
+      });
+      if (result.changed) await loadFilters();
+      try {
+        await syncRemoteAlarm();
+      } catch (error) {
+        console.warn('WildFire: remote update schedule failed', error);
+      }
+      return result;
+    });
+    remoteUpdate = run.catch(() => undefined);
+    return run;
   }
 
   async function sendCosmetic(tabId, url) {
@@ -595,8 +629,22 @@
       case 'remove-list':
         return applyRemoteResult(await remoteLists.remove(message.url));
 
-      case 'update-list':
-        return applyRemoteResult(await remoteLists.update(message.url));
+      case 'update-list': {
+        const url = String(message.url || '');
+        if (remoteUpdating.has(url)) {
+          return Object.assign(snapshot(), {
+            ok: false,
+            error: 'Update already in progress.',
+            lists: (await remoteLists.get()).lists
+          });
+        }
+        remoteUpdating.add(url);
+        try {
+          return await applyRemoteResult(await remoteLists.update(message.url));
+        } finally {
+          remoteUpdating.delete(url);
+        }
+      }
 
       case 'set-list-enabled':
         return applyRemoteResult(await remoteLists.setEnabled(message.url, Boolean(message.value)));
@@ -654,12 +702,10 @@
       browser.runtime.onMessage.addListener(onMessage);
 
       if (browser.alarms && browser.alarms.onAlarm) {
-        browser.alarms.onAlarm.addListener(async alarm => {
+        browser.alarms.onAlarm.addListener(alarm => {
           if (alarm.name !== 'wildfire-remote-update') return;
-          const due = (await remoteLists.get()).lists
-            .filter(entry => entry.autoUpdate && entry.enabled && entry.text);
-          const results = await Promise.all(due.map(entry => remoteLists.update(entry.url)));
-          if (results.some(entry => entry.ok)) await loadFilters();
+          runRemoteUpdates().catch(error =>
+            console.warn('WildFire: remote update alarm failed', error));
         });
       }
 
