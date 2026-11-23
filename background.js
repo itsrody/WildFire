@@ -168,7 +168,7 @@
     }
   }
 
-  async function compileText(text) {
+  async function compileText(text, meta) {
     const source = String(text || '');
     if (!source.trim()) return null;
 
@@ -200,10 +200,29 @@
     }
 
     if (compileCache && compiled && compiled.v === FilterEngine.COMPILED_VERSION) {
-      compileCache.set(source, compiled).catch(error =>
+      compileCache.set(source, compiled, meta).catch(error =>
         console.warn('WildFire: compile cache write failed', error));
     }
     return compiled;
+  }
+
+  async function loadCompiledOrText(text, meta, append) {
+    const source = String(text || '');
+    if (!source.trim()) return false;
+    const compiled = await compileText(source, meta);
+    if (compiled && engine.loadCompiled(compiled, { append: Boolean(append) })) return true;
+    if (append) engine.load(source, { append: true });
+    else engine.load(source);
+    return false;
+  }
+
+  async function warmRemoteCompile(result) {
+    if (!result || !result.ok || !result.changed || !result.list || !result.list.text) return;
+    try {
+      await compileText(result.list.text, { source: 'remote', url: result.list.url, hash: result.list.hash || hashText(result.list.text) });
+    } catch (error) {
+      console.warn('WildFire: remote compile warm failed', error);
+    }
   }
 
   function hashText(text) {
@@ -230,11 +249,12 @@
       const custom = String(state.customFilters || '').trim();
       const customHash = custom ? hashText(custom) : '';
       let remoteSig = '';
-      let remoteText = '';
+      let remoteEntries = [];
       try {
         remoteSig = await remoteSignature();
-        if (remoteSig !== lastRemoteSignature || force) {
-          remoteText = await remoteLists.enabledText();
+        if (remoteSig) {
+          const snapshot = await remoteLists.get();
+          remoteEntries = snapshot.lists.filter(entry => entry.enabled && entry.text);
         }
       } catch (error) {
         console.warn('WildFire: remote list state unavailable', error);
@@ -272,36 +292,23 @@
       if (custom) {
         const shouldCompile = customChanged || force || !ready;
         const compiled = shouldCompile
-          ? await compileText(custom)
+          ? await compileText(custom, { source: 'custom', hash: customHash })
           : (compileCache ? await compileCache.get(custom) : null);
         if (compiled && compiled.v === FilterEngine.COMPILED_VERSION) {
           engine.loadCompiled(compiled, { append: true });
         } else if (shouldCompile) {
-          const fresh = compiled || await compileText(custom);
+          const fresh = compiled || await compileText(custom, { source: 'custom', hash: customHash });
           if (!fresh || !engine.loadCompiled(fresh, { append: true })) engine.load(custom, { append: true });
         } else {
           engine.load(custom, { append: true });
         }
       }
 
-      // Compile only when enabled remote list set/content changed, or on forced rebuild.
-      if (remoteSig) {
-        const shouldCompile = remoteChanged || force || !ready;
-        if (!remoteText) remoteText = await remoteLists.enabledText();
-        if (remoteText) {
-          const compiled = shouldCompile
-            ? await compileText(remoteText)
-            : (compileCache ? await compileCache.get(remoteText) : null);
-          if (compiled && compiled.v === FilterEngine.COMPILED_VERSION) {
-            engine.loadCompiled(compiled, { append: true });
-          } else if (shouldCompile) {
-            const fresh = compiled || await compileText(remoteText);
-            if (!fresh || !engine.loadCompiled(fresh, { append: true })) engine.load(remoteText, { append: true });
-          } else {
-            engine.load(remoteText, { append: true });
-          }
-        }
-      }
+      // Per-list incremental remote compile/load. Only changed/missing lists are compiled.
+      await remoteEntries.reduce((chain, entry) => chain.then(async () => {
+        const text = '! wildfire remote: ' + entry.url + '\n' + entry.text;
+        await loadCompiledOrText(text, { source: 'remote', url: entry.url, hash: entry.hash || hashText(entry.text) }, true);
+      }), Promise.resolve());
 
       lastCustomHash = customHash;
       lastRemoteSignature = remoteSig;
@@ -377,7 +384,10 @@
         lists: (result.snapshot && result.snapshot.lists) || (await remoteLists.get()).lists
       });
     }
-    if (remoteRulesChanged(result)) await loadFilters();
+    if (remoteRulesChanged(result)) {
+      warmRemoteCompile(result);
+      await loadFilters();
+    }
     try {
       await syncRemoteAlarm();
     } catch (error) {
@@ -392,7 +402,12 @@
       const result = await remoteLists.updateDue({
         force: Boolean(opts.force)
       });
-      if (result.changed) await loadFilters();
+      if (result.changed) {
+        await Promise.all((result.results || [])
+          .filter(entry => entry && entry.ok && entry.changed)
+          .map(entry => warmRemoteCompile(entry)));
+        await loadFilters();
+      }
       try {
         await syncRemoteAlarm();
       } catch (error) {
