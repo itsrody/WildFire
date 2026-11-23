@@ -453,32 +453,37 @@ Phase 1 — uBO syntax (`##+js()`), in batches:
    `prevent-fetch`/`prevent-xhr`, `nobab`/`nofab`/fingerprint defusers, remaining
    general aliases.
 
-Phase 2 — AdGuard syntax (implemented):
+Phase 2 — AdGuard syntax and cosmetic compatibility (implemented):
 
 4. `[domains]#%#//scriptlet('name', 'arg', …)` and `#@%#//scriptlet()`
    exceptions are parsed into the same payload, validated by the AdGuard
    string-only registry, and mapped to WildFire canonical behaviors. AdGuard
    trusted and debug-only scriptlets stay rejected under the same rules as uBO
    `trusted-*`.
+5. Safe ABP cosmetic/procedural compatibility: `#?#`/`#@?#` with `:-abp-has()` →
+   `:has()` and `:-abp-contains()` → `:has-text()`; `:upward(n|selector)`; and
+   `generichide/elemhide/specifichide` document exceptions. Unsupported ABP
+   action/procedural selectors are rejected with diagnostics.
 
 Already implemented and tested: Firefox-native registrable-domain scoping
 (`publicSuffix`), `documentId`-keyed request scope, the 4-character token index,
 safe regex filters, wider resource types with `$document`/`$popup`, a
 from-scratch redirect engine with WildFire-owned data-URI resources, DOM-based
 procedural cosmetic selectors (including native-CSS compilation, `:contains()`,
-and `:nth-ancestor()`), opt-in remote lists with a deterministic update store
-and user consent, curated `$csp` response-header filtering on Firefox's
-`onHeadersReceived`, fixed-mapping `$rewrite` response bodies through Firefox's
-`filterResponseData()` stream filter, and a scriptlet alias registry injected at
-`document_start` through Firefox's `contentScripts.register()`. Phase 1A, 1B and
-1C are implemented: canonical short aliases, safe needles, property traps,
-eval/timer/event/window defusers, DOM/storage aliases, `json-prune` with
-wildcard paths, response transforms, JSONPath/edit aliases, fetch/XHR guards and
-the detector defusers. All non-trusted uBO general-purpose and defuser aliases
-are covered. Phase 2 AdGuard syntax is implemented: quoted string-only aliases
-are parsed into the same payload, validated in a separate AdGuard registry,
-mapped to WildFire canonical behaviors where possible, and rejected when
-trusted or debug-only.
+`:nth-ancestor()`/`:upward()`), opt-in remote lists with a deterministic
+update store and user consent, curated `$csp` response-header filtering on
+Firefox's `onHeadersReceived`, fixed-mapping `$rewrite` response bodies through
+Firefox's `filterResponseData()` stream filter, and a scriptlet alias registry
+injected at `document_start` through Firefox's `contentScripts.register()`.
+Phase 1A, 1B and 1C are implemented: canonical short aliases, safe needles,
+property traps, eval/timer/event/window defusers, DOM/storage aliases,
+`json-prune` with wildcard paths, response transforms, JSONPath/edit aliases,
+fetch/XHR guards and the detector defusers. All non-trusted uBO general-purpose
+and defuser aliases are covered. Phase 2 is implemented: AdGuard quoted
+string-only scriptlets map to WildFire canonical behaviors; safe ABP
+`#?#`/`#@?#` procedural mappings, `:upward()`, and hide exception modifiers are
+supported; unsupported ABP action/procedural selectors and trusted/debug-only
+scriptlets are rejected safely.
 
 Do not start a later item while an earlier one is only half-implemented. A
 small, correct, fully tested engine is the product.
