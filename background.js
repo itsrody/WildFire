@@ -33,6 +33,10 @@
     now: () => Date.now()
   });
   const blockedPopups = new Set();
+  // tabId -> source document URL for popups created by another browsing context.
+  // onCreatedNavigationTarget gives us the source; onBeforeRequest gives us a
+  // synchronous blocking point for the popup's main-frame request.
+  const popupSources = new Map();
   // requestId -> MIME type, so onHeadersReceived can normalize the headers of
   // responses whose body WildFire is replacing.
   const rewrites = new Map();
@@ -296,6 +300,23 @@
     return true;
   }
 
+  function popupSource(details) {
+    return popupSources.get(details.tabId) ||
+      details.openerTabId && documentScope.urlForFrame(details.openerTabId, 0) ||
+      documentScope.documentUrl(details) ||
+      '';
+  }
+
+  function countPopupBlock(tabId) {
+    if (blockedPopups.has(tabId)) return false;
+    blockedPopups.add(tabId);
+    popupSources.delete(tabId);
+    state.blocked = (state.blocked || 0) + 1;
+    updateBadge();
+    scheduleFlush();
+    return true;
+  }
+
   function onBeforeRequest(details) {
     documentScope.rememberFromRequest(details);
     if (!state.enabled || blockedPopups.has(details.tabId)) return undefined;
@@ -306,6 +327,18 @@
     if (siteDisabled(host)) return undefined;
 
     const type = mapResourceType(details.type);
+    if (type === 'document' && popupSources.has(details.tabId)) {
+      const sourceUrl = popupSource(details);
+      if (!siteDisabled(safeHost(sourceUrl))) {
+        const popup = engine.matchPopup(details.url, sourceUrl);
+        if (popup.blocked) {
+          countPopupBlock(details.tabId);
+          return { cancel: true };
+        }
+      }
+      popupSources.delete(details.tabId);
+    }
+
     const result = engine.matchRequest(details.url, type, documentUrl);
     if (!result.blocked) return undefined;
 
@@ -365,16 +398,16 @@
 
   function onPopupNavigation(details) {
     if (!state.enabled) return;
-    const sourceUrl = documentScope.urlForFrame(details.sourceTabId, details.sourceFrameId);
-    if (siteDisabled(safeHost(sourceUrl))) return;
+    const sourceUrl = documentScope.urlForFrame(details.sourceTabId, details.sourceFrameId) ||
+      documentScope.urlForFrame(details.sourceTabId, 0) ||
+      '';
+    if (sourceUrl) popupSources.set(details.tabId, sourceUrl);
+    if (!sourceUrl || siteDisabled(safeHost(sourceUrl))) return;
 
     const result = engine.matchPopup(details.url, sourceUrl);
     if (!result.blocked) return;
 
-    blockedPopups.add(details.tabId);
-    state.blocked = (state.blocked || 0) + 1;
-    updateBadge();
-    scheduleFlush();
+    if (!countPopupBlock(details.tabId)) return;
     browser.tabs.remove(details.tabId).catch(error =>
       console.warn('WildFire: popup close failed', error));
   }
@@ -513,6 +546,7 @@
       browser.tabs.onRemoved.addListener(tabId => {
         documentScope.forgetTab(tabId);
         blockedPopups.delete(tabId);
+        popupSources.delete(tabId);
       });
 
       updateBadge();

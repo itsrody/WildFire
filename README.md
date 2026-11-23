@@ -70,7 +70,7 @@ options page (one per line):
 | `||tracker.net^$third-party` | Only block cross-site requests |
 | `||tracker.net^$domain=site.com\|~good.site.com` | Only on matching document hosts |
 | `||landing.example^$document` | Block a top-level navigation to that host |
-| `||popup.example^$popup` | Close a new tab/window opened as a popup |
+| `||popup.example^$popup` | Block a popup opened as a new tab/window (Firefox native tab close + request cancel) |
 | `||tracker.net^$script,redirect=noopjs` | Serve WildFire's empty script instead of cancelling |
 | `/ads\.example/([^/]+)\.js/$script,redirect-rule=tagged.svg` | Fill a redirect resource from regex captures |
 | `||tracker.net^$script,rewrite=blank-js` | Replace the response body with WildFire's empty script |

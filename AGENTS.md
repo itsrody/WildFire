@@ -101,7 +101,7 @@ graph without a deliberate redesign.
 `['blocking']`, so **the listener must be synchronous**:
 
 - Skip when `state.enabled` is false, or when the tab's popup was already
-  closed by `$popup`.
+  cancelled/closed by `$popup`.
 - Resolve the document URL through `DocumentScope`: `details.documentUrl`,
   then `details.originUrl`, then the URL cached by `documentId` from
   `webNavigation`/`webRequest`, then the tab URL, then the last frame ancestor.
@@ -124,10 +124,11 @@ graph without a deliberate redesign.
 is rebuilt from `filters/default.txt` plus `customFilters` at startup; storage
 reads happen only in `init()` and message handlers. Top-level navigations only
 match rules with an explicit `$document` or `$popup` option, so plain network
-rules cannot cancel navigation. `$popup` is evaluated from
-`webNavigation.onCreatedNavigationTarget`; a match closes the new tab with
-`browser.tabs.remove()` and counts one block, with the tab id added to
-`blockedPopups` so the later `main_frame` request is not counted twice.
+rules cannot cancel navigation. `$popup` uses a Firefox-native two-step path:
+`webNavigation.onCreatedNavigationTarget` records the source tab/frame and does
+an early `tabs.remove()` when it can prove a block, and `webRequest.onBeforeRequest`
+synchronously cancels the popup's `main_frame` request when a popup source is
+known. A blocked tab id is tracked so the request is not counted twice.
 
 ### Engine shape
 
