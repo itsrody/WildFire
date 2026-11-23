@@ -763,17 +763,27 @@
         console.warn('WildFire: remote update schedule failed', error);
       }
 
+      // Capability-gated listener registration (Phase 0 foundation).
+      // Core blocking/CSP listeners remain always-on for current supported features;
+      // future removeparam/removeheader listeners should be registered only when
+      // engine capabilities require them.
+      const cap = engine.getCapabilities ? engine.getCapabilities() : 0;
+      compilerStatus.capabilities = cap;
+
       browser.webRequest.onBeforeRequest.addListener(
         onBeforeRequest,
         { urls: ['<all_urls>'] },
         ['blocking']
       );
 
-      browser.webRequest.onHeadersReceived.addListener(
-        onHeadersReceived,
-        { urls: ['<all_urls>'] },
-        ['blocking', 'responseHeaders']
-      );
+      const needsHeaders = true || (cap & (FilterEngine.CAP.CSP | FilterEngine.CAP.REWRITE));
+      if (needsHeaders) {
+        browser.webRequest.onHeadersReceived.addListener(
+          onHeadersReceived,
+          { urls: ['<all_urls>'] },
+          ['blocking', 'responseHeaders']
+        );
+      }
 
       [browser.webRequest.onCompleted,
         browser.webRequest.onErrorOccurred,

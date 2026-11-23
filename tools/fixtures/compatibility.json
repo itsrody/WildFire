@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "uBO basic network and exception",
+      "sourceKind": "ubo",
+      "rules": [
+        "||ads.example^$script,third-party",
+        "@@||ads.example/allow.js$script"
+      ],
+      "expect": {
+        "capabilities": ["NETWORK", "EXCEPTION", "THIRD_PARTY"],
+        "diagnostics": []
+      },
+      "matches": [
+        {"url": "https://ads.example/app.js", "type": "script", "documentUrl": "https://site.test/", "blocked": true},
+        {"url": "https://ads.example/allow.js", "type": "script", "documentUrl": "https://site.test/", "blocked": false}
+      ]
+    },
+    {
+      "name": "uBO important overrides exception",
+      "sourceKind": "ubo",
+      "rules": [
+        "@@||ads.example^$script",
+        "||ads.example^$script,important"
+      ],
+      "matches": [
+        {"url": "https://ads.example/app.js", "type": "script", "documentUrl": "https://site.test/", "blocked": true, "important": true}
+      ]
+    },
+    {
+      "name": "AdGuard scriptlet and exception",
+      "sourceKind": "adguard",
+      "scriptlets": true,
+      "rules": [
+        "example.com#%#//scriptlet('set-constant', 'foo', '1')",
+        "example.com#@%#//scriptlet('set-constant', 'foo', '1')"
+      ],
+      "expect": {
+        "capabilities": ["SCRIPTLET"],
+        "scriptletCount": 2
+      }
+    },
+    {
+      "name": "ABP-style cosmetic and unsupported-safe",
+      "sourceKind": "abp",
+      "rules": [
+        "example.com##.ad-banner",
+        "example.com#?#div:-abp-has(.ad)"
+      ],
+      "expect": {
+        "capabilities": ["COSMETIC"]
+      },
+      "cosmetic": [
+        {"host": "example.com", "includes": [".ad-banner"]}
+      ]
+    },
+    {
+      "name": "invalid regex and unknown alias rejected safely",
+      "rules": [
+        "||ok.example^",
+        "/(a+)+$/",
+        "||bad.example^$csp=unknown-alias",
+        "||bad.example^$rewrite=unknown-alias"
+      ],
+      "expect": {
+        "diagnosticCategories": ["network", "csp", "rewrite"]
+      },
+      "matches": [
+        {"url": "https://ok.example/x.js", "type": "script", "documentUrl": "https://site.test/", "blocked": true}
+      ]
+    }
+  ]
+}

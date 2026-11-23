@@ -192,6 +192,8 @@ functions, and no `eval`, `Function` or dynamic source execution is used.
 
 This is deliberately a *minimal* engine, not a full uBO port:
 
+- Filter compilation is event-driven (worker-backed with sync fallback) and cached by compiled schema version + content hash. The compiled schema is versioned; incompatible compiled data is rejected and rebuilt from text.
+
 - Regex filters use a safe subset: backreferences, nested/alternated quantifiers,
   long patterns and stateful flags are rejected when the list loads.
 - `$rewrite-rule` and `elemhide` are not supported.

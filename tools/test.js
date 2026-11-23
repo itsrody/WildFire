@@ -1827,6 +1827,89 @@ async function testCompileCacheAndCompiler() {
   compiler.destroy();
 }
 
+function runCompatibilityFixtures() {
+  const fixtures = JSON.parse(fs.readFileSync(path.join(ROOT, 'tools/fixtures/compatibility.json'), 'utf8'));
+  fixtures.cases.forEach(testCase => {
+    const e = new FilterEngine(
+      null,
+      alias => alias === 'no-script' ? "script-src 'none'" : '',
+      testCase.scriptlets ? { validate: () => null } : null,
+      alias => alias === 'blank-js'
+    );
+    e.load(testCase.rules.join('\n'));
+
+    const expect = testCase.expect || {};
+    (expect.capabilities || []).forEach(name => {
+      const flag = FilterEngine.CAP[name];
+      assert.ok(flag, 'unknown capability in fixture: ' + name);
+      assert.ok(e.getCapabilities() & flag, testCase.name + ': capability ' + name);
+    });
+    if (typeof expect.scriptletCount === 'number') {
+      assert.strictEqual(e.scriptletRules.length, expect.scriptletCount, testCase.name + ': scriptlet count');
+    }
+    (expect.diagnosticCategories || []).forEach(category => {
+      assert.ok(e.getDiagnostics().some(d => d.category === category), testCase.name + ': diagnostic category ' + category);
+    });
+    if (Array.isArray(expect.diagnostics) && expect.diagnostics.length === 0) {
+      assert.strictEqual(e.getDiagnostics().length, 0, testCase.name + ': no diagnostics');
+    }
+
+    (testCase.matches || []).forEach(m => {
+      const r = e.matchRequest(m.url, mapResourceType(m.type), m.documentUrl || '');
+      assert.strictEqual(r.blocked, Boolean(m.blocked), testCase.name + ': match ' + m.url);
+      if (typeof m.important === 'boolean') assert.strictEqual(Boolean(r.important), m.important, testCase.name + ': important ' + m.url);
+    });
+    (testCase.cosmetic || []).forEach(c => {
+      const sels = e.getCosmetic(c.host);
+      (c.includes || []).forEach(sel => assert.ok(sels.includes(sel), testCase.name + ': cosmetic includes ' + sel));
+    });
+
+    // Compile round-trip invariants for fixture
+    const blob = e.toCompiled();
+    const e2 = new FilterEngine(null, alias => alias === 'no-script' ? "script-src 'none'" : '', testCase.scriptlets ? { validate: () => null } : null, alias => alias === 'blank-js');
+    assert.strictEqual(e2.loadCompiled(blob), true, testCase.name + ': compiled round-trip');
+    assert.strictEqual(e2.getCapabilities(), e.getCapabilities(), testCase.name + ': capabilities round-trip');
+  });
+}
+
+function runPerfBaseline() {
+  const enabled = process.env.WILDFIRE_PERF === '1';
+  const rules = fs.readFileSync(path.join(ROOT, 'filters/default.txt'), 'utf8');
+  const parseStart = process.hrtime.bigint();
+  const e = new FilterEngine();
+  e.load(rules);
+  const parseMs = Number(process.hrtime.bigint() - parseStart) / 1e6;
+
+  const compileStart = process.hrtime.bigint();
+  const blob = e.toCompiled();
+  const compileMs = Number(process.hrtime.bigint() - compileStart) / 1e6;
+
+  const loadStart = process.hrtime.bigint();
+  const e2 = new FilterEngine();
+  e2.loadCompiled(blob);
+  const loadMs = Number(process.hrtime.bigint() - loadStart) / 1e6;
+
+  const urls = [
+    ['https://securepubads.g.doubleclick.net/gampad/ads', 'script', 'https://example.com/'],
+    ['https://example.com/app.js', 'script', 'https://example.com/'],
+    ['https://tracker.example/pixel.gif', 'image', 'https://news.example/']
+  ];
+  const matchStart = process.hrtime.bigint();
+  Array.from({ length: 2000 }).forEach(() => urls.forEach(u => e2.matchRequest(u[0], u[1], u[2])));
+  const matchMs = Number(process.hrtime.bigint() - matchStart) / 1e6;
+
+  const cosStart = process.hrtime.bigint();
+  Array.from({ length: 2000 }).forEach(() => e2.getCosmetic('example.com'));
+  const cosmeticMs = Number(process.hrtime.bigint() - cosStart) / 1e6;
+
+  const report = { parseMs, compileMs, loadMs, matchMs, cosmeticMs, network: e.counts.network, cosmetic: e.counts.cosmetic };
+  if (enabled) console.log('WildFire perf baseline:', JSON.stringify(report));
+  // Sanity guards - loose, just catch catastrophic regressions.
+  assert.ok(parseMs < 5000, 'parse baseline sanity');
+  assert.ok(compileMs < 5000, 'compile baseline sanity');
+  assert.ok(loadMs < 5000, 'loadCompiled baseline sanity');
+}
+
 async function testPhase0Foundation() {
   // Rule IR / diagnostics / capabilities
   const ir = new FilterEngine(null, alias => alias === 'no-script' ? "script-src 'none'" : '', { validate: () => null }, alias => alias === 'blank-js');
@@ -1885,6 +1968,9 @@ async function testPhase0Foundation() {
     '||x.example^$rewrite=nope'
   ].join('\n')), 'unsupported/invalid rules do not throw');
   assert.strictEqual(safe.matchRequest('https://ok.example/x.js', 'script', 'https://site.test/').blocked, true, 'valid rule still active after rejections');
+
+  runCompatibilityFixtures();
+  runPerfBaseline();
 }
 
 async function testRemoteLists() {
