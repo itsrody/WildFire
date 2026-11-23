@@ -129,7 +129,7 @@ Filter text can never supply a body, URL, or header value. Only these
 WildFire-owned aliases are accepted: `blank-js`, `blank-css`, `blank-text`,
 `blank-json`, `blank-html`, `blank-image`. Unknown aliases are rejected when the
 list loads and never turn into request blockers. `$rewrite-rule` is not
-supported.
+supported. `elemhide/generichide/specifichide` are supported as document exception modifiers; unsupported ABP procedural selectors are rejected safely.
 
 ## Removeparam / removeheader (capability-gated)
 

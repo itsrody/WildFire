@@ -1976,7 +1976,12 @@ function runCompatibilityFixtures() {
     (testCase.cosmetic || []).forEach(c => {
       const sels = e.getCosmetic(c.host);
       (c.includes || []).forEach(sel => assert.ok(sels.includes(sel), testCase.name + ': cosmetic includes ' + sel));
+      (c.excludes || []).forEach(sel => assert.ok(!sels.includes(sel), testCase.name + ': cosmetic excludes ' + sel));
     });
+    if (testCase.proceduralCount) {
+      const pc = testCase.proceduralCount;
+      assert.strictEqual(e.getProcedural(pc.host).length, pc.count, testCase.name + ': procedural count');
+    }
 
     // Compile round-trip invariants for fixture
     const blob = e.toCompiled();

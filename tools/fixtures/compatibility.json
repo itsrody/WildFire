@@ -68,11 +68,14 @@
       "sourceKind": "abp",
       "rules": [
         "example.com##.ad-banner",
-        "example.com#?#div:-abp-has(.ad)"
+        "example.com#?#div:-abp-has(.ad)",
+        "example.com#?#div:-abp-contains(Ad)",
+        "example.com#@?#div:-abp-has(.ad)"
       ],
       "expect": {
         "capabilities": [
-          "COSMETIC"
+          "COSMETIC",
+          "PROCEDURAL"
         ]
       },
       "cosmetic": [
@@ -80,9 +83,14 @@
           "host": "example.com",
           "includes": [
             ".ad-banner"
-          ]
+          ],
+          "excludes": []
         }
-      ]
+      ],
+      "proceduralCount": {
+        "host": "example.com",
+        "count": 1
+      }
     },
     {
       "name": "badfilter compile-time negation",
