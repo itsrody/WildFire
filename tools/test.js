@@ -148,6 +148,39 @@ assert.strictEqual(scope.documentUrl({ tabId: 7, frameId: 0, documentId: 'doc-ne
 assert.strictEqual(scope.documentUrl({ tabId: 8, frameId: 0, documentId: 'doc-req' }),
   'https://req.example/', 'other tabs are untouched');
 
+// Generic rules use a 4-character token index; only short patterns are scanned.
+const indexEngine = new FilterEngine();
+indexEngine.load([
+  'example.org*banner.gif',
+  'first.example*second.example',
+  '*ad*',
+  '@@||keep.example^',
+  'keep.example*popup'
+].join('\n'));
+assert.ok(indexEngine.tokenRules.has('bann'), 'literal chunks are indexed by token');
+assert.strictEqual(indexEngine.unindexedRules.length, 1, 'short patterns stay in the fallback list');
+assert.strictEqual(
+  indexEngine.matchRequest('https://example.org/x/banner.gif', mapResourceType('image'), '').blocked,
+  true, 'indexed rule still matches');
+assert.strictEqual(
+  indexEngine.matchRequest('https://first.example/r?to=second.example', mapResourceType('script'), '').blocked,
+  true, 'tokens from later literal chunks are indexed');
+assert.strictEqual(
+  indexEngine.matchRequest('https://other.example/ad/tracker', mapResourceType('script'), '').blocked,
+  true, 'unindexed short pattern still matches');
+assert.strictEqual(
+  indexEngine.matchRequest('https://keep.example/popup.js', mapResourceType('script'), '').blocked,
+  false, 'exceptions win through the token index');
+
+const bigEngine = new FilterEngine();
+bigEngine.load(Array.from({ length: 2000 }, (_, i) => `${i}u.example/path`).join('\n'));
+assert.strictEqual(bigEngine.counts.network, 2000, 'large list loads every rule');
+assert.strictEqual(bigEngine.unindexedRules.length, 0, 'all generated rules are indexed');
+assert.strictEqual((bigEngine.tokenRules.get('1999') || []).length, 1, 'distinctive token buckets stay small');
+assert.strictEqual(
+  bigEngine.matchRequest('https://1999u.example/path', mapResourceType('script'), '').blocked,
+  true, 'matching still works in a large list');
+
 engine.load(fs.readFileSync(path.join(ROOT, 'filters/default.txt'), 'utf8'));
 assert.ok(engine.counts.network > 50, 'bundled list should contain network rules');
 assert.ok(engine.counts.cosmetic > 5, 'bundled list should contain cosmetic rules');

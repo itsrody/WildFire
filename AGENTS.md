@@ -105,7 +105,10 @@ reads happen only in `init()` and message handlers.
 
 - `hostRules: Map<host, rule[]>` for `||host^` rules, keyed by the pattern's
   leading host (looked up against the request hostname and all its parents).
-- `genericRules: rule[]` for everything else, scanned per request.
+- `tokenRules: Map<token, rule[]>` for generic rules, keyed by a few 4-character
+  tokens from each required literal chunk; `unindexedRules: rule[]` holds
+  patterns with no usable token. Candidates are the union of host, token and
+  fallback matches, sorted by load order before exception/blocker selection.
 - `cosmeticByDomain` / `cosmeticExceptionsByDomain: Map<domain, selector[]>`
   plus `genericCosmetic` / `genericCosmeticExceptions`.
 - `counts: {network, exceptions, cosmetic}` for the popup/options UI.
