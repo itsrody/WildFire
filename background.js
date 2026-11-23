@@ -43,6 +43,8 @@
   let lastRemoteSignature = '';
   let remoteUpdate = Promise.resolve();
   const remoteUpdating = new Set();
+  let filterGeneration = 0;
+  let activeFilterGeneration = 0;
   const blockedPopups = new Set();
   // tabId -> source document URL for popups created by another browsing context.
   // onCreatedNavigationTarget gives us the source; onBeforeRequest gives us a
@@ -168,7 +170,16 @@
     }
   }
 
-  async function compileText(text, meta) {
+  function compileSyncSafe(text) {
+    try {
+      return WildFireCompiler.compileSync(String(text || '')).compiled;
+    } catch (error) {
+      console.warn('WildFire: sync compile failed', error);
+      return null;
+    }
+  }
+
+  async function compileText(text, meta, generation) {
     const source = String(text || '');
     if (!source.trim()) return null;
 
@@ -181,24 +192,28 @@
       }
     }
 
-    let compiled = null;
-    if (compiler && typeof compiler.compile === 'function') {
+    const isCurrent = generation === undefined || generation === activeFilterGeneration;
+    if (compiler && typeof compiler.compile === 'function' && isCurrent) {
+      if (compiler.pendingCount && compiler.pendingCount() > 0 && compiler.restart) {
+        console.warn('WildFire: stale compile pending, restarting compiler worker');
+        compiler.restart('stale filter generation');
+      }
       try {
         const result = await compiler.compile(source);
-        if (result && result.compiled) compiled = result.compiled;
+        if (generation !== undefined && generation !== activeFilterGeneration) return compileSyncSafe(source);
+        if (result && result.compiled) {
+          if (compileCache && result.compiled.v === FilterEngine.COMPILED_VERSION) {
+            compileCache.set(source, result.compiled, meta).catch(error =>
+              console.warn('WildFire: compile cache write failed', error));
+          }
+          return result.compiled;
+        }
       } catch (error) {
         console.warn('WildFire: worker compile failed, using sync fallback', error);
       }
     }
-    if (!compiled) {
-      try {
-        compiled = WildFireCompiler.compileSync(source).compiled;
-      } catch (error) {
-        console.warn('WildFire: sync compile failed', error);
-        return null;
-      }
-    }
 
+    const compiled = compileSyncSafe(source);
     if (compileCache && compiled && compiled.v === FilterEngine.COMPILED_VERSION) {
       compileCache.set(source, compiled, meta).catch(error =>
         console.warn('WildFire: compile cache write failed', error));
@@ -206,10 +221,10 @@
     return compiled;
   }
 
-  async function loadCompiledOrText(text, meta, append) {
+  async function loadCompiledOrText(text, meta, append, generation) {
     const source = String(text || '');
     if (!source.trim()) return false;
-    const compiled = await compileText(source, meta);
+    const compiled = await compileText(source, meta, generation);
     if (compiled && engine.loadCompiled(compiled, { append: Boolean(append) })) return true;
     if (append) engine.load(source, { append: true });
     else engine.load(source);
@@ -219,7 +234,7 @@
   async function warmRemoteCompile(result) {
     if (!result || !result.ok || !result.changed || !result.list || !result.list.text) return;
     try {
-      await compileText(result.list.text, { source: 'remote', url: result.list.url, hash: result.list.hash || hashText(result.list.text) });
+      await compileText(result.list.text, { source: 'remote', url: result.list.url, hash: result.list.hash || hashText(result.list.text) }, activeFilterGeneration);
     } catch (error) {
       console.warn('WildFire: remote compile warm failed', error);
     }
@@ -245,7 +260,11 @@
   }
 
   async function loadFilters(force) {
+    const generation = ++filterGeneration;
     const run = filterLoad.then(async () => {
+      activeFilterGeneration = generation;
+      if (compiler && compiler.cancelAll) compiler.cancelAll('new filter load generation');
+
       const custom = String(state.customFilters || '').trim();
       const customHash = custom ? hashText(custom) : '';
       let remoteSig = '';
@@ -280,7 +299,7 @@
           const response = await fetch(browser.runtime.getURL('filters/default.txt'));
           if (response.ok) {
             const bundled = await response.text();
-            const compiled = await compileText(bundled);
+            const compiled = await compileText(bundled, { source: 'bundled' }, generation);
             if (!compiled || !engine.loadCompiled(compiled)) engine.load(bundled);
           }
         } catch (error) {
@@ -292,12 +311,12 @@
       if (custom) {
         const shouldCompile = customChanged || force || !ready;
         const compiled = shouldCompile
-          ? await compileText(custom, { source: 'custom', hash: customHash })
+          ? await compileText(custom, { source: 'custom', hash: customHash }, generation)
           : (compileCache ? await compileCache.get(custom) : null);
         if (compiled && compiled.v === FilterEngine.COMPILED_VERSION) {
           engine.loadCompiled(compiled, { append: true });
         } else if (shouldCompile) {
-          const fresh = compiled || await compileText(custom, { source: 'custom', hash: customHash });
+          const fresh = compiled || await compileText(custom, { source: 'custom', hash: customHash }, generation);
           if (!fresh || !engine.loadCompiled(fresh, { append: true })) engine.load(custom, { append: true });
         } else {
           engine.load(custom, { append: true });
@@ -307,7 +326,7 @@
       // Per-list incremental remote compile/load. Only changed/missing lists are compiled.
       await remoteEntries.reduce((chain, entry) => chain.then(async () => {
         const text = '! wildfire remote: ' + entry.url + '\n' + entry.text;
-        await loadCompiledOrText(text, { source: 'remote', url: entry.url, hash: entry.hash || hashText(entry.text) }, true);
+        await loadCompiledOrText(text, { source: 'remote', url: entry.url, hash: entry.hash || hashText(entry.text) }, true, generation);
       }), Promise.resolve());
 
       lastCustomHash = customHash;
