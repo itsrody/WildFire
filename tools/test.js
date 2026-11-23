@@ -890,6 +890,18 @@ assert.strictEqual(classify(nthRule, '/').mode, 'js', ':nth-ancestor stays in th
   const notHasSel = WildFireProcedural.select(notHasRoot, notHasRule, '/');
   assert.strictEqual(notHasSel.length, 1, ':not(:has) hides only nodes without the descendant');
   assert.strictEqual(notHasSel[0], withoutX, ':not(:has) excludes the node containing .x');
+  // A fully-native operand compiles to Gecko CSS (:has inside :not is native);
+  // the JS select() result above matches that native semantics.
+  const notHasClass = WildFireProcedural.classify(notHasRule, '/');
+  assert.strictEqual(notHasClass.mode, 'css', ':not(:has(plain)) compiles to native CSS');
+  assert.strictEqual(notHasClass.selector, 'div:not(*:has(.x))', ':not(:has) native selector');
+  const notTextClass = WildFireProcedural.classify(notTextRule, '/');
+  assert.strictEqual(notTextClass.prefilter, '', 'procedural :not contributes no prefilter');
+  // A native :not fragment is a correct (negated) prefilter for a mixed rule.
+  const mixedNotRule = { base: 'div', steps: [notHasRule.steps[0], { op: 'has-text', matcher: { type: 'text', value: 'Ad' } }] };
+  const mixedNotClass = WildFireProcedural.classify(mixedNotRule, '/');
+  assert.strictEqual(mixedNotClass.mode, 'js', 'mixed :not + text stays JS');
+  assert.strictEqual(mixedNotClass.prefilter, 'div:not(*:has(.x))', 'native :not prefilters the JS pass');
   assert.strictEqual(WildFireProcedural.classify(notTextRule, '/').mode, 'js', ':not stays JS-evaluated');
   const notBlob = notEngine.toCompiled();
   const notReload = new FilterEngine();

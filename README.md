@@ -258,7 +258,8 @@ This is deliberately a *minimal* engine, not a full uBO port:
   read-only and bounded (expression length capped, element node-set capped per
   base match); it hides every element result, and later steps filter that set. A
   malformed expression simply matches nothing. `:not()`
-  negates a procedural operand on the node itself; a plain `:not(.x)` stays in
+  negates a procedural operand on the node itself; a fully native operand such
+  as `:not(:has(.x))` compiles to native CSS, while a plain `:not(.x)` stays in
   the native CSS base. `:matches-media(query)` asks Gecko's native `matchMedia`
   engine (read-only) and re-applies on viewport resize. No script from a filter
   is ever injected.

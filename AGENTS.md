@@ -225,9 +225,11 @@ style read-only (with `-before`/`-after` pseudo variants) and stays JS-evaluated
 `document.evaluate` (read-only, `ORDERED_NODE_SNAPSHOT_TYPE`) with the current
 node as context and expands the target set to every element result (bounded);
 later steps filter/map that set. It stays JS-driven, not CSS.
-`:not(<procedural>)` negates a procedural operand on the node itself and stays
-JS-evaluated; it contributes no native prefilter (negating a `:has()` prefilter
-would select the opposite nodes). A plain `:not(.x)` is never lifted and stays in
+`:not(<procedural>)` negates a procedural operand on the node itself. When the
+operand is fully native-representable (e.g. `:not(:has(.x))`) it compiles to
+native Gecko CSS — `:has()` inside `:not()` is native — or prefilters a mixed JS
+rule with the negated selector. A procedural operand (text/regex/…) stays
+JS-evaluated with no prefilter. A plain `:not(.x)` is never lifted and stays in
 the native CSS base.
 `:has-text()` checks an element's own text nodes; `:contains()` also searches
 descendants. Both share the safe literal/regex matcher. `:nth-ancestor(n)` is a
