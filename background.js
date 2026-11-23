@@ -427,7 +427,13 @@
       scriptletRegistration = await browser.contentScripts.register({
         matches: ['<all_urls>'],
         js: [
-          { file: 'lib/resources/scriptlets.js' },
+          { file: 'lib/resources/scriptlets/core.js' },
+          { file: 'lib/resources/scriptlets/runtime.js' },
+          { file: 'lib/resources/scriptlets/transforms.js' },
+          { file: 'lib/resources/scriptlets/adguard-helpers.js' },
+          { file: 'lib/resources/scriptlets/definitions.js' },
+          { file: 'lib/resources/scriptlets/adguard-definitions.js' },
+          { file: 'lib/resources/scriptlets/api.js' },
           { code: '(() => { const api = window.WildFireScriptlets; try { delete window.WildFireScriptlets; } catch (e) {} if (api && typeof api.apply === "function") api.apply(' + JSON.stringify(fallbackRules) + '); })();' }
         ],
         runAt: 'document_start',

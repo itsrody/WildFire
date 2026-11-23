@@ -74,11 +74,12 @@ function addMarkers(extDir) {
     'window.__wildFireCosmeticReady = true;',
     "window.__wildFireCosmeticReady = true;\n  document.documentElement.setAttribute('data-wf-content', 'yes');"
   ));
-  const scriptlets = path.join(extDir, 'lib', 'scriptlets.js');
+  const scriptlets = path.join(extDir, 'lib', 'resources', 'scriptlets', 'core.js');
   const scriptletsSource = fs.readFileSync(scriptlets, 'utf8');
+  const nsLine = '  const NS = global.WildFireScriptletCore = global.WildFireScriptletCore || {};';
   fs.writeFileSync(scriptlets, scriptletsSource.replace(
-    "'use strict';\n\n  const MAX_PROPERTY_LENGTH = 120;",
-    "'use strict';\n\n  try {\n    if (global.document && global.document.documentElement) {\n      global.document.documentElement.setAttribute('data-wf-scriptlets', 'yes');\n    }\n  } catch (error) {}\n\n  const MAX_PROPERTY_LENGTH = 120;"
+    nsLine,
+    "  try {\n    if (global.document && global.document.documentElement) {\n      global.document.documentElement.setAttribute('data-wf-scriptlets', 'yes');\n    }\n  } catch (error) {}\n\n" + nsLine
   ));
 }
 

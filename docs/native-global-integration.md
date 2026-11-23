@@ -379,7 +379,7 @@ Non-negotiable:
 2. No `eval`, `Function`, `Cu.evalInSandbox`, or string execution from payload
    data in the privileged component.
 3. No `trusted-*` alias until a source-trust model exists.
-4. Validate twice: once in `lib/resources/scriptlets.js`, once in the privileged layer.
+4. Validate twice: once in the `lib/resources/scriptlets/` chain, once in the privileged layer.
 5. Cap payload size, rule count, regex length, property path length, and
    argument count.
 6. Filter by principal before applying any patch.

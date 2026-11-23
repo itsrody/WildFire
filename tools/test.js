@@ -28,10 +28,21 @@ const PROCEDURAL_FILES = [
   'lib/engine/procedural/native.js',
   'lib/engine/procedural/select.js'
 ];
+/* Scriptlet registry is another classic-script chain; definitions need helpers. */
+const SCRIPTLET_FILES = [
+  'lib/resources/scriptlets/core.js',
+  'lib/resources/scriptlets/runtime.js',
+  'lib/resources/scriptlets/transforms.js',
+  'lib/resources/scriptlets/adguard-helpers.js',
+  'lib/resources/scriptlets/definitions.js',
+  'lib/resources/scriptlets/adguard-definitions.js',
+  'lib/resources/scriptlets/api.js'
+];
 const loadFiles = (target, files) => files.forEach(file => {
   vm.runInContext(fs.readFileSync(path.join(ROOT, file), 'utf8'), target, { filename: file });
 });
 const loadEngine = target => loadFiles(target, ENGINE_FILES);
+const loadScriptlets = target => loadFiles(target, SCRIPTLET_FILES);
 const context = vm.createContext({
   console, URL, CSS: { supports: () => true }, location: { hostname: 'page.example' }
 });
@@ -50,9 +61,7 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/state/remote-lists.js'), 'u
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/resources/csp-resources.js'), 'utf8'), context, {
   filename: 'csp-resources.js'
 });
-vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/resources/scriptlets.js'), 'utf8'), context, {
-  filename: 'scriptlets.js'
-});
+loadScriptlets(context);
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/resources/rewrite-resources.js'), 'utf8'), context, {
   filename: 'rewrite-resources.js'
 });
@@ -1139,9 +1148,7 @@ function scriptletContext(hostname) {
   };
   sandbox.window = sandbox;
   const vmContext = vm.createContext(sandbox);
-  vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/resources/scriptlets.js'), 'utf8'), vmContext, {
-    filename: 'scriptlets.js'
-  });
+  loadScriptlets(vmContext);
   return vmContext;
 }
 
@@ -1258,9 +1265,7 @@ function domScriptletContext() {
   };
   sandbox.window = sandbox;
   const vmContext = vm.createContext(sandbox);
-  vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/resources/scriptlets.js'), 'utf8'), vmContext, {
-    filename: 'scriptlets.js'
-  });
+  loadScriptlets(vmContext);
   return vmContext;
 }
 
@@ -1350,9 +1355,7 @@ function dataScriptletContext() {
   };
   sandbox.window = sandbox;
   const vmContext = vm.createContext(sandbox);
-  vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/resources/scriptlets.js'), 'utf8'), vmContext, {
-    filename: 'scriptlets.js'
-  });
+  loadScriptlets(vmContext);
   return vmContext;
 }
 
@@ -1586,9 +1589,7 @@ function adguardScriptletContext(hostname) {
   };
   sandbox.window = sandbox;
   const vmContext = vm.createContext(sandbox);
-  vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/resources/scriptlets.js'), 'utf8'), vmContext, {
-    filename: 'scriptlets.js'
-  });
+  loadScriptlets(vmContext);
   return vmContext;
 }
 
@@ -1769,7 +1770,7 @@ async function testStaleGenerationWorkerHang() {
     contentScripts: { register: async () => ({ unregister: async () => {} }) },
     publicSuffix: { getDomain: host => host.split('.').slice(-2).join('.') }
   };
-  ['lib/state/store.js', ...ENGINE_FILES, 'lib/state/document-scope.js', 'lib/resources/redirect-resources.js', 'lib/state/remote-lists.js', 'lib/resources/csp-resources.js', 'lib/resources/scriptlets.js', 'lib/resources/rewrite-resources.js', 'lib/compile/compile-cache.js', 'lib/compile/compiler.js']
+  ['lib/state/store.js', ...ENGINE_FILES, 'lib/state/document-scope.js', 'lib/resources/redirect-resources.js', 'lib/state/remote-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js', 'lib/compile/compile-cache.js', 'lib/compile/compiler.js']
     .forEach(f => vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f }));
   const bgSource = fs.readFileSync(path.join(ROOT, 'background.js'), 'utf8')
     .replace(/  init\(\);\n}\)\(\);\s*$/, '  globalThis.__wildfireTest = { loadFilters, engine, getState: () => state, setState: p => { state = Object.assign({}, state, p); }, compiler }; init(); })();');
@@ -1919,7 +1920,7 @@ async function testBackgroundLoadFiltersIntegration() {
 
   [
     'lib/state/store.js', ...ENGINE_FILES, 'lib/state/document-scope.js', 'lib/resources/redirect-resources.js',
-    'lib/state/remote-lists.js', 'lib/resources/csp-resources.js', 'lib/resources/scriptlets.js', 'lib/resources/rewrite-resources.js',
+    'lib/state/remote-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js',
     'lib/compile/compile-cache.js', 'lib/compile/compiler.js'
   ].forEach(f => vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f }));
 
@@ -2016,7 +2017,7 @@ async function testRemoveRuntimeIntegration() {
     contentScripts:{register:async()=>({unregister:async()=>{}})},
     publicSuffix:{getDomain:host=>host.split('.').slice(-2).join('.')}
   };
-  ['lib/state/store.js',...ENGINE_FILES,'lib/state/document-scope.js','lib/resources/redirect-resources.js','lib/state/remote-lists.js','lib/resources/csp-resources.js','lib/resources/scriptlets.js','lib/resources/rewrite-resources.js','lib/compile/compile-cache.js','lib/compile/compiler.js']
+  ['lib/state/store.js',...ENGINE_FILES,'lib/state/document-scope.js','lib/resources/redirect-resources.js','lib/state/remote-lists.js','lib/resources/csp-resources.js',...SCRIPTLET_FILES,'lib/resources/rewrite-resources.js','lib/compile/compile-cache.js','lib/compile/compiler.js']
     .forEach(f=>vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),ctx,{filename:f}));
   const bgSource = fs.readFileSync(path.join(ROOT,'background.js'),'utf8')
     .replace(/  init\(\);\n}\)\(\);\s*$/, '  globalThis.__wildfireTest = { loadFilters, engine, getState: () => state, setState: p => { state = Object.assign({}, state, p); } }; init(); })();');
@@ -2275,7 +2276,7 @@ async function testCompileInFlightDedup() {
     publicSuffix: { getDomain: h => h.split('.').slice(-2).join('.') }
   };
   ['lib/state/store.js', ...ENGINE_FILES, 'lib/state/document-scope.js', 'lib/resources/redirect-resources.js',
-    'lib/state/remote-lists.js', 'lib/resources/csp-resources.js', 'lib/resources/scriptlets.js', 'lib/resources/rewrite-resources.js',
+    'lib/state/remote-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js',
     'lib/compile/compile-cache.js']
     .forEach(f => vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f }));
 

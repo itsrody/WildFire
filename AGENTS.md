@@ -71,7 +71,14 @@ lib/
     compile-cache.js   compiled-filter cache (memory LRU + IndexedDB/local)
     compiler-worker.js worker entry; importScripts engine + resource registries
   resources/
-    scriptlets.js      WildFire-owned scriptlet aliases (no filter-supplied code)
+    scriptlets/        WildFire-owned scriptlet module chain (no filter-supplied code):
+      core.js          validators, needle safety, path/property primitives
+      runtime.js       page defusers, DOM/cookie/storage helpers, detectors
+      transforms.js    JSON prune/edit and response/request transforms
+      adguard-helpers.js  AdGuard argument mapping and original helpers
+      definitions.js   uBO alias catalog (validators + implementations)
+      adguard-definitions.js  AdGuard alias catalog delegated to uBO twins
+      api.js           canonicalization, validation, apply, public API
     csp-resources.js   curated CSP directives for $csp response headers
     redirect-resources.js  WildFire-owned data-URI redirect resources
     rewrite-resources.js   WildFire-owned bodies for $rewrite responses
@@ -110,7 +117,9 @@ used **only** by `tools/`.
 4. `lib/resources/redirect-resources.js` → `window.RedirectResources`
 5. `lib/state/remote-lists.js` → `window.RemoteLists`
 6. `lib/resources/csp-resources.js` → `window.CspResources`
-7. `lib/resources/scriptlets.js` → `window.WildFireScriptlets`
+7. `lib/resources/scriptlets/` chain, in order: `core.js`, `runtime.js`,
+   `transforms.js`, `adguard-helpers.js`, `definitions.js`,
+   `adguard-definitions.js`, `api.js` → `window.WildFireScriptlets`
 8. `lib/resources/rewrite-resources.js` → `window.RewriteResources`
 9. `lib/compile/compile-cache.js` → `window.WildFireCompileCache`
 10. `lib/compile/compiler.js` → `window.WildFireCompiler`
@@ -228,12 +237,17 @@ headers without touching the site's own headers. CSP report requests are
 skipped. Filter text can never supply a header value itself.
 
 `getScriptletPayload()` returns plain `{alias, args, domains, isException}`
-data. Background registers `lib/resources/scriptlets.js` through Firefox's
-`browser.contentScripts.register()` at `document_start` with
-`['<all_urls>']`/all frames, and injects only a JSON payload through the
-registered `code` step. There is no `eval`, no `Function`, and no filter-sourced
-script anywhere; `WildFireScriptlets.apply()` revalidates every entry, resolves
-domains against `location.hostname`, and lets `#@#+js()` cancel the matching
+data. Background registers the `lib/resources/scriptlets/` module chain through
+Firefox's `browser.contentScripts.register()` at `document_start` with
+`['<all_urls>']`/all frames, as ordered `js: [{file: …}]` entries, and injects
+only a JSON payload through the final `code` step. The chain shares one internal
+namespace, `window.WildFireScriptletCore`; `api.js` publishes the public
+`window.WildFireScriptlets` API. Load order is pinned in the manifest, the
+`contentScripts.register()` call, the compiler worker's `importScripts`,
+`tools/test.js` (`SCRIPTLET_FILES`) and `tools/check.js` — keep all five in
+sync. There is no `eval`, no `Function`, and no filter-sourced script anywhere;
+`WildFireScriptlets.apply()` revalidates every entry, resolves domains against
+`location.hostname`, and lets `#@#+js()` cancel the matching
 alias/arguments. Registrations are replaced whenever the engine reloads, and
 only future navigations receive updated scriptlets.
 
@@ -406,8 +420,9 @@ weaker policy. `$csp` accepts the same type/domain/third-party options as
 network rules, and applies to main documents without `$document`.
 
 Scriptlet rules use `##+js(alias, args)` and may be scoped by comma-separated
-domains or negated with `#@#+js(...)`. The registry in `lib/resources/scriptlets.js` owns
-one canonical alias per behavior plus uBO short aliases (`aopr`, `acs`, `set`,
+domains or negated with `#@#+js(...)`. The registry in the
+`lib/resources/scriptlets/` chain owns one canonical alias per behavior plus
+uBO short aliases (`aopr`, `acs`, `set`,
 …); the engine canonicalizes names so an exception matches either spelling.
 Arguments are validated data: plain dotted property paths, fixed constant tokens
 (`true`, `false`, `null`, `undefined`, `0`, `1`, `emptyObj`, `emptyArr`,
@@ -417,8 +432,9 @@ code, unterminated rules and every `trusted-*` alias go into
 `engine.rejectedScriptlets`. A `#@#` exception cancels the same alias/arguments
 on matching domains. The catalog covers the phases in §8. AdGuard
 `[domains]#%#//scriptlet('alias', 'arg', ...)` rules are parsed into the same
-payload with string-only arguments and validated in `lib/resources/scriptlets.js`'s
-AdGuard registry; `#@%#//scriptlet()` cancels the same rule. No filter can
+payload with string-only arguments and validated by the
+`lib/resources/scriptlets/adguard-definitions.js` catalog;
+`#@%#//scriptlet()` cancels the same rule. No filter can
 supply script text.
 
 Procedural cosmetic rules are parsed into a base selector plus ordered steps.
@@ -508,8 +524,8 @@ cosmetic hiding.
 ## 8. Where to extend next
 
 The scriptlet catalog covers both uBO `##+js()` and AdGuard
-`#%#//scriptlet()` syntax. It grew as a phased expansion of the registry in
-`lib/resources/scriptlets.js`; every alias lands with a validator, an original
+`#%#//scriptlet()` syntax. It grew as a phased expansion of the registry in the
+`lib/resources/scriptlets/` chain; every alias lands with a validator, an original
 implementation, tests, and a README row. Keep these load-bearing rules:
 
 - **No upstream code.** Public syntax docs are fine; copying or adapting uBO or
