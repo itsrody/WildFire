@@ -137,6 +137,9 @@ assert.strictEqual(scope.documentUrl({
 }), 'https://origin.example/', 'originUrl outranks tab URL and frame ancestors');
 assert.strictEqual(scope.documentUrl({ documentId: 'doc-new', documentUrl: 'https://direct.example/' }),
   'https://direct.example/', 'request documentUrl outranks the cache');
+assert.strictEqual(scope.urlForFrame(7, 2), 'https://frame.example/',
+  'frame URL is available for popup source lookup');
+assert.strictEqual(scope.urlForFrame(9, 0), '', 'unknown frame has no URL');
 
 scope.rememberFromRequest({ tabId: 8, frameId: 0, documentId: 'doc-req', documentUrl: 'https://req.example/' });
 assert.strictEqual(scope.documentUrl({ tabId: 8, frameId: 0, documentId: 'doc-req' }),
@@ -220,6 +223,57 @@ assert.strictEqual(
 assert.strictEqual(
   regexEngine.matchRequest('https://keep.example/ad.js', mapResourceType('script'), '').blocked,
   false, 'regex exception wins');
+
+// Wider resource types plus $document / $popup handling.
+assert.strictEqual(mapResourceType('ping'), 'ping', 'ping is its own type');
+assert.strictEqual(mapResourceType('websocket'), 'websocket', 'websocket is its own type');
+assert.strictEqual(mapResourceType('web_manifest'), 'manifest', 'web_manifest alias');
+assert.strictEqual(mapResourceType('csp_report'), 'csp', 'csp_report alias');
+
+const documentEngine = new FilterEngine();
+documentEngine.load([
+  '||blocked.example^$document',
+  '||allowed.example^$document',
+  '@@||allowed.example^$document',
+  '||script.example^$script',
+  '||popup.example^$popup',
+  '@@||keep.popup.example^$popup',
+  '||scoped.example^$popup,domain=allowed.example'
+].join('\n'));
+
+assert.strictEqual(
+  documentEngine.matchRequest('https://blocked.example/landing', mapResourceType('main_frame'), 'https://page.example/').blocked,
+  true, '$document blocks a top-level navigation');
+assert.strictEqual(
+  documentEngine.matchRequest('https://allowed.example/landing', mapResourceType('main_frame'), 'https://page.example/').blocked,
+  false, '$document exception wins');
+assert.strictEqual(
+  documentEngine.matchRequest('https://script.example/app.js', mapResourceType('script'), '').blocked,
+  true, 'script rules still work');
+assert.strictEqual(
+  documentEngine.matchRequest('https://script.example/landing', mapResourceType('main_frame'), '').blocked,
+  false, 'script rules do not block documents');
+assert.strictEqual(
+  documentEngine.matchPopup('https://popup.example/open', 'https://source.example/').blocked,
+  true, '$popup blocks a popup navigation');
+assert.strictEqual(
+  documentEngine.matchPopup('https://keep.popup.example/open', 'https://source.example/').blocked,
+  false, '$popup exception wins');
+assert.strictEqual(
+  documentEngine.matchPopup('https://script.example/app.js', 'https://source.example/').blocked,
+  false, 'non-popup rules are ignored for popups');
+assert.strictEqual(
+  documentEngine.matchPopup('https://scoped.example/open', 'https://allowed.example/').blocked,
+  true, '$popup respects $domain');
+assert.strictEqual(
+  documentEngine.matchPopup('https://scoped.example/open', 'https://other.example/').blocked,
+  false, '$popup honors document exclusions');
+
+const plainEngine = new FilterEngine();
+plainEngine.load('example.net*track');
+assert.strictEqual(
+  plainEngine.matchRequest('https://example.net/landing', mapResourceType('main_frame'), '').blocked,
+  false, 'plain rules never block documents');
 
 engine.load(fs.readFileSync(path.join(ROOT, 'filters/default.txt'), 'utf8'));
 assert.ok(engine.counts.network > 50, 'bundled list should contain network rules');

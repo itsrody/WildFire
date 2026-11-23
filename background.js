@@ -22,6 +22,7 @@
 
   const engine = new FilterEngine(registrableDomain);
   const documentScope = new DocumentScope();
+  const blockedPopups = new Set();
   let state = Object.assign({}, WildFireStore.defaults);
   let flushTimer = null;
   let ready = false;
@@ -109,7 +110,7 @@
 
   function onBeforeRequest(details) {
     documentScope.rememberFromRequest(details);
-    if (!state.enabled || details.type === 'main_frame') return undefined;
+    if (!state.enabled || blockedPopups.has(details.tabId)) return undefined;
 
     const documentUrl = documentScope.documentUrl(details);
 
@@ -123,6 +124,22 @@
     updateBadge();
     scheduleFlush();
     return { cancel: true };
+  }
+
+  function onPopupNavigation(details) {
+    if (!state.enabled) return;
+    const sourceUrl = documentScope.urlForFrame(details.sourceTabId, details.sourceFrameId);
+    if (siteDisabled(safeHost(sourceUrl))) return;
+
+    const result = engine.matchPopup(details.url, sourceUrl);
+    if (!result.blocked) return;
+
+    blockedPopups.add(details.tabId);
+    state.blocked = (state.blocked || 0) + 1;
+    updateBadge();
+    scheduleFlush();
+    browser.tabs.remove(details.tabId).catch(error =>
+      console.warn('WildFire: popup close failed', error));
   }
 
   async function onMessage(message, sender) {
@@ -195,6 +212,7 @@
 
       browser.runtime.onMessage.addListener(onMessage);
 
+      browser.webNavigation.onCreatedNavigationTarget.addListener(onPopupNavigation);
       browser.webNavigation.onCommitted.addListener(details => documentScope.remember(details));
       [browser.webNavigation.onReferenceFragmentUpdated,
         browser.webNavigation.onHistoryStateUpdated]
@@ -204,7 +222,10 @@
         if (changeInfo.url) documentScope.remember({ tabId, frameId: 0, url: changeInfo.url });
         if (changeInfo.status === 'complete' && tab.url) sendCosmetic(tabId, tab.url);
       });
-      browser.tabs.onRemoved.addListener(tabId => documentScope.forgetTab(tabId));
+      browser.tabs.onRemoved.addListener(tabId => {
+        documentScope.forgetTab(tabId);
+        blockedPopups.delete(tabId);
+      });
 
       updateBadge();
       ready = true;

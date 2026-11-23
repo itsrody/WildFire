@@ -84,7 +84,8 @@ graph without a deliberate redesign.
 `webRequest.onBeforeRequest` is registered with `{urls:['<all_urls>']}` and
 `['blocking']`, so **the listener must be synchronous**:
 
-- Skip when `state.enabled` is false, or when the request is `main_frame`.
+- Skip when `state.enabled` is false, or when the tab's popup was already
+  closed by `$popup`.
 - Resolve the document URL through `DocumentScope`: `details.documentUrl`,
   then `details.originUrl`, then the URL cached by `documentId` from
   `webNavigation`/`webRequest`, then the tab URL, then the last frame ancestor.
@@ -97,7 +98,12 @@ graph without a deliberate redesign.
 
 **Never make the blocking listener async.** Engine state lives in memory and
 is rebuilt from `filters/default.txt` plus `customFilters` at startup; storage
-reads happen only in `init()` and message handlers.
+reads happen only in `init()` and message handlers. Top-level navigations only
+match rules with an explicit `$document` or `$popup` option, so plain network
+rules cannot cancel navigation. `$popup` is evaluated from
+`webNavigation.onCreatedNavigationTarget`; a match closes the new tab with
+`browser.tabs.remove()` and counts one block, with the tab id added to
+`blockedPopups` so the later `main_frame` request is not counted twice.
 
 ### Engine shape
 
@@ -175,6 +181,7 @@ that behavior when adding popup actions.
 | `$script`, `$image`, `$~type`, other resource types | `domain=` with wildcard `.*` patterns |
 | `$third-party`, `$~third-party` | full EasyList-scale performance tuning |
 | `$domain=a\|~b` (`from=` alias) | |
+| `$document`, `$popup` | |
 | `/regex/` filters (`i`, `m`, `s`, `u` flags only) | |
 | `##selector`, `#@#selector` | |
 
@@ -245,15 +252,14 @@ cosmetic hiding.
 These are the natural WildFire-native growth paths, in roughly this order.
 Each one must be written from scratch and land with tests:
 
-1. Better indexing so full-size lists are practical (token or suffix index
-   beside the existing host index).
-2. Regex filters (`/pattern/$options`) with safe compilation and explicit
-   rejection of catastrophic patterns.
-3. More procedural cosmetics implemented with DOM code owned by
+1. More procedural cosmetics implemented with DOM code owned by
    `content/cosmetic.js`, never by injecting arbitrary script from a filter.
-4. Optional remote lists with a deterministic update store and user consent —
+2. Optional remote lists with a deterministic update store and user consent —
    keeping the "no data collection" manifest declaration truthful.
-5. Wider resource-type coverage and `$document`/popup handling.
+
+Already implemented and tested: Firefox-native registrable-domain scoping
+(`publicSuffix`), `documentId`-keyed request scope, the 4-character token index,
+safe regex filters, and wider resource types with `$document`/`$popup`.
 
 Do not start a later item while an earlier one is only half-implemented. A
 small, correct, fully tested engine is the product.

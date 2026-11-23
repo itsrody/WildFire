@@ -69,6 +69,8 @@ options page (one per line):
 | `||tracker.net^$~image` | Block everything except images |
 | `||tracker.net^$third-party` | Only block cross-site requests |
 | `||tracker.net^$domain=site.com\|~good.site.com` | Only on matching document hosts |
+| `||landing.example^$document` | Block a top-level navigation to that host |
+| `||popup.example^$popup` | Close a new tab/window opened as a popup |
 | `example.com##.promo` | Hide `.promo` on example.com |
 | `example.com#@#.promo` | Keep `.promo` on example.com |
 | `##.ad-container` | Hide everywhere (generic cosmetic rule) |
@@ -90,8 +92,10 @@ This is deliberately a *minimal* engine, not a full uBO port:
 - No hand-written `for`/`while`/`do` loops; iteration uses native helpers
   (`map`, `filter`, `reduce`, `forEach`, `find`, `flatMap`, `Array.from`).
   `npm run check` enforces this across all scripts.
-- Resource type detection relies on `webRequest` details; the `other` bucket covers
-  types this engine does not model separately.
+- Resource types include scripts, images, stylesheets, fonts, media, objects,
+  XHR, WebSockets, pings, CSP reports and manifests; unknown types fall into `other`.
+- Top-level navigations are only blocked by explicit `$document` or `$popup`
+  rules, so plain network rules never cancel a page load.
 
 ## Message API (internal)
 
