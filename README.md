@@ -104,10 +104,12 @@ This is deliberately a *minimal* engine, not a full uBO port:
   `nooptext`, `noopjson`, `noophtml`, `1x1.gif`, `1x1.png`, `tagged.svg`); the
   response is a bundled `data:` URI, never a URL from the filter. Unknown
   aliases cancel normally.
-- Procedural cosmetic rules (`:has-text()`, `:matches-path()`, `:has()`) are
-  evaluated by WildFire's own DOM code and re-applied when the page changes;
-  no script from a filter is ever injected. `:contains()` and
-  `:nth-ancestor()` are not supported yet.
+- Procedural cosmetic rules (`:has-text()`, `:matches-path()`, `:has()`) use
+  Firefox-native CSS wherever possible: plain `:has()` rules are compiled into
+  the cosmetic stylesheet, and `:matches-path()` is checked once per page.
+  Only text-dependent rules are evaluated in WildFire's DOM code, using native
+  `:has()` prefilters and one query per shared selector. No script from a filter
+  is ever injected. `:contains()` and `:nth-ancestor()` are not supported yet.
 
 ## Message API (internal)
 

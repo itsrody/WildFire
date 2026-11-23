@@ -152,11 +152,21 @@ Procedural selectors (`:has-text()`, `:matches-path()`, `:has()`) are parsed in
 `lib/filter-engine.js` into trees with `base` plus ordered `steps`; malformed or
 unsafe ones are recorded in `engine.rejectedCosmetic` and never sent to pages.
 `getProcedural(host)` merges generic and domain trees and subtracts `#@#`
-exceptions. Background sends them in the same `wildfire:apply` message as CSS;
-`content/cosmetic.js` evaluates them with `WildFireProcedural.select()` and
-hides matches via a `data-wildfire-hidden` attribute plus a dedicated style.
-A `MutationObserver` re-applies after DOM changes without ever running script
-from filter text.
+exceptions. Background sends them in the same `wildfire:apply` message as CSS.
+
+`WildFireProcedural.classify()` picks the cheapest Firefox-native route per
+rule. `:matches-path()` is a page constant, so it is matched once per apply and
+dropped from the node steps; non-matching rules are skipped entirely. Plain
+`:has()` steps are compiled to CSS and validated with `CSS.supports`, so Gecko
+handles them in `#wildfire-cosmetic-procedural` with no JS re-evaluation. When
+text steps remain, every `:has()` inner tree contributes its plain base as a
+native `:has()` **prefilter** on the `querySelectorAll` call. `selectAll()` groups
+rules sharing a base (or prefilter) into one query pass instead of one per rule.
+Only the remaining text-dependent rules hide nodes via `data-wildfire-hidden`,
+and the attribute is diffed so unchanged nodes are never touched.
+`content/cosmetic.js` schedules re-applies with `requestAnimationFrame` to merge
+multiple `MutationObserver` batches per frame, and only observes `characterData`
+when a live rule actually depends on text. Filter text is never executed.
 
 ### State and messages
 

@@ -7,7 +7,7 @@ const path = require('path');
 const vm = require('vm');
 
 const ROOT = path.resolve(__dirname, '..');
-const context = vm.createContext({ console, URL });
+const context = vm.createContext({ console, URL, CSS: { supports: () => true } });
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/filter-engine.js'), 'utf8'), context, {
   filename: 'filter-engine.js'
 });
@@ -438,6 +438,56 @@ assert.strictEqual(WildFireProcedural.select(procRoot, { base: '[', steps: [] },
   'an invalid base selector yields no matches');
 assert.strictEqual(WildFireProcedural.matches(boxNode, { plain: '.inner' }, '/'), true,
   'plain :has inner trees match descendants');
+
+// Firefox-native fast path: Gecko handles plain :has() and path-only rules as
+// CSS, leaving JS only for text-dependent rules.
+const classify = WildFireProcedural.classify;
+const boxClass = classify(procOnExample.find(rule => rule.base === '.box'), '/');
+assert.strictEqual(boxClass.mode, 'css', 'plain :has compiles to native CSS');
+assert.strictEqual(boxClass.selector, '.box:has(.inner)');
+assert.strictEqual(classify(promoRule, '/deals/list').mode, 'css',
+  'a matching path-only rule becomes plain CSS');
+assert.strictEqual(classify(promoRule, '/deals/list').selector, '.promo');
+assert.strictEqual(classify(promoRule, '/nothing').mode, 'skip',
+  'a non-matching path is skipped before any DOM work');
+const deepClass = classify(hasRule, '/');
+assert.strictEqual(deepClass.mode, 'js', 'text-dependent rules stay in JS');
+assert.strictEqual(deepClass.prefilter, '.deep:has(.child)',
+  'plain :has narrows the JS candidate set natively');
+assert.strictEqual(deepClass.steps.length, 1, 'path steps are hoisted out of node checks');
+assert.strictEqual(classify(procOnExample.find(rule => rule.base === '.also'), '/').prefilter,
+  '.also:has(.tag)', 'native prefilter composes with text steps');
+assert.strictEqual(
+  classify({ base: '.a, .b', steps: [{ op: 'has', inner: { plain: '.inner' } }] }, '/').selector,
+  ':is(.a, .b):has(.inner)', 'a selector-list base is scoped before appending :has');
+
+const originalSupports = context.CSS.supports;
+context.CSS.supports = () => false;
+assert.strictEqual(classify(procOnExample.find(rule => rule.base === '.box'), '/').mode, 'js',
+  'unsupported selectors fall back to JS evaluation');
+context.CSS.supports = originalSupports;
+
+let queryCalls = [];
+const groupedRoot = {
+  querySelectorAll: query => {
+    queryCalls.push(query);
+    return query === '.ad' ? [adNode, promoNode] : [];
+  }
+};
+const grouped = WildFireProcedural.selectAll(groupedRoot, [
+  { rule: { base: '.ad', steps: [{ op: 'has-text', matcher: { type: 'text', value: 'Buy' } }] } },
+  { rule: { base: '.ad', steps: [{ op: 'has-text', matcher: { type: 'text', value: 'Special' } }] } }
+], '/');
+assert.deepStrictEqual(queryCalls, ['.ad'], 'rules sharing a base use one querySelectorAll');
+assert.strictEqual(grouped.length, 2, 'each rule still evaluates its own steps');
+
+queryCalls = [];
+WildFireProcedural.selectAll(groupedRoot, [
+  { rule: hasRule, steps: deepClass.steps, prefilter: deepClass.prefilter },
+  { rule: { base: '.deep', steps: [] }, prefilter: deepClass.prefilter }
+], '/');
+assert.deepStrictEqual(queryCalls, ['.deep:has(.child)'],
+  'a native prefilter groups rules with different bases');
 
 engine.load(fs.readFileSync(path.join(ROOT, 'filters/default.txt'), 'utf8'));
 assert.ok(engine.counts.network > 50, 'bundled list should contain network rules');
