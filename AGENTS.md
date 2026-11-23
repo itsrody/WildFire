@@ -302,6 +302,7 @@ fetched before consent, `data_collection_permissions.required` stays `["none"]`.
 | `##selector`, `#@#selector` | |
 | `##sel:has-text("…")`, `##sel:matches-path(/re/)`, `##sel:has(sel)` | |
 | `##sel:contains("…")`, `##sel:nth-ancestor(n)`, `##sel:upward(n|sel)` | |
+| `#?#` / `#@?#` with safe `:-abp-has()`/`:-abp-contains()` | unsupported ABP action/procedural selectors rejected |
 | `domain##+js(alias, args)` (curated aliases only) | |
 | `domain#%#//scriptlet('alias', 'args')` (AdGuard, string-only) | AdGuard trusted/debug aliases |
 

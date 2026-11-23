@@ -88,6 +88,8 @@ options page (one per line):
 | `example.com##.ad:contains("Buy now")` | Hide `.ad` when its own text or a descendant's text matches |
 | `example.com##.leaf:nth-ancestor(2)` / `:upward(2)` | Hide the nth parent of every `.leaf` match |
 | `example.com##.leaf:upward(.panel)` | Hide the nearest matching ancestor |
+| `example.com#?#div:-abp-has(.ad)` | ABP procedural form, mapped safely to `:has()` |
+| `example.com#?#div:-abp-contains(Ad)` | ABP procedural form, mapped safely to `:has-text()` |
 
 Lines starting with `!` are comments.
 
