@@ -38,6 +38,9 @@
   const compileCache = (typeof WildFireCompileCache !== 'undefined' && WildFireCompileCache.create)
     ? WildFireCompileCache.create({ browserApi: browser, version: FilterEngine.COMPILED_VERSION })
     : null;
+  // In-flight dedup: concurrent compiles of identical text share one promise so
+  // a reload racing a filter edit never compiles the same source twice.
+  const compileFlight = new Map();
   let filterLoad = Promise.resolve();
   let lastCustomHash = '';
   let lastRemoteSignature = '';
@@ -204,10 +207,21 @@
     }
   }
 
-  async function compileText(text, meta, generation, forceSync) {
+  function compileText(text, meta, generation, forceSync) {
     const source = String(text || '');
-    if (!source.trim()) return null;
+    if (!source.trim()) return Promise.resolve(null);
+    const flightKey = (compileCache && compileCache.keyFor)
+      ? compileCache.keyFor(source)
+      : FilterEngine.COMPILED_VERSION + ':' + hashText(source);
+    const existing = compileFlight.get(flightKey);
+    if (existing) return existing;
+    const task = compileTextOnce(source, meta, generation, forceSync);
+    compileFlight.set(flightKey, task);
+    task.then(() => compileFlight.delete(flightKey), () => compileFlight.delete(flightKey));
+    return task;
+  }
 
+  async function compileTextOnce(source, meta, generation, forceSync) {
     if (compileCache) {
       try {
         const cached = await compileCache.get(source);

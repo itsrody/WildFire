@@ -1951,6 +1951,19 @@ async function testCompileCacheAndCompiler() {
   await cache.set(text, compiled, { source: 'remote', hash: 'h' });
   assert.deepStrictEqual(await cache.get(text), compiled, 'compile cache round-trips compiled data');
 
+  // In-memory LRU tier: `set` populates memory synchronously, so a subsequent
+  // `get` must be served without any storage.local read.
+  let storageReads = 0;
+  const countingStorage = {
+    async get(key) { storageReads += 1; return {}; },
+    async set() {}
+  };
+  const memCache = WildFireCompileCache.create({ browserApi: { storage: { local: countingStorage } }, version: FilterEngine.COMPILED_VERSION });
+  await memCache.set('||mem.example^', compiled);
+  const readsAfterSet = storageReads;
+  assert.deepStrictEqual(await memCache.get('||mem.example^'), compiled, 'memory tier returns compiled blob');
+  assert.strictEqual(storageReads, readsAfterSet, 'memory cache hit avoids storage read');
+
   await cache.set(text, { v: 999, n: [] });
   assert.deepStrictEqual(await cache.get(text), compiled, 'invalid compiled version is ignored');
 
@@ -2000,6 +2013,143 @@ async function testCompileCacheAndCompiler() {
   compiler.restart('test');
   assert.strictEqual(oldWorker.terminated, true, 'restart terminates old worker');
   compiler.destroy();
+}
+
+async function testCompileInFlightDedup() {
+  function memoryStorage(initial) {
+    let data = Object.assign({}, initial);
+    return {
+      async get(key) { return { [key]: data[key] }; },
+      async set(patch) { data = Object.assign({}, data, patch); }
+    };
+  }
+  const ctx = vm.createContext({
+    console, URL, setTimeout, clearTimeout, setImmediate, Promise, Map, Set, Array, Object,
+    String, RegExp, JSON, Math, Boolean, Number, Error,
+    fetch: async url => {
+      const u = String(url);
+      if (u.includes('default.txt')) return { ok: true, text: async () => '' };
+      return { ok: false, status: 404, json: async () => ({}), text: async () => '' };
+    }
+  });
+  ctx.globalThis = ctx; ctx.window = ctx;
+  ctx.browser = {
+    runtime: { getURL: p => p, onMessage: { addListener: () => {} } },
+    storage: { local: memoryStorage({}) },
+    browserAction: { setBadgeBackgroundColor: () => {}, setBadgeText: () => {} },
+    webRequest: {
+      onBeforeRequest: { addListener: () => {} }, onBeforeSendHeaders: { addListener: () => {} },
+      onHeadersReceived: { addListener: () => {} }, onCompleted: { addListener: () => {} },
+      onErrorOccurred: { addListener: () => {} }, onBeforeRedirect: { addListener: () => {} },
+      filterResponseData: () => ({})
+    },
+    webNavigation: {
+      onCreatedNavigationTarget: { addListener: () => {} }, onCommitted: { addListener: () => {} },
+      onReferenceFragmentUpdated: { addListener: () => {} }, onHistoryStateUpdated: { addListener: () => {} }
+    },
+    tabs: { query: async () => [], onUpdated: { addListener: () => {} }, onRemoved: { addListener: () => {} }, sendMessage: async () => {}, remove: async () => {} },
+    alarms: { onAlarm: { addListener: () => {} }, clear: async () => {}, get: async () => null, create: async () => {} },
+    contentScripts: { register: async () => ({ unregister: async () => {} }) },
+    publicSuffix: { getDomain: h => h.split('.').slice(-2).join('.') }
+  };
+  ['lib/store.js', 'lib/filter-engine.js', 'lib/document-scope.js', 'lib/redirect-resources.js',
+    'lib/remote-lists.js', 'lib/csp-resources.js', 'lib/scriptlets.js', 'lib/rewrite-resources.js',
+    'lib/compile-cache.js']
+    .forEach(f => vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f }));
+
+  let compileCalls = 0;
+  const mk = text => {
+    const e = new ctx.FilterEngine(null, () => '', null, () => false);
+    e.load(text);
+    return { compiled: e.toCompiled(), counts: e.counts, capabilities: e.capabilities };
+  };
+  // Counting compiler stands in for the worker so we can observe dedup/memory.
+  ctx.WildFireCompiler = {
+    create: () => ({
+      compile(text) { compileCalls += 1; return new Promise(res => setImmediate(() => res(mk(text)))); },
+      on() { return () => {}; }, pendingCount() { return 0; }, cancelAll() {}, restart() {},
+      ping() { return Promise.resolve(true); }
+    }),
+    compileSync(text) { return mk(text); }
+  };
+  const bgSource = fs.readFileSync(path.join(ROOT, 'background.js'), 'utf8')
+    .replace(/  init\(\);\n}\)\(\);\s*$/, '  globalThis.__wildfireTest = { compileText }; init(); })();');
+  vm.runInContext(bgSource, ctx, { filename: 'background.js' });
+  await new Promise(r => setTimeout(r, 20));
+  const api = ctx.__wildfireTest;
+  const text = '||dedup.example^$script';
+  const [a, b] = await Promise.all([
+    api.compileText(text, { source: 'custom' }, undefined, false),
+    api.compileText(text, { source: 'custom' }, undefined, false)
+  ]);
+  assert.strictEqual(compileCalls, 1, 'concurrent identical compiles dedup to one');
+  assert.deepStrictEqual(a, b, 'deduped compiles return the same blob');
+  const c = await api.compileText(text, { source: 'custom' }, undefined, false);
+  assert.strictEqual(compileCalls, 1, 'sequential repeat hits memory cache, no recompile');
+  assert.ok(c && c.v === ctx.FilterEngine.COMPILED_VERSION, 'memory-cached blob is valid');
+}
+
+async function testCompileCacheIdbLru() {
+  // Minimal fake IndexedDB exercising the subset compile-cache uses, so the
+  // LRU prune (by `at`, not insertion order) is provable without a browser.
+  function fakeIndexedDB() {
+    const stores = new Map();
+    const makeReq = result => {
+      const r = { result, onsuccess: null, onerror: null };
+      setImmediate(() => r.onsuccess && r.onsuccess());
+      return r;
+    };
+    const makeTx = map => {
+      const tx = {
+        oncomplete: null, onerror: null,
+        objectStore: () => ({
+          get: k => makeReq(map.has(k) ? map.get(k) : undefined),
+          put: (v, k) => { map.set(k, v); return makeReq(true); },
+          delete: k => { map.delete(k); return makeReq(true); },
+          getAll: () => makeReq(Array.from(map.values())),
+          getAllKeys: () => makeReq(Array.from(map.keys()))
+        })
+      };
+      setImmediate(() => setImmediate(() => tx.oncomplete && tx.oncomplete()));
+      return tx;
+    };
+    return {
+      open() {
+        const r = { result: null, onsuccess: null, onerror: null, onupgradeneeded: null };
+        setImmediate(() => {
+          r.result = {
+            objectStoreNames: { contains: n => stores.has(n) },
+            createObjectStore: n => stores.set(n, new Map()),
+            transaction: n => makeTx(stores.get(n))
+          };
+          r.onupgradeneeded && r.onupgradeneeded();
+          r.onsuccess && r.onsuccess();
+        });
+        return r;
+      },
+      _store: () => stores.get('compiled')
+    };
+  }
+  const idb = fakeIndexedDB();
+  const prevIdb = context.indexedDB;
+  context.indexedDB = idb;
+  try {
+    const cache = WildFireCompileCache.create({ browserApi: { storage: { local: { async get() { return {}; }, async set() {} } } }, version: FilterEngine.COMPILED_VERSION });
+    const blob = { v: FilterEngine.COMPILED_VERSION, cap: 0, n: [], c: { g: [], ge: [], d: [], de: [] }, p: { g: [], ge: [], d: [], de: [] }, s: [], d: [] };
+    // Fill to capacity with ascending `at`.
+    await Array.from({ length: 64 }).reduce((chain, _, i) => chain.then(() =>
+      cache.set('t' + i, blob, { at: i + 1 })), Promise.resolve());
+    // Touch t0 so it becomes the most-recently-used, then add one more entry.
+    await cache.set('t0', blob, { at: 9999 });
+    await cache.set('t64', blob, { at: 5000 });
+    const store = idb._store();
+    assert.ok(store.has(cache.keyFor('t0')), 'LRU prune keeps recently touched entry');
+    assert.ok(!store.has(cache.keyFor('t1')), 'LRU prune evicts least-recently-used entry');
+    assert.ok(store.has(cache.keyFor('t64')), 'newest entry retained');
+    assert.ok(store.size <= 64, 'IDB cache bounded to MAX_ENTRIES');
+  } finally {
+    context.indexedDB = prevIdb;
+  }
 }
 
 function runCompatibilityFixtures() {
@@ -2459,6 +2609,8 @@ Promise.resolve()
   .then(() => testPhase1BBadfilter())
   .then(() => testPhase1CRemoveModifiers())
   .then(() => testCompileCacheAndCompiler())
+  .then(() => testCompileCacheIdbLru())
+  .then(() => testCompileInFlightDedup())
   .then(() => testIncrementalRemoteCompileSemantics())
   .then(() => testBackgroundLoadFiltersIntegration())
   .then(() => testStaleGenerationWorkerHang())
