@@ -52,6 +52,7 @@ lib/
     wapi.js            named listener registry, prefix router, tabs/alarms/content scripts
     wapi-contexts.js   per-frame content script context registry and frame targeting
     wapi-background.js background-side port channels for push updates
+    wapi-router.js     named action registry for wildfire:* messages
     wapi-client.js     client-side message API for extension pages and content scripts
   background/          background classic-script chain, load in order:
     helpers.js         counters/badge, snapshots, diagnostics and host helpers
@@ -139,9 +140,10 @@ used **only** by `tools/`.
 12. `lib/wapi/wapi.js` → `window.WildFireWapi` (aliased as `window.wapi`)
 13. `lib/wapi/wapi-contexts.js` → `window.WildFireWapiContexts` (aliased as `window.wapiContexts`)
 14. `lib/wapi/wapi-background.js` → `window.WildFireWapiBackground` (aliased as `window.wapiBackground`)
-15. `lib/background/` chain, in order: `helpers.js`, `engine-host.js`,
+15. `lib/wapi/wapi-router.js` → `window.WildFireWapiRouter` (aliased as `window.wapiRouter`)
+16. `lib/background/` chain, in order: `helpers.js`, `engine-host.js`,
     `requests.js`, `messages.js`, `background.js` → `window.WildFireBackground`
-16. `background.js` → calls `WildFireBackground.create(...).start()`
+17. `background.js` → calls `WildFireBackground.create(...).start()`
 
 `wapi.js` is WildFire's Firefox-native API backbone: named idempotent listener
 registration, one prefix-filtered message listener, and thin promise wrappers for
@@ -149,9 +151,10 @@ tabs, alarms, content-script registration and response-stream access.
 `wapi-contexts.js` builds on it to track per-frame content script contexts and
 route frame-targeted messages. `wapi-background.js` adds native `runtime.onConnect`
 port channels so the background can push debounced state updates to the popup.
-Action dispatch stays in `lib/background/messages.js`.
-The background chain owns these modules; do not add a Chromium shim or callback
-bridge there.
+`wapi-router.js` is the named action registry: `lib/background/messages.js`
+registers each `wildfire:*` handler there, and `wapi.messages()` remains the only
+listener. The background chain owns these modules; do not add a Chromium shim or
+callback bridge there.
 
 `wapi-client.js` is the matching client-side backbone: popup, options and content
 scripts use one prefix-filtered message API, one runtime listener, and native

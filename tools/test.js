@@ -44,7 +44,8 @@ const CLIENT_FILE = 'lib/wapi/wapi-client.js';
 const WAPI_FILES = [
   'lib/wapi/wapi.js',
   'lib/wapi/wapi-contexts.js',
-  'lib/wapi/wapi-background.js'
+  'lib/wapi/wapi-background.js',
+  'lib/wapi/wapi-router.js'
 ];
 const BACKGROUND_FILES = [
   'lib/background/helpers.js',
@@ -95,7 +96,7 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/compile/compiler.js'), 'utf
 });
 loadFiles(context, [...WAPI_FILES, ...BACKGROUND_FILES]);
 const { FilterEngine, mapResourceType, WildFirePageStore, RedirectResources, WildFireProcedural, RemoteLists, WildFireSuggestedLists, CspResources, WildFireScriptlets, RewriteResources, WildFireCompileCache, WildFireCompiler, WildFireStore, WildFireBackground, WildFireWapi, wapi, WildFireWapiContexts, wapiContexts,
-  WildFireWapiBackground, wapiBackground } = context;
+  WildFireWapiBackground, wapiBackground, WildFireWapiRouter, wapiRouter } = context;
 
 const engine = new FilterEngine();
 engine.load([
@@ -3596,6 +3597,43 @@ async function testWapiBackground() {
   assert.strictEqual(connectHub.listeners.length, 0, 'close() removes onConnect');
 }
 
+async function testWapiRouter() {
+  assert.strictEqual(wapiRouter, WildFireWapiRouter,
+    'wapi-router is exposed as a canonical backbone module');
+  const router = WildFireWapiRouter.create({ prefix: 'wildfire:' });
+  const seen = [];
+  router.register('state', (message, sender) => {
+    seen.push({ url: message.url, tab: sender.tab });
+    return { ok: true, action: 'state' };
+  });
+  router.registerAll({ reload: async () => ({ ok: true, action: 'reload' }) });
+  assert.strictEqual(router.size(), 2);
+  assert.strictEqual(router.accepts({ type: 'wildfire:state' }), true);
+  assert.strictEqual(router.accepts({ type: 'wildfire:' }), true);
+  assert.strictEqual(router.accepts({ type: 'other:state' }), false);
+  assert.strictEqual(router.actionOf({ type: 'wildfire:state' }), 'state');
+
+  const state = await router.dispatch(
+    { type: 'wildfire:state', url: 'https://page.test/' },
+    { tab: { id: 3 } }
+  );
+  assert.strictEqual(state.action, 'state');
+  assert.deepStrictEqual(seen[0].tab, { id: 3 });
+  const reload = await router.dispatch({ type: 'wildfire:reload' }, {});
+  assert.strictEqual(reload.action, 'reload', 'async handlers are awaited');
+  const unknown = await router.dispatch({ type: 'wildfire:missing' }, {});
+  assert.strictEqual(unknown.ok, false);
+  assert.strictEqual(unknown.error, 'Unknown action: missing');
+  const empty = await router.dispatch({ type: 'wildfire:' }, {});
+  assert.strictEqual(empty.error, 'Unknown action: ', 'empty actions keep the legacy error');
+  assert.strictEqual(await router.dispatch({ type: 'other:state' }, {}), undefined);
+  assert.strictEqual(router.unregister('reload'), true);
+  assert.strictEqual(router.actions().join(','), 'state');
+  assert.throws(() => router.register('', () => {}), /register\(\)/);
+  router.clear();
+  assert.strictEqual(router.size(), 0);
+}
+
 async function testWapiContexts() {
   const sent = [];
   const wapiStub = {
@@ -3757,6 +3795,17 @@ async function testBackgroundControllerRobustness() {
       'diagnostics report engine health');
     assert.ok(diagnostics.diagnostics.startup.total > 0,
       'a healthy startup loads bundled rules');
+    const actions = healthy.debug().wapiRouter.actions();
+    assert.strictEqual(actions.join(','), [
+      'state', 'toggle', 'toggle-site', 'set-filters',
+      'set-csp-report-blocking', 'set-csp-report-allow', 'reset-stats',
+      'reload', 'suggested-lists', 'list-state', 'add-list', 'remove-list',
+      'update-list', 'set-list-enabled', 'set-list-auto', 'cosmetic',
+      'diagnostics'
+    ].join(','), 'router registers every legacy wildfire action');
+    const unknown = await healthy.debug().onMessage({ type: 'wildfire:missing' }, {});
+    assert.strictEqual(unknown.error, 'Unknown action: missing',
+      'unknown actions keep the existing error shape');
 
     let unregistered = 0;
     const previous = { unregister: async () => { unregistered += 1; } };
@@ -3811,6 +3860,7 @@ Promise.resolve()
   .then(() => testWapiBackbone())
   .then(() => testWapiClient())
   .then(() => testWapiBackground())
+  .then(() => testWapiRouter())
   .then(() => testWapiContexts())
   .then(() => testBackgroundControllerRobustness())
   .then(() => testPopupPerSiteDisplay())
