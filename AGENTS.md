@@ -8,22 +8,35 @@ good, and the checks that prove it.
 
 ## 1. The goal (load-bearing)
 
-**WildFire is uBlock Origin rewritten from scratch to be 100% Firefox native,
-under a new brand: WildFire.**
+**WildFire is a clean-room, uBO-inspired content blocker built from scratch for
+100% Firefox/Gecko native runtime, under a new brand: WildFire.**
 
 That sentence is the constitution of this repo. Unpack it:
 
-- **uBO rewritten from scratch.** We reimplement uBO's *ideas* — network
+- **uBO-inspired, not uBO-derived.** We reimplement the *ideas* — network
   filtering with exceptions, domain/wildcard matching, element hiding, a
-  counter, per-site controls — in original code. This is **not** a fork, a
-  repackaging, a minified copy, or a port of uBO source. No upstream uBO code,
-  assets, filter engines, or build scripts may be copied into this tree. If a
-  behavior is needed, write it here.
+  counter, per-site controls — in original code. This is **not** a fork,
+  repackaging, minified copy, port, or adaptation of uBO source. Behavior comes
+  from public filter-syntax docs, Gecko/WebExtensions docs, and our own tests;
+  architecture, names, registries, assets, and code are WildFire's. If a
+  behavior is needed, specify it here and write it here.
+- **Clean-room discipline.** Do not fetch, vendor, translate, adapt, or paste
+  upstream uBO/AdGuard source, engines, build scripts, or assets. Reading public
+  syntax documentation is fine; copying an implementation is not. A feature is
+  complete only when it has WildFire-owned code, tests, and docs.
 - **100% Firefox native.** Firefox is the only target. The manifest uses
-  Firefox's `browser_specific_settings`, the code uses the promise-based
-  `browser.*` API, and there is no Chrome target, no `chrome.*` shim, no
-  cross-browser abstraction layer, and no MV3 fallback. Do not add Chromium
-  compatibility code or a manifest fork "just in case".
+  Firefox's `browser_specific_settings`, runtime code uses the promise-based
+  `browser.*` API through thin WildFire `wapi` modules, and there is no Chrome
+  target, no `chrome.*` shim, no callback bridge, no cross-browser abstraction
+  layer, and no MV3 fallback. Do not add Chromium compatibility code or a
+  manifest fork "just in case".
+- **No generic compatibility code.** Prefer small, named, Firefox-specific
+  modules over generic adapters or frameworks. `wapi` is a native API boundary,
+  not a portability layer.
+- **Loop-free by construction.** Runtime code and tools express iteration with
+  native helpers — `map`, `filter`, `reduce`, `forEach`, `some`, `every`,
+  `find`, `flatMap`, `Array.from` — instead of hand-written `for`, `while`, or
+  `do` loops. `tools/check.js` rejects explicit loops in every `.js` file.
 - **New brand: WildFire.** Name, icon, colors, storage keys, message names, and
   artifact names are WildFire's. Do not leave uBO branding in user-visible
   text, comments, or filenames. Flame icon; primary orange `#e2511d`, accent
@@ -32,11 +45,11 @@ That sentence is the constitution of this repo. Unpack it:
 **Non-negotiable platform floor:** Manifest V2,
 `browser_specific_settings.gecko.strict_min_version = "153.0"` (the current
 ESR line). Firefox 153 is why MV2 is viable here: it still supports
-`webRequestBlocking`, which is the model uBO's blocking engine needs. Do not
-raise, lower, or remove the floor, and do not migrate to MV3 without an
+`webRequestBlocking`, which is the model WildFire's blocking engine relies on.
+Do not raise, lower, or remove the floor, and do not migrate to MV3 without an
 explicit product decision from the owner.
 
-**Honest scope.** "Rewritten from scratch" is the *direction*, not a claim of
+**Honest scope.** "Clean-room, uBO-inspired" is the *direction*, not a claim of
 feature parity today. The current engine is deliberately minimal (§5). Grow it
 in the WildFire style; never close a gap by importing upstream code.
 
