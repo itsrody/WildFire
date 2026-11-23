@@ -335,10 +335,18 @@ Background listens for `wildfire:*` messages:
 | `set-list-enabled` | apply or stop a fetched list |
 | `set-list-auto` | opt a fetched, enabled list into daily checks |
 | `cosmetic` | return selectors for a URL |
+| `diagnostics` | toggle/reset in-memory request metrics and ETP observation |
 
 `state`-only fields are not on other responses. The popup keeps the tab info
 it got from `state` and merges it into later responses (`applyResult`); keep
 that behavior when adding popup actions.
+
+`diagnostics` is local-only: metrics and ETP observations live in memory, are
+disabled by default, and are never persisted or reported. WildFire never
+changes Firefox's ETP settings. ETP block errors and `urlClassification` flags
+are observed as hints only; they must never affect `blocked`, `blockedBySite`,
+or filter decisions. `onHeadersReceived` is registered only while loaded rules
+need `$csp`, `$rewrite`, or `$removeheader`.
 
 Remote lists are strictly opt-in. The bundled `lib/state/suggested-lists.js`
 catalog is inert: Options shows its URLs as shortcuts, and clicking one only

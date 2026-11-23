@@ -2704,7 +2704,12 @@ async function testPerSiteBadgeCounters() {
   }
 
   const fakeCompiled = text => {
-    const compileEngine = new FilterEngine(null, () => '', null, () => false);
+    const compileEngine = new FilterEngine(
+      null,
+      alias => ctx.CspResources ? ctx.CspResources.resolve(alias) : '',
+      null,
+      () => false
+    );
     compileEngine.load(text);
     return compileEngine.toCompiled();
   };
@@ -2775,9 +2780,12 @@ async function testPerSiteBadgeCounters() {
     webRequest: {
       onBeforeRequest: { addListener: fn => { apiHooks.onBeforeRequest = fn; } },
       onBeforeSendHeaders: { addListener: fn => { apiHooks.onBeforeSendHeaders = fn; } },
-      onHeadersReceived: { addListener: fn => { apiHooks.onHeadersReceived = fn; } },
-      onCompleted: { addListener: () => {} },
-      onErrorOccurred: { addListener: () => {} },
+      onHeadersReceived: {
+        addListener: fn => { apiHooks.onHeadersReceived = fn; },
+        removeListener: () => { apiHooks.onHeadersReceived = undefined; }
+      },
+      onCompleted: { addListener: fn => { apiHooks.onCompleted = fn; } },
+      onErrorOccurred: { addListener: fn => { apiHooks.onErrorOccurred = fn; } },
       onBeforeRedirect: { addListener: () => {} },
       filterResponseData: () => ({})
     },
@@ -2894,6 +2902,55 @@ async function testPerSiteBadgeCounters() {
   assert.strictEqual(Object.keys(reset.state.blockedBySite).length, 0,
     'reset clears every site counter');
   assert.strictEqual(lastBadge(1).text, '0', 'reset returns the active site badge to zero');
+
+  const initialDiagnostics = await bgMessageHandler({ type: 'wildfire:diagnostics' }, {});
+  assert.strictEqual(initialDiagnostics.diagnostics.enabled, false,
+    'diagnostics are opt-in and off by default');
+  assert.strictEqual(apiHooks.onHeadersReceived, undefined,
+    'the header listener stays unregistered without CSP/rewrite/removeheader rules');
+
+  await bgMessageHandler({ type: 'wildfire:diagnostics', value: true }, {});
+  blockOn(1, 'https://www.example.com/');
+  apiHooks.onErrorOccurred({
+    requestId: 'etp-block',
+    error: 'NS_ERROR_TRACKING_URI',
+    urlClassification: { firstParty: ['tracking_ad'], thirdParty: [] }
+  });
+  apiHooks.onCompleted({
+    requestId: 'etp-flag',
+    urlClassification: { firstParty: [], thirdParty: ['fingerprinting_content'] }
+  });
+
+  const observed = await bgMessageHandler({ type: 'wildfire:diagnostics' }, {});
+  assert.strictEqual(observed.diagnostics.state, undefined,
+    'diagnostics do not carry the full state snapshot');
+  assert.strictEqual(observed.diagnostics.phases.request.calls, 1,
+    'request matches are counted only while diagnostics are enabled');
+  assert.ok(observed.diagnostics.phases.request.candidates > 0,
+    'request diagnostics include candidate counts');
+  assert.ok(observed.diagnostics.samples.length > 0,
+    'request diagnostics keep bounded in-memory samples');
+  assert.strictEqual(observed.diagnostics.etp.blocked, 1,
+    'ETP block errors are observed without becoming WildFire blocks');
+  assert.strictEqual(observed.diagnostics.etp.byError.NS_ERROR_TRACKING_URI, 1,
+    'ETP block errors are grouped by internal reason');
+  assert.strictEqual(observed.diagnostics.etp.classified, 2,
+    'ETP classifications are observed from completed and failed requests');
+  assert.strictEqual(observed.diagnostics.etp.byFlag.fingerprinting_content, 1,
+    'ETP classifications are grouped by flag');
+  assert.strictEqual(api.getState().blocked, 1,
+    'ETP observation never changes the WildFire counter');
+
+  api.setState({
+    customFilters: '||ads.test^$script\n||csp.test^$csp=no-script'
+  });
+  await api.loadFilters(true);
+  assert.strictEqual(typeof apiHooks.onHeadersReceived, 'function',
+    'the header listener is registered when CSP rules are loaded');
+  api.setState({ customFilters: '||ads.test^$script' });
+  await api.loadFilters(true);
+  assert.strictEqual(apiHooks.onHeadersReceived, undefined,
+    'the header listener is removed when header capabilities disappear');
 }
 
 async function testPopupPerSiteDisplay() {

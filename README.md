@@ -243,6 +243,10 @@ This is deliberately a *minimal* engine, not a full uBO port:
 - Remote lists are opt-in: no URL is bundled, nothing is fetched until you add a
   URL and explicitly fetch it, and a fetched list must be enabled before its
   rules apply. WildFire stores the exact text and a hash of each applied list.
+- Firefox ETP is left untouched. WildFire observes ETP block errors and
+  classifications only while diagnostics are enabled, and never adds them to
+  WildFire's counters. Header listeners are registered only when loaded rules
+  need CSP, rewrite or request/response-header handling.
 - No hand-written `for`/`while`/`do` loops; iteration uses native helpers
   (`map`, `filter`, `reduce`, `forEach`, `find`, `flatMap`, `Array.from`).
   `npm run check` enforces this across all scripts.
@@ -280,4 +284,6 @@ This is deliberately a *minimal* engine, not a full uBO port:
 
 Background listens for `wildfire:*` messages: `state`, `toggle`, `toggle-site`,
 `set-filters`, `reset-stats`, `reload`, `list-state`, `suggested-lists`, `add-list`, `remove-list`,
-`update-list`, `set-list-enabled`, `set-list-auto`, and `cosmetic`.
+`update-list`, `set-list-enabled`, `set-list-auto`, `cosmetic`, and `diagnostics`.
+`diagnostics` accepts an optional boolean `value` to enable/disable in-memory
+request metrics and ETP observation, and an optional `reset: true` to clear them.

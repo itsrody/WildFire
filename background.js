@@ -12,6 +12,27 @@
     allowUnknownSuffix: true
   };
 
+  // ETP block reasons are internal error strings. They are observed locally for
+  // diagnostics only: never folded into WildFire's blocked counters or state.
+  const ETP_BLOCK_ERRORS = new Set([
+    'NS_ERROR_MALWARE_URI',
+    'NS_ERROR_PHISHING_URI',
+    'NS_ERROR_TRACKING_URI',
+    'NS_ERROR_UNWANTED_URI',
+    'NS_ERROR_BLOCKED_URI',
+    'NS_ERROR_HARMFUL_URI',
+    'NS_ERROR_FINGERPRINTING',
+    'NS_ERROR_CRYPTOMINING_URI',
+    'NS_ERROR_SOCIALTRACKING_URI'
+  ]);
+  const ETP_CLASSIFICATION_FLAGS = new Set([
+    'fingerprinting', 'fingerprinting_content',
+    'cryptomining', 'cryptomining_content',
+    'tracking', 'tracking_ad', 'tracking_analytics', 'tracking_social',
+    'tracking_content', 'emailtracking', 'emailtracking_content',
+    'any_basic_tracking', 'any_strict_tracking', 'any_social_tracking'
+  ]);
+
   function registrableDomain(host) {
     try {
       return browser.publicSuffix.getDomain(host, DOMAIN_OPTIONS) || '';
@@ -67,6 +88,132 @@
       }
     });
   }
+
+  const DIAGNOSTIC_SAMPLE_LIMIT = 64;
+  const DIAGNOSTIC_PHASES = [
+    'request', 'csp', 'removeparam',
+    'removeheader-request', 'removeheader-response'
+  ];
+  function emptyPhaseStats() {
+    return DIAGNOSTIC_PHASES.reduce((stats, phase) => {
+      stats[phase] = {
+        calls: 0, totalMs: 0, maxMs: 0, candidates: 0, regexEvaluations: 0
+      };
+      return stats;
+    }, {});
+  }
+  // In-memory only. Diagnostics are opt-in per session and never persisted or
+  // reported off-device, so data_collection_permissions stays ["none"].
+  const diagnostics = {
+    enabled: false,
+    phases: emptyPhaseStats(),
+    samples: []
+  };
+  const etpObserved = {
+    blocked: 0,
+    byError: {},
+    classified: 0,
+    byFlag: {}
+  };
+
+  function monotonicMs() {
+    return typeof performance !== 'undefined' && performance && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+  }
+
+  function copyCounts(source) {
+    return Object.keys(source || {}).reduce((copy, key) => {
+      copy[key] = source[key];
+      return copy;
+    }, {});
+  }
+
+  function diagnosticsSnapshot() {
+    const phases = Object.keys(diagnostics.phases).reduce((copy, phase) => {
+      const stat = diagnostics.phases[phase];
+      copy[phase] = {
+        calls: stat.calls,
+        totalMs: Number(stat.totalMs.toFixed(3)),
+        avgMs: stat.calls ? Number((stat.totalMs / stat.calls).toFixed(3)) : 0,
+        maxMs: Number(stat.maxMs.toFixed(3)),
+        candidates: stat.candidates,
+        regexEvaluations: stat.regexEvaluations
+      };
+      return copy;
+    }, {});
+    return {
+      enabled: diagnostics.enabled,
+      phases,
+      samples: diagnostics.samples.slice(),
+      etp: {
+        blocked: etpObserved.blocked,
+        byError: copyCounts(etpObserved.byError),
+        classified: etpObserved.classified,
+        byFlag: copyCounts(etpObserved.byFlag)
+      }
+    };
+  }
+
+  function recordDiagnostic(phase, started) {
+    if (!diagnostics.enabled) return;
+    const elapsed = Math.max(0, monotonicMs() - started);
+    const stat = diagnostics.phases[phase];
+    if (!stat) return;
+    const match = engine.getLastMatchStats ? engine.getLastMatchStats() : null;
+    const candidates = match ? match.candidates : 0;
+    const regexEvaluations = match ? match.regexEvaluations : 0;
+    stat.calls += 1;
+    stat.totalMs += elapsed;
+    stat.maxMs = Math.max(stat.maxMs, elapsed);
+    stat.candidates += candidates;
+    stat.regexEvaluations += regexEvaluations;
+    if (diagnostics.samples.length >= DIAGNOSTIC_SAMPLE_LIMIT) diagnostics.samples.shift();
+    diagnostics.samples.push({
+      phase,
+      ms: Number(elapsed.toFixed(3)),
+      candidates,
+      regexEvaluations
+    });
+  }
+
+  function measuredMatch(phase, match) {
+    if (!diagnostics.enabled) return match();
+    const started = monotonicMs();
+    const result = match();
+    recordDiagnostic(phase, started);
+    return result;
+  }
+
+  function observeEtp(details) {
+    if (!diagnostics.enabled || !details) return;
+    const error = String(details.error || '');
+    if (ETP_BLOCK_ERRORS.has(error)) {
+      etpObserved.blocked += 1;
+      etpObserved.byError[error] = (etpObserved.byError[error] || 0) + 1;
+    }
+    const classification = details.urlClassification;
+    if (!classification) return;
+    const flags = []
+      .concat(Array.isArray(classification.firstParty) ? classification.firstParty : [])
+      .concat(Array.isArray(classification.thirdParty) ? classification.thirdParty : []);
+    let sawKnownFlag = false;
+    flags.forEach(value => {
+      const flag = String(value || '');
+      if (!ETP_CLASSIFICATION_FLAGS.has(flag)) return;
+      sawKnownFlag = true;
+      etpObserved.byFlag[flag] = (etpObserved.byFlag[flag] || 0) + 1;
+    });
+    if (sawKnownFlag) etpObserved.classified += 1;
+  }
+
+  function resetEtpObservation() {
+    etpObserved.blocked = 0;
+    etpObserved.byError = {};
+    etpObserved.classified = 0;
+    etpObserved.byFlag = {};
+  }
+
   const blockedPopups = new Set();
   // tabId -> registrable-domain site shown in that tab's badge.
   const tabSites = new Map();
@@ -474,6 +621,8 @@
       lastCustomHash = customHash;
       lastRemoteSignature = remoteSig;
       compilerStatus.capabilities = engine.capabilities || 0;
+      if (engine.setMatchStatsEnabled) engine.setMatchStatsEnabled(diagnostics.enabled);
+      ensureHeadersListener();
       ensureRemoveHeaderListener();
       await refreshAllCosmetic();
       await syncScriptlets();
@@ -678,7 +827,7 @@
     if (type === 'document' && popupSources.has(details.tabId)) {
       const sourceUrl = popupSource(details);
       if (!siteDisabled(safeHost(sourceUrl))) {
-        const popup = engine.matchPopup(details.url, sourceUrl);
+        const popup = measuredMatch('request', () => engine.matchPopup(details.url, sourceUrl));
         if (popup.blocked) {
           countPopupBlock(details.tabId, sourceUrl || documentUrl);
           return { cancel: true };
@@ -687,7 +836,7 @@
       popupSources.delete(details.tabId);
     }
 
-    const result = engine.matchRequest(details.url, type, documentUrl);
+    const result = measuredMatch('request', () => engine.matchRequest(details.url, type, documentUrl));
     if (result.blocked) {
       if (type === 'document') {
         if (countPopupBlock(details.tabId)) return { cancel: true };
@@ -713,7 +862,7 @@
 
     // Capability-gated removeparam: only when request is not blocked/redirected.
     if (engine.capabilities & FilterEngine.CAP.REMOVEPARAM) {
-      const rp = engine.matchRemoveparam(details.url, type, documentUrl);
+      const rp = measuredMatch('removeparam', () => engine.matchRemoveparam(details.url, type, documentUrl));
       if (rp.params && rp.params.length) {
         const cleanUrl = applyRemoveparam(details.url, rp.params);
         if (cleanUrl && cleanUrl !== details.url) {
@@ -773,7 +922,7 @@
     const type = mapResourceType(details.type);
     const documentUrl = type === 'document' ? details.url : documentScope.documentUrl(details);
     if (siteDisabled(safeHost(documentUrl))) return;
-    const result = engine.matchRemoveheader(details.url, type, documentUrl);
+    const result = measuredMatch('removeheader-request', () => engine.matchRemoveheader(details.url, type, documentUrl));
     if (!result.headers.length) return;
     const reqHeaders = details.requestHeaders || [];
     const requestHeaders = removeHeaders(reqHeaders, result.headers, 'request');
@@ -803,13 +952,13 @@
 
     if (state.enabled && !disabled) {
       if (engine.capabilities & FilterEngine.CAP.REMOVEHEADER) {
-        const rh = engine.matchRemoveheader(details.url, type, documentUrl);
+        const rh = measuredMatch('removeheader-response', () => engine.matchRemoveheader(details.url, type, documentUrl));
         if (rh.headers.length) {
           const next = removeHeaders(headers, rh.headers, 'response');
           if (next !== headers) { headers = next; changed = true; }
         }
       }
-      const result = engine.matchCsp(details.url, type, documentUrl);
+      const result = measuredMatch('csp', () => engine.matchCsp(details.url, type, documentUrl));
       if (result.directives.length) {
         headers = CspResources.withDirective(headers, result.directives);
         changed = true;
@@ -931,8 +1080,43 @@
         };
       }
 
+      case 'diagnostics':
+        if (message.reset === true) {
+          diagnostics.phases = emptyPhaseStats();
+          diagnostics.samples = [];
+          resetEtpObservation();
+        }
+        if (typeof message.value === 'boolean') {
+          diagnostics.enabled = message.value;
+          if (engine.setMatchStatsEnabled) engine.setMatchStatsEnabled(diagnostics.enabled);
+        }
+        return { ok: true, diagnostics: diagnosticsSnapshot() };
+
       default:
         return { ok: false, error: 'Unknown action: ' + action };
+    }
+  }
+
+  let headersListenerRegistered = false;
+
+  function ensureHeadersListener() {
+    const cap = engine.getCapabilities ? engine.getCapabilities() : (engine.capabilities || 0);
+    const needed = Boolean(cap & (FilterEngine.CAP.CSP |
+      FilterEngine.CAP.REWRITE | FilterEngine.CAP.REMOVEHEADER)) || rewrites.size > 0;
+    if (needed && !headersListenerRegistered) {
+      browser.webRequest.onHeadersReceived.addListener(
+        onHeadersReceived,
+        { urls: ['<all_urls>'] },
+        ['blocking', 'responseHeaders']
+      );
+      headersListenerRegistered = true;
+      return;
+    }
+    if (!needed && headersListenerRegistered) {
+      if (typeof browser.webRequest.onHeadersReceived.removeListener === 'function') {
+        browser.webRequest.onHeadersReceived.removeListener(onHeadersReceived);
+      }
+      headersListenerRegistered = false;
     }
   }
 
@@ -962,10 +1146,9 @@
         console.warn('WildFire: remote update schedule failed', error);
       }
 
-      // Capability-gated listener registration (Phase 0 foundation).
-      // Core blocking/CSP listeners remain always-on for current supported features;
-      // future removeparam/removeheader listeners should be registered only when
-      // engine capabilities require them.
+      // Blocking stays always-on; header listeners are registered only when
+      // loaded capabilities actually need them. loadFilters() keeps them in
+      // sync as custom/remote rules change.
       compilerStatus.capabilities = engine.getCapabilities ? engine.getCapabilities() : 0;
 
       browser.webRequest.onBeforeRequest.addListener(
@@ -974,24 +1157,21 @@
         ['blocking']
       );
 
-      const needsHeaders = true || (cap & (FilterEngine.CAP.CSP | FilterEngine.CAP.REWRITE | FilterEngine.CAP.REMOVEHEADER));
-      if (needsHeaders) {
-        browser.webRequest.onHeadersReceived.addListener(
-          onHeadersReceived,
-          { urls: ['<all_urls>'] },
-          ['blocking', 'responseHeaders']
-        );
-      }
-
+      ensureHeadersListener();
       ensureRemoveHeaderListener();
 
-      [browser.webRequest.onCompleted,
-        browser.webRequest.onErrorOccurred,
-        browser.webRequest.onBeforeRedirect]
-        .forEach(event => event.addListener(
-          details => rewrites.delete(details.requestId),
-          { urls: ['<all_urls>'] }
-        ));
+      browser.webRequest.onCompleted.addListener(details => {
+        rewrites.delete(details.requestId);
+        observeEtp(details);
+      }, { urls: ['<all_urls>'] });
+      browser.webRequest.onErrorOccurred.addListener(details => {
+        rewrites.delete(details.requestId);
+        observeEtp(details);
+      }, { urls: ['<all_urls>'] });
+      browser.webRequest.onBeforeRedirect.addListener(
+        details => rewrites.delete(details.requestId),
+        { urls: ['<all_urls>'] }
+      );
 
       browser.runtime.onMessage.addListener(onMessage);
 
