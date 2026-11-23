@@ -3377,13 +3377,26 @@ async function testWapiBackbone() {
       clear: async () => {},
       onAlarm: hub()
     },
-    contentScripts: { register: async () => ({ unregister: async () => {} }) }
+    contentScripts: { register: async () => ({ unregister: async () => {} }) },
+    storage: {
+      local: {
+        get: async keys => ({ [keys]: { blocked: 5 } }),
+        set: async () => {}
+      }
+    }
   };
 
   assert.strictEqual(wapi, WildFireWapi, 'wapi is the canonical backbone global');
   const instance = WildFireWapi.create({ browserApi });
   assert.strictEqual(instance.browser, browserApi, 'wapi exposes the native Firefox API');
   assert.strictEqual(instance.prefix, 'wildfire:', 'wapi uses the WildFire message prefix');
+  assert.strictEqual(instance.storage.supported, true, 'wapi exposes local storage');
+  const wrapped = await instance.storage.local.get('wildfire.state.v1');
+  assert.strictEqual(wrapped['wildfire.state.v1'].blocked, 5);
+  await instance.storage.local.set({ ok: true });
+  const noStorage = WildFireWapi.create({ browserApi: {} });
+  assert.strictEqual(noStorage.storage.supported, false);
+  await assert.rejects(() => noStorage.storage.local.get('key'), /storage\.local\.get/);
   const noop = () => {};
   assert.strictEqual(instance.events.add('test.event', hub(), noop), true);
   assert.strictEqual(instance.events.add('test.event', hub(), noop), false,
@@ -3423,8 +3436,47 @@ async function testWapiBackbone() {
   await instance.ready;
 }
 
+async function testWapiStorage() {
+  const data = {};
+  const storageCalls = [];
+  const storageCtx = vm.createContext({
+    console,
+    browser: {
+      storage: {
+        local: {
+          get: async key => {
+            storageCalls.push(['get', key]);
+            return { [key]: data[key] };
+          },
+          set: async patch => {
+            storageCalls.push(['set', patch]);
+            Object.assign(data, patch);
+          }
+        }
+      }
+    }
+  });
+  storageCtx.window = storageCtx;
+  loadFiles(storageCtx, ['lib/state/store.js', 'lib/wapi/wapi.js']);
+  const { WildFireStore, WildFireWapi: StoreWapi } = storageCtx;
+
+  const initial = await WildFireStore.get();
+  assert.strictEqual(initial.enabled, true, 'store loads defaults through wapi.storage');
+  const saved = await WildFireStore.save({ blocked: 9, blockedBySite: { 'a.test': 3 } });
+  assert.strictEqual(saved.blocked, 9);
+  assert.strictEqual(saved.blockedBySite['a.test'], 3);
+  assert.strictEqual(data['wildfire.state.v1'].blocked, 9, 'store persists snapshots');
+  assert.strictEqual(storageCalls[0][0], 'get');
+  assert.strictEqual(storageCalls[1][0], 'set');
+  const instance = StoreWapi.create({ browserApi: storageCtx.browser });
+  const wrapped = await instance.storage.local.get('wildfire.state.v1');
+  assert.strictEqual(wrapped['wildfire.state.v1'].blocked, 9,
+    'the same native storage is reachable through wapi');
+}
+
 async function testWapiClient() {
   const sent = [];
+  const queried = [];
   let opened = 0;
   const hub = () => {
     const listeners = [];
@@ -3453,6 +3505,12 @@ async function testWapiClient() {
   const ctx = vm.createContext({
     console,
     browser: {
+      tabs: {
+        query: async info => {
+          queried.push(info);
+          return [{ id: 7, url: 'https://page.test/' }];
+        }
+      },
       runtime: {
         onMessage: messages,
         connect: options => {
@@ -3482,6 +3540,13 @@ async function testWapiClient() {
   assert.strictEqual(sent[1].type, 'wildfire:reload', 'full types are not double-prefixed');
   await client.openOptions();
   assert.strictEqual(opened, 1, 'client wraps the native options opener');
+  const activeTabs = await client.tabs.query({ active: true, currentWindow: true });
+  assert.strictEqual(activeTabs[0].id, 7, 'client wraps the native tab query');
+  assert.strictEqual(queried[0].active, true, 'tab query options are forwarded');
+  await assert.rejects(
+    () => WildFireWapiClient.create({ browserApi: {} }).tabs.query({}),
+    /tabs\.query/,
+    'missing tabs.query fails loudly');
 
   const pushed = [];
   const handle = client.connect('state', payload => pushed.push(payload));
@@ -4243,6 +4308,7 @@ Promise.resolve()
   .then(() => testRemoveRuntimeIntegration())
   .then(() => testPerSiteBadgeCounters())
   .then(() => testWapiBackbone())
+  .then(() => testWapiStorage())
   .then(() => testWapiClient())
   .then(() => testWapiBackground())
   .then(() => testWapiRouter())

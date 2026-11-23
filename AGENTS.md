@@ -49,7 +49,7 @@ manifest.json          MV2 manifest; gecko floor 153.0; all permissions
 background.js          thin bootstrap for the background controller
 lib/
   wapi/                Firefox-native API backbone (wapi), no browser shims
-    wapi.js            named listener registry, prefix router, tabs/alarms/content scripts
+    wapi.js            named listener registry, prefix router, tabs/alarms/storage/content scripts
     wapi-contexts.js   per-frame content script context registry and frame targeting
     wapi-background.js background-side port channels for push updates
     wapi-router.js     named action registry for wildfire:* messages
@@ -99,7 +99,7 @@ lib/
     redirect-resources.js  WildFire-owned data-URI redirect resources
     rewrite-resources.js   WildFire-owned bodies for $rewrite responses
   state/
-    store.js           browser.storage.local wrapper, key wildfire.state.v1
+    store.js           wapi.storage.local wrapper, key wildfire.state.v1
     remote-lists.js    opt-in remote list store, key wildfire.remote.v1
     suggested-lists.js inert catalog of suggested list URLs (Options shortcuts)
     page-store.js      per-tab/frame document, site, popup and page cache state
@@ -155,7 +155,7 @@ used **only** by `tools/`.
 
 `wapi.js` is WildFire's Firefox-native API backbone: named idempotent listener
 registration, one prefix-filtered message listener, and thin promise wrappers for
-tabs, alarms, content-script registration and response-stream access.
+tabs, alarms, storage, content-script registration and response-stream access.
 `wapi-contexts.js` builds on it to track per-frame content script contexts and
 route frame-targeted messages. `wapi-background.js` adds native `runtime.onConnect`
 port channels so the background can push debounced state updates to the popup.
@@ -173,9 +173,9 @@ chain. The background chain owns these modules; do not add a Chromium shim or
 callback bridge there.
 
 `wapi-client.js` is the matching client-side backbone: popup, options and content
-scripts use one prefix-filtered message API, one runtime listener, and native
-port handles instead of scattering `browser.runtime` calls. It does not replace
-the background router.
+scripts use one prefix-filtered message API, one runtime listener, native port
+handles and a wrapped `tabs.query()` instead of scattering raw Firefox API calls.
+It does not replace the background router.
 
 Content scripts load in this order: `lib/wapi/wapi-client.js` → `lib/engine/procedural/` chain (`text.js`,
 `nodes.js`, `native.js`, `select.js`) → `content/cosmetic.js`, so the DOM
@@ -600,8 +600,9 @@ web-ext lint --source-dir . --output text
 The bar is: tests pass, build succeeds, `web-ext lint` reports **0 errors and
 0 warnings**. `tools/check.js` asserts MV2, the 153.0 floor, the gecko id,
 data-collection disclosure, the `publicSuffix` and `webNavigation` permissions,
-every manifest-referenced file, `node --check` on all scripts, and the loop-free
-rule across every `.js` file (including tools).
+every manifest-referenced file, `node --check` on all scripts, the loop-free
+rule across every `.js` file (including tools), and the wapi boundary rule that
+keeps raw `browser.*`/`chrome.*` calls inside `lib/wapi/`.
 If any of those change, update the check in the same commit.
 
 For manual testing: `npm run dev` (or load `manifest.json` through

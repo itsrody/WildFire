@@ -262,7 +262,7 @@ This is deliberately a *minimal* engine, not a full uBO port:
   cosmetic/scriptlet caches; nothing about visited pages is persisted.
 - `wapi` is the Firefox-native API backbone: named idempotent listener
   registration, a single prefix-filtered message listener, and promise wrappers
-  for tabs, alarms, content scripts and response streams. `wapi-contexts` tracks
+  for tabs, alarms, storage, content scripts and response streams. `wapi-contexts` tracks
   per-frame content script contexts so cosmetic updates can be targeted precisely.
   `wapi-background` adds native port channels so debounced counter and state
   updates can be pushed to the popup without polling. `wapi-router` registers
@@ -272,7 +272,7 @@ This is deliberately a *minimal* engine, not a full uBO port:
   badge calls, and `wapi-capabilities` reports native API readiness. `wapi-client`
   gives popup,
   options and content scripts one prefix-filtered message API with native port
-  handles instead of scattered `browser.runtime` calls.
+  handles and a wrapped `tabs.query()` instead of scattered Firefox API calls.
   There is no Chrome shim or callback bridge.
 - The background controller owns startup, listener registration and engine
   lifecycle through `wapi`. The blocking listener stays synchronous; listener

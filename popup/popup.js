@@ -24,7 +24,7 @@
   }
 
   async function refresh() {
-    const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+    const tabs = await client.tabs.query({ active: true, currentWindow: true });
     const url = tabs.length && tabs[0].url ? tabs[0].url : '';
     const result = await client.send('state', { url });
     site = result.site || site;

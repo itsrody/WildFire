@@ -181,6 +181,18 @@ scripts.forEach(script => {
   }
 });
 
+const wapiLayer = new Set(WAPI_FILES.concat([CLIENT_FILE]));
+const rawBrowser = /\bbrowser\.[A-Za-z_$]|\bchrome\.[A-Za-z_$]/;
+scripts.forEach(script => {
+  const relative = path.relative(ROOT, script).split(path.sep).join('/');
+  if (wapiLayer.has(relative) || relative.startsWith('tools/') ||
+      relative.startsWith('browser/')) return;
+  const source = fs.readFileSync(script, 'utf8');
+  if (rawBrowser.test(source)) {
+    errors.push(relative + ' must use wapi backbone modules instead of raw browser APIs');
+  }
+});
+
 if (errors.length) {
   console.error('WildFire check failed:');
   errors.forEach(error => console.error(' - ' + error));
