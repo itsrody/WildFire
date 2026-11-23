@@ -16,7 +16,7 @@ background.js          webRequest blocking, cosmetic injection, message API
 lib/engine/            filter engine module chain (filter/), procedural DOM evaluator
 lib/compile/           filter compiler, worker, compiled-filter cache
 lib/resources/         curated scriptlet / CSP / redirect / rewrite registries
-lib/state/             storage wrapper, remote lists, request scope
+lib/state/             storage wrapper, remote lists, per-tab/frame page state
 content/cosmetic.js    injects hidden-element CSS, re-applies on demand
 filters/default.txt    bundled starter rules
 popup/                 toolbar popup
@@ -255,6 +255,9 @@ This is deliberately a *minimal* engine, not a full uBO port:
 - `$rewrite-rule` and `elemhide` are not supported.
 - Rules are indexed by their `||host^` key and 4-character tokens; patterns with
   no usable token (including regex filters) are scanned per request.
+- Page/tab/frame state lives in a synchronous in-memory store. It tracks document
+  lifetimes, frame URLs, top-level site attribution, popup state, and per-page
+  cosmetic/scriptlet caches; nothing about visited pages is persisted.
 - Remote lists are opt-in: no URL is bundled, nothing is fetched until you add a
   URL and explicitly fetch it, and a fetched list must be enabled before its
   rules apply. WildFire stores the exact text and a hash of each applied list.

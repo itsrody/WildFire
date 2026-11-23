@@ -49,7 +49,7 @@
       "lib/engine/filter/engine-compiled.js",
       "lib/engine/filter/engine-match.js",
       "lib/engine/filter/engine-cosmetic.js",
-      "lib/state/document-scope.js",
+      "lib/state/page-store.js",
       "lib/resources/redirect-resources.js",
       "lib/state/remote-lists.js",
       "lib/state/suggested-lists.js",

@@ -51,7 +51,10 @@
     typeof WildFireScriptlets !== 'undefined' ? WildFireScriptlets : null,
     alias => typeof RewriteResources !== 'undefined' ? RewriteResources.hasAlias(alias) : false
   );
-  const documentScope = new DocumentScope();
+  const pageStore = new WildFirePageStore({
+    siteForHost: siteKey,
+    isDisabledHost: siteDisabled
+  });
   const remoteLists = RemoteLists.create({
     storage: browser.storage.local,
     fetchImpl: (url, options) => fetch(url, options),
@@ -225,13 +228,6 @@
     cspReportsObserved.requestsCancelled = 0;
   }
 
-  const blockedPopups = new Set();
-  // tabId -> registrable-domain site shown in that tab's badge.
-  const tabSites = new Map();
-  // tabId -> source document URL for popups created by another browsing context.
-  // onCreatedNavigationTarget gives us the source; onBeforeRequest gives us a
-  // synchronous blocking point for the popup's main-frame request.
-  const popupSources = new Map();
   // requestId -> MIME type, so onHeadersReceived can normalize the headers of
   // responses whose body WildFire is replacing.
   const rewrites = new Map();
@@ -287,16 +283,10 @@
     return Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
   }
 
-  function rememberTabSite(tabId, host) {
-    const site = siteKey(host);
-    if (tabId !== undefined && tabId !== null && site) tabSites.set(tabId, site);
-    return site;
-  }
-
   // Count against the tab's top-level site, not an embedded frame's document.
   function countHostFor(details, host) {
-    return tabSites.get(details.tabId) ||
-      safeHost(documentScope.urlForFrame(details.tabId, 0)) || host;
+    return safeHost(pageStore.topUrlForTab(details.tabId)) ||
+      pageStore.topHostForTab(details.tabId) || host;
   }
 
   function formatCount(value) {
@@ -311,7 +301,7 @@
   }
 
   function setBadgeForTab(tabId, site) {
-    const key = site || tabSites.get(tabId) || '';
+    const key = site || pageStore.siteForTab(tabId) || '';
     setBadgeText({
       text: state.enabled && key ? formatCount(countForSite(key)) : '',
       tabId
@@ -326,7 +316,7 @@
       return;
     }
     const url = tab.pendingUrl || tab.url || '';
-    const site = rememberTabSite(tab.id, safeHost(url)) || tabSites.get(tab.id) || '';
+    const site = pageStore.observeTab(tab.id, url);
     setBadgeForTab(tab.id, site);
   }
 
@@ -338,7 +328,7 @@
       setBadgeForTab(tabId);
       return;
     }
-    tabSites.forEach((site, knownTabId) => setBadgeForTab(knownTabId, site));
+    pageStore.siteEntries().forEach(([knownTabId, site]) => setBadgeForTab(knownTabId, site));
     refreshActiveBadge().catch(error =>
       console.warn('WildFire: active badge refresh failed', error));
   }
@@ -358,7 +348,8 @@
   }
 
   function recordBlock(tabId, host) {
-    const site = rememberTabSite(tabId, host);
+    const site = pageStore.observeTopHost(tabId, host);
+    pageStore.recordBlocked(tabId);
     const current = Number(state.blocked);
     state.blocked = (Number.isFinite(current) && current > 0 ? Math.floor(current) : 0) + 1;
     if (site) {
@@ -766,25 +757,38 @@
     return run;
   }
 
-  async function sendCosmetic(tabId, url) {
+  async function sendCosmetic(tabId, url, frameId) {
     const host = safeHost(url);
     if (!host) return;
     const hidePolicy = engine.getHidePolicy ? engine.getHidePolicy(url, 'document', url) : {};
+    const payload = {
+      type: 'wildfire:apply',
+      selectors: engine.getCosmetic(host, hidePolicy),
+      procedural: engine.getProcedural(host, hidePolicy),
+      hidePolicy
+    };
+    if (frameId !== undefined) pageStore.setCosmetic(tabId, { url, frameId, payload });
     try {
-      await browser.tabs.sendMessage(tabId, {
-        type: 'wildfire:apply',
-        selectors: engine.getCosmetic(host, hidePolicy),
-        procedural: engine.getProcedural(host, hidePolicy),
-        hidePolicy
-      });
+      const options = typeof frameId === 'number' ? { frameId } : undefined;
+      await browser.tabs.sendMessage(tabId, payload, options);
     } catch (error) {
       /* No content script in that tab/frame - safe to ignore. */
     }
   }
 
+  async function refreshCosmeticForPage(tabId) {
+    const frames = pageStore.framesForTab(tabId);
+    if (!frames.length) {
+      const url = pageStore.topUrlForTab(tabId);
+      if (url) await sendCosmetic(tabId, url, 0);
+      return;
+    }
+    await Promise.all(frames.map(frame => sendCosmetic(tabId, frame.url, frame.frameId)));
+  }
+
   async function refreshAllCosmetic() {
     const tabs = await browser.tabs.query({});
-    await Promise.all(tabs.map(tab => tab.url ? sendCosmetic(tab.id, tab.url) : Promise.resolve()));
+    await Promise.all(tabs.map(tab => refreshCosmeticForPage(tab.id)));
   }
 
   // Firefox streams the response through StreamFilter. Everything is set up
@@ -829,47 +833,46 @@
   }
 
   function popupSource(details) {
-    return popupSources.get(details.tabId) ||
-      details.openerTabId && documentScope.urlForFrame(details.openerTabId, 0) ||
-      documentScope.documentUrl(details) ||
+    return pageStore.popupSourceFor(details.tabId) ||
+      (details.openerTabId && pageStore.topUrlForTab(details.openerTabId)) ||
+      pageStore.documentUrlFor(details) ||
       '';
   }
 
   function countPopupBlock(tabId, host) {
-    if (blockedPopups.has(tabId)) return false;
-    blockedPopups.add(tabId);
-    popupSources.delete(tabId);
+    if (!pageStore.consumePopupBlock(tabId)) return false;
     recordBlock(tabId, host);
     return true;
   }
 
   function onBeforeRequest(details) {
     if (details.type === 'csp_report') return undefined;
-    documentScope.rememberFromRequest(details);
-    if (!state.enabled || blockedPopups.has(details.tabId)) return undefined;
+    pageStore.observeRequest(details);
+    if (!state.enabled || pageStore.isPopupBlocked(details.tabId)) return undefined;
 
-    const documentUrl = documentScope.documentUrl(details);
-
-    const host = safeHost(documentUrl);
-    if (siteDisabled(host)) return undefined;
+    const context = pageStore.contextFor(details);
+    const documentUrl = context.documentUrl;
+    const host = context.host;
+    if (context.disabled) return undefined;
 
     const type = mapResourceType(details.type);
-    if (type === 'document' && popupSources.has(details.tabId)) {
+    if (type === 'document' && pageStore.hasPopup(details.tabId)) {
       const sourceUrl = popupSource(details);
       if (!siteDisabled(safeHost(sourceUrl))) {
         const popup = measuredMatch('request', () => engine.matchPopup(details.url, sourceUrl));
         if (popup.blocked) {
-          countPopupBlock(details.tabId, sourceUrl || documentUrl);
-          return { cancel: true };
+          pageStore.markPopupBlocked(details.tabId);
+          if (countPopupBlock(details.tabId, sourceUrl || documentUrl)) return { cancel: true };
         }
       }
-      popupSources.delete(details.tabId);
+      pageStore.clearPopup(details.tabId);
     }
 
     const result = measuredMatch('request', () => engine.matchRequest(details.url, type, documentUrl));
     if (result.blocked) {
       if (type === 'document') {
-        if (countPopupBlock(details.tabId)) return { cancel: true };
+        pageStore.markPopupBlocked(details.tabId);
+        if (countPopupBlock(details.tabId, documentUrl || details.url)) return { cancel: true };
         return undefined;
       }
 
@@ -949,8 +952,9 @@
   function onBeforeSendHeaders(details) {
     if (!state.enabled) return;
     if (!(engine.capabilities & FilterEngine.CAP.REMOVEHEADER)) return;
+    pageStore.observeRequest(details);
     const type = mapResourceType(details.type);
-    const documentUrl = type === 'document' ? details.url : documentScope.documentUrl(details);
+    const documentUrl = type === 'document' ? details.url : pageStore.documentUrlFor(details);
     if (siteDisabled(safeHost(documentUrl))) return;
     const result = measuredMatch('removeheader-request', () => engine.matchRemoveheader(details.url, type, documentUrl));
     if (!result.headers.length) return;
@@ -1027,10 +1031,11 @@
 
   function onCspReportRequest(details) {
     if (!state.enabled || !state.blockCspReports) return undefined;
+    pageStore.observeRequest(details);
     const endpointHost = safeHost(details.url);
     if (!endpointHost || hostMatchesList(endpointHost, state.cspReportAllow)) return undefined;
-    const documentUrl = documentScope.documentUrl(details);
-    if (siteDisabled(safeHost(documentUrl))) return undefined;
+    const context = pageStore.contextFor(details);
+    if (context.disabled) return undefined;
     if (diagnostics.enabled) cspReportsObserved.requestsCancelled += 1;
     return { cancel: true };
   }
@@ -1042,10 +1047,11 @@
     const rewriteType = rewrites.get(details.requestId);
     if (!state.enabled && !rewriteType) return undefined;
 
+    pageStore.observeRequest(details);
     const type = mapResourceType(details.type);
     // For a main document the response itself is the scope; for subresources
     // the embedding page is.
-    const documentUrl = type === 'document' ? details.url : documentScope.documentUrl(details);
+    const documentUrl = type === 'document' ? details.url : pageStore.documentUrlFor(details);
     const disabled = siteDisabled(safeHost(documentUrl));
     if (disabled && !rewriteType) return undefined;
 
@@ -1079,15 +1085,16 @@
 
   function onPopupNavigation(details) {
     if (!state.enabled) return;
-    const sourceUrl = documentScope.urlForFrame(details.sourceTabId, details.sourceFrameId) ||
-      documentScope.urlForFrame(details.sourceTabId, 0) ||
+    const sourceUrl = pageStore.urlForFrame(details.sourceTabId, details.sourceFrameId) ||
+      pageStore.urlForFrame(details.sourceTabId, 0) ||
       '';
-    if (sourceUrl) popupSources.set(details.tabId, sourceUrl);
+    if (sourceUrl) pageStore.markPopup(details.tabId, sourceUrl);
     if (!sourceUrl || siteDisabled(safeHost(sourceUrl))) return;
 
     const result = engine.matchPopup(details.url, sourceUrl);
     if (!result.blocked) return;
 
+    pageStore.markPopupBlocked(details.tabId);
     if (!countPopupBlock(details.tabId, sourceUrl)) return;
     browser.tabs.remove(details.tabId).catch(error =>
       console.warn('WildFire: popup close failed', error));
@@ -1145,6 +1152,7 @@
         return persist({ cspReportAllow: parseHostList(message.value) });
 
       case 'reset-stats':
+        pageStore.resetBlocked();
         return persist({ blocked: 0, blockedBySite: {} });
 
       case 'reload':
@@ -1188,7 +1196,10 @@
         return applyRemoteResult(await remoteLists.setAutoUpdate(message.url, Boolean(message.value)));
 
       case 'cosmetic': {
-        const url = message.url || (sender.tab && sender.tab.url) || '';
+        const tabId = sender.tab && sender.tab.id;
+        const frame = pageStore.frameFor(tabId, sender.frameId);
+        const url = message.url || (frame && frame.url) ||
+          (sender.tab && sender.tab.url) || '';
         const host = safeHost(url);
         const hidePolicy = engine.getHidePolicy ? engine.getHidePolicy(url, 'document', url) : {};
         return {
@@ -1309,19 +1320,26 @@
       }
 
       browser.webNavigation.onCreatedNavigationTarget.addListener(onPopupNavigation);
-      browser.webNavigation.onCommitted.addListener(details => documentScope.remember(details));
+      const rememberNavigation = details => {
+        pageStore.observeNavigation(details);
+        if (details.frameId === 0) updateBadge(details.tabId);
+      };
+      browser.webNavigation.onCommitted.addListener(rememberNavigation);
       [browser.webNavigation.onReferenceFragmentUpdated,
         browser.webNavigation.onHistoryStateUpdated]
-        .forEach(event => event.addListener(details => documentScope.remember(details)));
+        .forEach(event => event.addListener(rememberNavigation));
 
       browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-        if (changeInfo.url) documentScope.remember({ tabId, frameId: 0, url: changeInfo.url });
         const url = changeInfo.url || (changeInfo.status === 'complete' && tab && tab.url) || '';
         if (url) {
-          rememberTabSite(tabId, safeHost(url));
+          pageStore.observeTab(tabId, url);
           updateBadge(tabId);
         }
-        if (changeInfo.status === 'complete' && tab.url) sendCosmetic(tabId, tab.url);
+        if (changeInfo.status === 'complete' && tab.url) {
+          pageStore.observeTab(tabId, tab.url);
+          refreshCosmeticForPage(tabId).catch(error =>
+            console.warn('WildFire: cosmetic refresh failed', error));
+        }
       });
       if (browser.tabs.onActivated && browser.tabs.onActivated.addListener) {
         browser.tabs.onActivated.addListener(activeInfo => {
@@ -1329,7 +1347,7 @@
           if (tabId === undefined || tabId === null) return;
           const applyTab = tab => {
             const url = tab && (tab.pendingUrl || tab.url) || '';
-            rememberTabSite(tabId, safeHost(url));
+            pageStore.observeTab(tabId, url);
             updateBadge(tabId);
           };
           if (typeof browser.tabs.get === 'function') {
@@ -1339,12 +1357,7 @@
           }
         });
       }
-      browser.tabs.onRemoved.addListener(tabId => {
-        documentScope.forgetTab(tabId);
-        blockedPopups.delete(tabId);
-        popupSources.delete(tabId);
-        tabSites.delete(tabId);
-      });
+      browser.tabs.onRemoved.addListener(tabId => pageStore.forgetTab(tabId));
 
       updateBadge();
       ready = true;

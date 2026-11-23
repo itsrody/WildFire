@@ -86,7 +86,7 @@ lib/
     store.js           browser.storage.local wrapper, key wildfire.state.v1
     remote-lists.js    opt-in remote list store, key wildfire.remote.v1
     suggested-lists.js inert catalog of suggested list URLs (Options shortcuts)
-    document-scope.js  documentId -> document URL cache for request scope
+    page-store.js      per-tab/frame document, site, popup and page cache state
 content/cosmetic.js    injects hidden-element CSS in every frame
 filters/default.txt    bundled starter rules (~85 network rules)
 popup/                 toolbar popup (status, counter, pause controls)
@@ -114,7 +114,7 @@ used **only** by `tools/`.
    `parse-network.js`, `parse-procedural.js`, `parse-scriptlet.js`,
    `parse-cosmetic.js`, `engine.js`, `engine-compiled.js`, `engine-match.js`,
    `engine-cosmetic.js` → `window.FilterEngine`, `window.mapResourceType`
-3. `lib/state/document-scope.js` → `window.DocumentScope`
+3. `lib/state/page-store.js` → `window.WildFirePageStore`
 4. `lib/resources/redirect-resources.js` → `window.RedirectResources`
 5. `lib/state/remote-lists.js` → `window.RemoteLists`
 6. `lib/state/suggested-lists.js` → `window.WildFireSuggestedLists`
@@ -145,9 +145,11 @@ graph without a deliberate redesign.
 
 - Skip when `state.enabled` is false, or when the tab's popup was already
   cancelled/closed by `$popup`.
-- Resolve the document URL through `DocumentScope`: `details.documentUrl`,
-  then `details.originUrl`, then the URL cached by `documentId` from
-  `webNavigation`/`webRequest`, then the tab URL, then the last frame ancestor.
+- Resolve the document URL through `WildFirePageStore`: `details.documentUrl`,
+  then `details.originUrl`, then the frame URL cached by `documentId` from
+  `webNavigation`/`webRequest`, then the top-level page URL, then the last frame
+  ancestor. The store is synchronous, in-memory, and owns per-tab frame trees,
+  popup state, site attribution, and transient page caches.
 - Skip if the document host is in `state.disabledSites` (exact or subdomain).
 - Map `details.type` through `mapResourceType`, then call
   `engine.matchRequest(url, type, documentUrl)`.

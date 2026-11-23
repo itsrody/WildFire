@@ -48,8 +48,8 @@ const context = vm.createContext({
 });
 context.window = context;
 loadEngine(context);
-vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/state/document-scope.js'), 'utf8'), context, {
-  filename: 'document-scope.js'
+vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/state/page-store.js'), 'utf8'), context, {
+  filename: 'page-store.js'
 });
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/resources/redirect-resources.js'), 'utf8'), context, {
   filename: 'redirect-resources.js'
@@ -74,7 +74,7 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/compile/compile-cache.js'),
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/compile/compiler.js'), 'utf8'), context, {
   filename: 'compiler.js'
 });
-const { FilterEngine, mapResourceType, DocumentScope, RedirectResources, WildFireProcedural, RemoteLists, WildFireSuggestedLists, CspResources, WildFireScriptlets, RewriteResources, WildFireCompileCache, WildFireCompiler } = context;
+const { FilterEngine, mapResourceType, WildFirePageStore, RedirectResources, WildFireProcedural, RemoteLists, WildFireSuggestedLists, CspResources, WildFireScriptlets, RewriteResources, WildFireCompileCache, WildFireCompiler } = context;
 
 const engine = new FilterEngine();
 engine.load([
@@ -167,48 +167,93 @@ assert.strictEqual(fallbackBlocked('https://third.example/x.js', 'https://other.
 assert.strictEqual(fallbackBlocked('https://third.example/x.js', 'https://third.example/'), false,
   'fallback still treats the same host as first-party');
 
-// Firefox 153 documentId: request scope survives fast navigations and frames.
-const scope = new DocumentScope();
-scope.remember({ tabId: 7, frameId: 0, documentId: 'doc-old', url: 'https://old.example/' });
-assert.strictEqual(scope.documentUrl({ tabId: 7, frameId: 0, documentId: 'doc-old' }),
+// Firefox-native page state: document lifetime, frame scope, and per-tab data.
+const scope = new WildFirePageStore({
+  siteForHost: host => host.split('.').slice(-2).join('.'),
+  isDisabledHost: host => host === 'blocked.example'
+});
+scope.observeNavigation({ tabId: 7, frameId: 0, documentId: 'doc-old', url: 'https://old.example/' });
+assert.strictEqual(scope.documentUrlFor({ tabId: 7, frameId: 0, documentId: 'doc-old' }),
   'https://old.example/', 'committed document URL is cached by documentId');
 
-scope.remember({ tabId: 7, frameId: 0, documentId: 'doc-new', url: 'https://new.example/' });
-assert.strictEqual(scope.documentUrl({ tabId: 7, frameId: 0, documentId: 'doc-new' }),
+scope.observeNavigation({ tabId: 7, frameId: 0, documentId: 'doc-new', url: 'https://new.example/' });
+assert.strictEqual(scope.documentUrlFor({ tabId: 7, frameId: 0, documentId: 'doc-new' }),
   'https://new.example/', 'new document replaces the cached URL');
-assert.notStrictEqual(scope.documentUrl({ tabId: 7, frameId: 0, documentId: 'doc-old' }),
+assert.notStrictEqual(scope.documentUrlFor({ tabId: 7, frameId: 0, documentId: 'doc-old' }),
   'https://old.example/', 'stale documentId no longer resolves to the old URL');
 
-scope.rememberFromRequest({ tabId: 7, frameId: 0, documentId: 'doc-old', documentUrl: 'https://old.example/' });
-assert.notStrictEqual(scope.documentUrl({ tabId: 7, frameId: 0, documentId: 'doc-old' }),
+scope.observeRequest({ tabId: 7, frameId: 0, documentId: 'doc-old', documentUrl: 'https://old.example/' });
+assert.notStrictEqual(scope.documentUrlFor({ tabId: 7, frameId: 0, documentId: 'doc-old' }),
   'https://old.example/', 'late request cannot resurrect a replaced document URL');
 
-scope.remember({ tabId: 7, frameId: 2, documentId: 'doc-frame', url: 'https://frame.example/' });
-assert.strictEqual(
-  scope.documentUrl({ tabId: 7, frameId: 2, documentId: 'doc-frame', parentDocumentId: 'doc-new' }),
-  'https://frame.example/', 'iframe keeps its own document scope');
-assert.strictEqual(scope.documentUrl({
+scope.observeNavigation({
+  tabId: 7, frameId: 2, parentFrameId: 0,
+  documentId: 'doc-frame', url: 'https://frame.example/'
+});
+assert.strictEqual(scope.documentUrlFor({
+  tabId: 7, frameId: 2, documentId: 'doc-frame', parentDocumentId: 'doc-new'
+}), 'https://frame.example/', 'iframe keeps its own document scope');
+const frameContext = scope.contextFor({
   tabId: 7,
   frameId: 2,
   documentId: 'doc-unknown',
   originUrl: 'https://origin.example/',
   documentUrl: '',
   frameAncestors: [{ url: 'https://ancestor.example/' }]
-}), 'https://origin.example/', 'originUrl outranks tab URL and frame ancestors');
-assert.strictEqual(scope.documentUrl({ documentId: 'doc-new', documentUrl: 'https://direct.example/' }),
+});
+assert.strictEqual(frameContext.documentUrl, 'https://origin.example/',
+  'originUrl outranks frame URL, tab URL and ancestors');
+assert.strictEqual(frameContext.topUrl, 'https://new.example/', 'top-level URL stays separate from frame scope');
+assert.strictEqual(frameContext.site, 'origin.example', 'site comes from document scope');
+assert.strictEqual(scope.documentUrlFor({ documentId: 'doc-new', documentUrl: 'https://direct.example/' }),
   'https://direct.example/', 'request documentUrl outranks the cache');
 assert.strictEqual(scope.urlForFrame(7, 2), 'https://frame.example/',
   'frame URL is available for popup source lookup');
 assert.strictEqual(scope.urlForFrame(9, 0), '', 'unknown frame has no URL');
 
-scope.rememberFromRequest({ tabId: 8, frameId: 0, documentId: 'doc-req', documentUrl: 'https://req.example/' });
-assert.strictEqual(scope.documentUrl({ tabId: 8, frameId: 0, documentId: 'doc-req' }),
+scope.observeRequest({ tabId: 8, frameId: 0, documentId: 'doc-req', documentUrl: 'https://req.example/' });
+assert.strictEqual(scope.documentUrlFor({ tabId: 8, frameId: 0, documentId: 'doc-req' }),
   'https://req.example/', 'request details seed the document cache');
+scope.observeRequest({
+  tabId: 11, frameId: 0, type: 'main_frame', url: 'https://nav.example/', documentId: 'doc-nav'
+});
+assert.strictEqual(scope.topUrlForTab(11), 'https://nav.example/',
+  'a main-frame request updates the top-level URL before commit');
+assert.strictEqual(scope.siteForTab(11), 'nav.example',
+  'site attribution follows the main-frame request URL');
+
+scope.observeNavigation({ tabId: 9, frameId: 0, documentId: 'doc-disabled', url: 'https://blocked.example/' });
+assert.strictEqual(scope.contextFor({ tabId: 9, frameId: 0 }).disabled, true,
+  'paused hosts are resolved from page context');
+
+scope.observeNavigation({ tabId: 10, frameId: 0, documentId: 'doc-frag', url: 'https://frag.example/a' });
+scope.recordBlocked(10);
+scope.observeNavigation({ tabId: 10, frameId: 0, documentId: 'doc-frag', url: 'https://frag.example/a#b' });
+assert.strictEqual(scope.blockedForTab(10), 1,
+  'fragment/history navigation keeps the same page state');
+scope.resetBlocked();
+assert.strictEqual(scope.blockedForTab(10), 0,
+  'resetting stats clears per-page counters too');
+
+scope.markPopup(7, 'https://source.example/');
+assert.strictEqual(scope.popupSourceFor(7), 'https://source.example/', 'popup source is stored per tab');
+scope.markPopupBlocked(7);
+assert.strictEqual(scope.consumePopupBlock(7), true, 'a popup block is consumed once');
+assert.strictEqual(scope.isPopupBlocked(7), false, 'consuming clears the popup block flag');
+scope.setCosmetic(7, { selectors: ['.ad'] });
+scope.setScriptlets(7, { hash: 'v1' });
+assert.deepStrictEqual(scope.getCosmetic(7), { selectors: ['.ad'] }, 'cosmetic cache is per page');
+assert.deepStrictEqual(scope.getScriptlets(7), { hash: 'v1' }, 'scriptlet cache is per page');
+
+scope.observeNavigation({ tabId: 7, frameId: 0, documentId: 'doc-next', url: 'https://next.example/' });
+assert.strictEqual(scope.urlForFrame(7, 2), '', 'a new top-level document clears old frames');
+assert.strictEqual(scope.getCosmetic(7), null, 'a new document clears stale cosmetic caches');
+assert.strictEqual(scope.getScriptlets(7), null, 'a new document clears stale scriptlet caches');
 
 scope.forgetTab(7);
-assert.strictEqual(scope.documentUrl({ tabId: 7, frameId: 0, documentId: 'doc-new' }), '',
-  'tab removal clears document and tab caches');
-assert.strictEqual(scope.documentUrl({ tabId: 8, frameId: 0, documentId: 'doc-req' }),
+assert.strictEqual(scope.documentUrlFor({ tabId: 7, frameId: 0, documentId: 'doc-next' }), '',
+  'tab removal clears page state');
+assert.strictEqual(scope.documentUrlFor({ tabId: 8, frameId: 0, documentId: 'doc-req' }),
   'https://req.example/', 'other tabs are untouched');
 
 // Generic rules use a 4-character token index; only short patterns are scanned.
@@ -1774,7 +1819,7 @@ async function testStaleGenerationWorkerHang() {
     contentScripts: { register: async () => ({ unregister: async () => {} }) },
     publicSuffix: { getDomain: host => host.split('.').slice(-2).join('.') }
   };
-  ['lib/state/store.js', ...ENGINE_FILES, 'lib/state/document-scope.js', 'lib/resources/redirect-resources.js', 'lib/state/remote-lists.js', 'lib/state/suggested-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js', 'lib/compile/compile-cache.js', 'lib/compile/compiler.js']
+  ['lib/state/store.js', ...ENGINE_FILES, 'lib/state/page-store.js', 'lib/resources/redirect-resources.js', 'lib/state/remote-lists.js', 'lib/state/suggested-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js', 'lib/compile/compile-cache.js', 'lib/compile/compiler.js']
     .forEach(f => vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f }));
   const bgSource = fs.readFileSync(path.join(ROOT, 'background.js'), 'utf8')
     .replace(/  init\(\);\n}\)\(\);\s*$/, '  globalThis.__wildfireTest = { loadFilters, engine, getState: () => state, setState: p => { state = Object.assign({}, state, p); }, compiler }; init(); })();');
@@ -1929,7 +1974,7 @@ async function testBackgroundLoadFiltersIntegration() {
   };
 
   [
-    'lib/state/store.js', ...ENGINE_FILES, 'lib/state/document-scope.js', 'lib/resources/redirect-resources.js',
+    'lib/state/store.js', ...ENGINE_FILES, 'lib/state/page-store.js', 'lib/resources/redirect-resources.js',
     'lib/state/remote-lists.js', 'lib/state/suggested-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js',
     'lib/compile/compile-cache.js', 'lib/compile/compiler.js'
   ].forEach(f => vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f }));
@@ -2027,7 +2072,7 @@ async function testRemoveRuntimeIntegration() {
     contentScripts:{register:async()=>({unregister:async()=>{}})},
     publicSuffix:{getDomain:host=>host.split('.').slice(-2).join('.')}
   };
-  ['lib/state/store.js',...ENGINE_FILES,'lib/state/document-scope.js','lib/resources/redirect-resources.js','lib/state/remote-lists.js', 'lib/state/suggested-lists.js','lib/resources/csp-resources.js',...SCRIPTLET_FILES,'lib/resources/rewrite-resources.js','lib/compile/compile-cache.js','lib/compile/compiler.js']
+  ['lib/state/store.js',...ENGINE_FILES,'lib/state/page-store.js','lib/resources/redirect-resources.js','lib/state/remote-lists.js', 'lib/state/suggested-lists.js','lib/resources/csp-resources.js',...SCRIPTLET_FILES,'lib/resources/rewrite-resources.js','lib/compile/compile-cache.js','lib/compile/compiler.js']
     .forEach(f=>vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),ctx,{filename:f}));
   const bgSource = fs.readFileSync(path.join(ROOT,'background.js'),'utf8')
     .replace(/  init\(\);\n}\)\(\);\s*$/, '  globalThis.__wildfireTest = { loadFilters, engine, getState: () => state, setState: p => { state = Object.assign({}, state, p); } }; init(); })();');
@@ -2324,7 +2369,7 @@ async function testCompileInFlightDedup() {
     contentScripts: { register: async () => ({ unregister: async () => {} }) },
     publicSuffix: { getDomain: h => h.split('.').slice(-2).join('.') }
   };
-  ['lib/state/store.js', ...ENGINE_FILES, 'lib/state/document-scope.js', 'lib/resources/redirect-resources.js',
+  ['lib/state/store.js', ...ENGINE_FILES, 'lib/state/page-store.js', 'lib/resources/redirect-resources.js',
     'lib/state/remote-lists.js', 'lib/state/suggested-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js',
     'lib/compile/compile-cache.js']
     .forEach(f => vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f }));
@@ -2776,6 +2821,7 @@ async function testPerSiteBadgeCounters() {
 
   const apiHooks = {};
   const badgeTexts = [];
+  const cosmeticMessages = [];
   let bgMessageHandler;
   let onActivated;
   let onUpdated;
@@ -2843,7 +2889,9 @@ async function testPerSiteBadgeCounters() {
       onUpdated: { addListener: fn => { onUpdated = fn; } },
       onActivated: { addListener: fn => { onActivated = fn; } },
       onRemoved: { addListener: () => {} },
-      sendMessage: async () => {},
+      sendMessage: async (tabId, message, options) => {
+        cosmeticMessages.push({ tabId, message, options });
+      },
       remove: async () => {}
     },
     alarms: {
@@ -2856,7 +2904,7 @@ async function testPerSiteBadgeCounters() {
     publicSuffix: { getDomain: host => host.split('.').slice(-2).join('.') }
   };
   loadFiles(ctx, [
-    'lib/state/store.js', ...ENGINE_FILES, 'lib/state/document-scope.js',
+    'lib/state/store.js', ...ENGINE_FILES, 'lib/state/page-store.js',
     'lib/resources/redirect-resources.js', 'lib/state/remote-lists.js',
     'lib/state/suggested-lists.js', 'lib/resources/csp-resources.js',
     ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js',
@@ -2917,6 +2965,19 @@ async function testPerSiteBadgeCounters() {
     JSON.stringify({ 'example.com': 2, 'other.test': 2 }),
     'iframe blocks are attributed to the tab site, not the frame document');
   assert.strictEqual(lastBadge(2).text, '2', 'the tab badge includes embedded frame blocks');
+
+  cosmeticMessages.length = 0;
+  onUpdated(2, { status: 'complete', url: 'https://news.other.test/' }, {
+    url: 'https://news.other.test/'
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  const tabCosmetic = cosmeticMessages.filter(entry => entry.tabId === 2);
+  assert.strictEqual(tabCosmetic.length, 2,
+    'a completed page refreshes cosmetics once per known frame');
+  assert.ok(tabCosmetic.some(entry => entry.options && entry.options.frameId === 1),
+    'iframe cosmetic messages are targeted at the iframe');
+  assert.ok(tabCosmetic.every(entry => entry.message.type === 'wildfire:apply'),
+    'all cosmetic messages use the apply payload');
 
   onUpdated(1, { url: 'https://www.other.test/' }, { url: 'https://www.other.test/' });
   assert.strictEqual(lastBadge(1).text, '2', 'navigating a tab refreshes the badge for the new site');
