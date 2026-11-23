@@ -700,6 +700,17 @@ assert.strictEqual(classify(nthRule, '/').mode, 'js', ':nth-ancestor stays in th
   assert.strictEqual(upSel.length, 1, 'upward(selector) selects one ancestor');
   assert.strictEqual(upSel[0], targetNode, 'upward(selector) hides ancestor');
 
+  const minEngine = new FilterEngine();
+  minEngine.load(['example.com##.ad:min-text-length(10)', 'example.com##.ad:min-text-length(0)'].join('\n'));
+  assert.strictEqual(minEngine.getProcedural('example.com').length, 1, 'min-text-length parses');
+  assert.strictEqual(minEngine.rejectedCosmetic.length, 1, 'invalid min-text-length rejected');
+  const shortNode = stubNode('.ad', 'short');
+  const longNode = stubNode('.ad', 'long enough text');
+  const minRoot = stubNode('body', '', [shortNode, longNode]);
+  const minRule = minEngine.getProcedural('example.com')[0];
+  const minSel = WildFireProcedural.select(minRoot, minRule, '/');
+  assert.strictEqual(JSON.stringify(minSel.map(n => n.textContent)), JSON.stringify(['long enough text']), 'min-text-length filters by text length');
+
 const resolveCsp = alias => CspResources.resolve(alias);
 // Arrays built inside the vm realm have a different prototype than Node's.
 const cspFor = (instance, url, type, documentUrl) =>
