@@ -48,7 +48,8 @@ const WAPI_FILES = [
   'lib/wapi/wapi-router.js',
   'lib/wapi/wapi-tabs.js',
   'lib/wapi/wapi-webrequest.js',
-  'lib/wapi/wapi-action.js'
+  'lib/wapi/wapi-action.js',
+  'lib/wapi/wapi-capabilities.js'
 ];
 const BACKGROUND_FILES = [
   'lib/background/helpers.js',
@@ -101,7 +102,7 @@ loadFiles(context, [...WAPI_FILES, ...BACKGROUND_FILES]);
 const { FilterEngine, mapResourceType, WildFirePageStore, RedirectResources, WildFireProcedural, RemoteLists, WildFireSuggestedLists, CspResources, WildFireScriptlets, RewriteResources, WildFireCompileCache, WildFireCompiler, WildFireStore, WildFireBackground, WildFireWapi, wapi, WildFireWapiContexts, wapiContexts,
   WildFireWapiBackground, wapiBackground, WildFireWapiRouter, wapiRouter,
   WildFireWapiTabs, wapiTabs, WildFireWapiWebRequest, wapiWebRequest,
-  WildFireWapiAction, wapiAction } = context;
+  WildFireWapiAction, wapiAction, WildFireWapiCapabilities, wapiCapabilities } = context;
 
 const engine = new FilterEngine();
 engine.load([
@@ -3927,6 +3928,84 @@ async function testWapiAction() {
   assert.strictEqual(missing.setBadgeBackgroundColor({}), false);
 }
 
+async function testWapiCapabilities() {
+  assert.strictEqual(wapiCapabilities, WildFireWapiCapabilities,
+    'wapi-capabilities is exposed as a canonical backbone module');
+  let domainArgs = null;
+  const nativeBridge = {
+    setPayload: async () => {},
+    clearPayload: async () => {}
+  };
+  const hub = { addListener() {}, removeListener() {} };
+  const browserApi = {
+    runtime: {
+      getURL: path => 'moz-extension://test/' + path,
+      sendMessage: async () => {},
+      onMessage: hub
+    },
+    publicSuffix: {
+      getDomain: (host, options) => {
+        domainArgs = [host, options];
+        return 'example.com';
+      }
+    },
+    alarms: {
+      onAlarm: hub,
+      clear: async () => {},
+      get: async () => null,
+      create: async () => {}
+    },
+    contentScripts: { register: async () => ({ unregister: async () => {} }) },
+    storage: { local: { get: async () => ({}), set: async () => {} } },
+    webRequest: { filterResponseData: () => ({}) },
+    wildfireNative: nativeBridge
+  };
+  const wapiStub = WildFireWapi.create({ browserApi });
+  const caps = WildFireWapiCapabilities.create({ wapi: wapiStub });
+
+  assert.strictEqual(caps.browser, browserApi, 'capabilities expose the native Firefox API');
+  assert.strictEqual(caps.prefix, 'wildfire:', 'capabilities inherit the wapi prefix');
+  assert.strictEqual(caps.ready, wapiStub.ready, 'capabilities expose wapi readiness');
+  assert.strictEqual(caps.settle(), wapiStub.ready, 'settle delegates to the wapi');
+  assert.strictEqual(caps.runtime.event, hub, 'runtime capability exposes the message event');
+  assert.strictEqual(caps.runtime.getURL('icon.png'), 'moz-extension://test/icon.png');
+  assert.strictEqual(JSON.stringify(caps.snapshot()), JSON.stringify({
+    runtime: true,
+    publicSuffix: true,
+    alarms: true,
+    contentScripts: true,
+    filterResponseData: true,
+    storage: true,
+    nativeBridge: true
+  }), 'snapshot reports every native capability');
+  assert.strictEqual(caps.has('publicSuffix'), true);
+  assert.strictEqual(caps.has('missing'), false);
+  assert.strictEqual(caps.validate(['runtime', 'publicSuffix', 'storage']), true);
+  assert.strictEqual(caps.alarms.present, true);
+  assert.strictEqual(caps.alarms.event, hub);
+  assert.strictEqual(caps.contentScripts.supported, true);
+  assert.strictEqual(caps.storage.local, browserApi.storage.local);
+  assert.strictEqual(caps.webRequest.filterResponseDataSupported, true);
+  assert.strictEqual(caps.nativeBridge(), nativeBridge);
+
+  const options = { allowIPAddress: true };
+  assert.strictEqual(caps.domain('www.example.com', options), 'example.com');
+  assert.strictEqual(JSON.stringify(domainArgs), JSON.stringify(['www.example.com', options]),
+    'domain lookups receive the requested host and options');
+  browserApi.publicSuffix.getDomain = () => { throw new Error('lookup failed'); };
+  assert.strictEqual(caps.domain('www.example.com'), '', 'failed domain lookups are contained');
+
+  const missing = WildFireWapiCapabilities.create({ browserApi: {} });
+  assert.strictEqual(missing.has('publicSuffix'), false);
+  assert.strictEqual(missing.domain('www.example.com'), '');
+  assert.strictEqual(missing.nativeBridge(), null);
+  assert.throws(() => missing.validate(['publicSuffix', 'alarms']),
+    /Missing required WildFire capability: publicSuffix, alarms/);
+  const invalidBridge = WildFireWapiCapabilities.create({ browserApi: { wildfireNative: {} } });
+  assert.strictEqual(invalidBridge.has('nativeBridge'), false,
+    'a bridge without setPayload is not a capability');
+}
+
 async function testWapiContexts() {
   const sent = [];
   const wapiStub = {
@@ -4105,6 +4184,13 @@ async function testBackgroundControllerRobustness() {
       'startup registers the native webRequest adapter');
     assert.strictEqual(healthy.debug().wapiAction.supported, true,
       'startup exposes the native action adapter');
+    const caps = healthy.debug().wapiCapabilities.snapshot();
+    assert.strictEqual(caps.publicSuffix, true,
+      'startup exposes the native domain capability');
+    assert.strictEqual(caps.contentScripts, true,
+      'startup exposes the content script capability');
+    assert.strictEqual(caps.nativeBridge, false,
+      'the optional native bridge stays unavailable when not supplied');
 
     let unregistered = 0;
     const previous = { unregister: async () => { unregistered += 1; } };
@@ -4163,6 +4249,7 @@ Promise.resolve()
   .then(() => testWapiTabs())
   .then(() => testWapiWebRequest())
   .then(() => testWapiAction())
+  .then(() => testWapiCapabilities())
   .then(() => testWapiContexts())
   .then(() => testBackgroundControllerRobustness())
   .then(() => testPopupPerSiteDisplay())
