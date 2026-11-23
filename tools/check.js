@@ -46,6 +46,7 @@ const WAPI_FILES = [
 const BACKGROUND_CHAIN = [
   'lib/background/helpers.js',
   'lib/background/engine-host.js',
+  'lib/background/inspector.js',
   'lib/background/requests.js',
   'lib/background/messages.js',
   'lib/background/background.js'

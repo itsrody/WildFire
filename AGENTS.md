@@ -75,6 +75,7 @@ lib/
   background/          background classic-script chain, load in order:
     helpers.js         counters/badge, snapshots, diagnostics and host helpers
     engine-host.js     engine lifecycle, compiler/cache, cosmetic and scriptlet sync
+    inspector.js       local-only bounded request decision log
     requests.js        synchronous webRequest handlers and rewrite streams
     messages.js        wildfire:* message router
     background.js      controller: state, listeners, startup and readiness
@@ -165,7 +166,7 @@ used **only** by `tools/`.
 19. `lib/wapi/wapi-capabilities.js` → `window.WildFireWapiCapabilities` (aliased as `window.wapiCapabilities`)
 20. `lib/wapi/wapi-scripting.js` → `window.WildFireWapiScripting` (aliased as `window.wapiScripting`)
 21. `lib/background/` chain, in order: `helpers.js`, `engine-host.js`,
-    `requests.js`, `messages.js`, `background.js` → `window.WildFireBackground`
+    `inspector.js`, `requests.js`, `messages.js`, `background.js` → `window.WildFireBackground`
 22. `background.js` → calls `WildFireBackground.create(...).start()`
 
 `wapi.js` is WildFire's Firefox-native API backbone: named idempotent listener
@@ -424,6 +425,7 @@ Background listens for `wildfire:*` messages:
 | `set-list-auto` | opt a fetched, enabled list into daily checks |
 | `cosmetic` | return selectors for a URL |
 | `diagnostics` | toggle/reset in-memory request metrics, ETP observation and CSP report counts |
+| `inspect` | enable/reset/return the bounded local request decision log |
 
 `state`-only fields are not on other responses. The popup keeps the tab info
 it got from `state` and merges it into later responses (`applyResult`); keep
@@ -436,6 +438,13 @@ are observed as hints only; they must never affect `blocked`, `blockedBySite`,
 or filter decisions. `onHeadersReceived` is registered while loaded rules need
 `$csp`, `$rewrite`, or `$removeheader`, and also while CSP report blocking is
 enabled.
+
+`inspect` is local-only: `lib/background/inspector.js` keeps a bounded in-memory
+ring of request, CSP and CSP-report decisions. It is disabled by default, never
+persisted, and never sent anywhere; Options uses `wapi-client` to enable it,
+refresh it, and clear it. The blocking listener records only when the inspector
+is enabled, and inspection never changes `blocked`, `blockedBySite`, or filter
+decisions.
 
 Remote lists are strictly opt-in. The bundled `lib/state/suggested-lists.js`
 catalog is inert: Options shows its URLs as shortcuts, and clicking one only
@@ -463,7 +472,8 @@ and fetching still requires a separate explicit step.
   background **only** through `wapi-client.js` — never read `browser.storage`
   or the engine directly.
 - Keep user-facing strings branded WildFire, and keep the Firefox 153 / ESR
-  note where it currently appears.
+  note where it currently appears. The Inspector table is WildFire-branded and
+  uses the existing dark palette; it never exposes upstream branding.
 
 ---
 

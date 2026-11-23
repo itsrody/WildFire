@@ -19,7 +19,7 @@ engine.
 manifest.json          Firefox MV2 manifest, gecko floor 153.0
 background.js          thin bootstrap for the background controller
 lib/wapi/              Firefox-native API backbone: wapi, contexts, background, router, tabs, webrequest, action, capabilities, client
-lib/background/        background chain: helpers, engine lifecycle, requests, messages, controller
+lib/background/        background chain: helpers, engine lifecycle, inspector, requests, messages, controller
 lib/engine/            filter engine module chain (filter/), procedural DOM evaluator
 lib/compile/           filter compiler, worker, compiled-filter cache
 lib/resources/         curated scriptlet / CSP / redirect / rewrite registries
@@ -159,6 +159,18 @@ Report endpoint hosts can be allowlisted in Options, and a global pause also
 pauses this feature. Blocked report requests and stripped headers are counted
 only in local diagnostics; they never change `blocked` or `blockedBySite`.
 WildFire does not change Firefox's ETP settings or native CSP preferences.
+
+## Inspect request decisions
+
+Options → **WildFire Inspector** is a local-only decision log. Turn on recording,
+then refresh to see bounded, in-memory entries for blocked requests, exceptions,
+redirects, rewrites, CSP headers, and CSP-report cancellations. Each row shows
+the decision, request host, matching WildFire rule, detail, and duration; the
+table can be filtered by decision or site.
+
+Nothing is persisted or sent anywhere, recording is off by default, and
+inspection never changes counters or filter decisions. The blocking listener
+only records while the inspector is enabled.
 
 ## Curated response rewrites
 
@@ -331,7 +343,9 @@ This is deliberately a *minimal* engine, not a full uBO port:
 Background listens for `wildfire:*` messages: `state`, `toggle`, `toggle-site`,
 `set-filters`, `set-csp-report-blocking`, `set-csp-report-allow`, `reset-stats`,
 `reload`, `list-state`, `suggested-lists`, `add-list`, `remove-list`,
-`update-list`, `set-list-enabled`, `set-list-auto`, `cosmetic`, and `diagnostics`.
-`diagnostics` accepts an optional boolean `value` to enable/disable in-memory
-request metrics, ETP observation and CSP report counts, and an optional
-`reset: true` to clear them.
+`update-list`, `set-list-enabled`, `set-list-auto`, `cosmetic`, `diagnostics`, and
+`inspect`. `diagnostics` accepts an optional boolean `value` to enable/disable
+in-memory request metrics, ETP observation and CSP report counts, and an optional
+`reset: true` to clear them. `inspect` accepts `value` to enable/disable the
+local decision log and `reset: true` to clear it; it always returns the current
+bounded snapshot.

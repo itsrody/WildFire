@@ -55,6 +55,7 @@ const WAPI_FILES = [
 const BACKGROUND_FILES = [
   'lib/background/helpers.js',
   'lib/background/engine-host.js',
+  'lib/background/inspector.js',
   'lib/background/requests.js',
   'lib/background/messages.js',
   'lib/background/background.js'
@@ -3534,6 +3535,60 @@ async function testWapiScripting() {
   assert.strictEqual(await unsupported.replace('x', makeDetails()), false);
 }
 
+async function testInspector() {
+  const ctx = {
+    inspectorEnabled: false,
+    now: () => 1700000000000,
+    monotonicMs: () => 1000,
+    safeHost: url => {
+      try { return new URL(url).hostname.toLowerCase(); } catch (error) { return ''; }
+    },
+    siteKey: host => host.split('.').slice(-2).join('.')
+  };
+  Object.assign(ctx, context.WildFireBackgroundCore.createInspector(ctx));
+
+  assert.strictEqual(ctx.inspector.enabled, false, 'inspector starts disabled');
+  assert.strictEqual(ctx.recordInspection({ url: 'https://ads.test/a.js' }), null,
+    'disabled inspector drops records');
+  assert.strictEqual(ctx.inspector.snapshot().entries.length, 0);
+  assert.strictEqual(ctx.inspector.limit, 256);
+
+  ctx.inspector.setEnabled(true);
+  assert.strictEqual(ctx.inspector.enabled, true);
+  const rule = { pattern: '||ads.test^', sourceKind: 'custom', hash: 'abc' };
+  const item = ctx.recordInspection({
+    phase: 'request', decision: 'blocked', rule, detail: 'blocked', ms: 1.2346,
+    url: 'https://ads.test/a.js?secret=1', type: 'script', tabId: 7
+  });
+  assert.strictEqual(item.id, 1);
+  assert.strictEqual(item.host, 'ads.test');
+  assert.strictEqual(item.site, 'ads.test');
+  assert.strictEqual(item.decision, 'blocked');
+  assert.strictEqual(item.rule.text, '||ads.test^');
+  assert.strictEqual(item.rule.source, 'custom');
+  assert.strictEqual(item.ms, 1.235, 'durations are rounded for display');
+
+  const snapshot = ctx.inspector.snapshot();
+  assert.strictEqual(snapshot.entries.length, 1);
+  snapshot.entries.length = 0;
+  assert.strictEqual(ctx.inspector.snapshot().entries.length, 1,
+    'snapshots are copies');
+
+  Array.from({ length: 300 }, (unused, index) => ctx.recordInspection({
+    url: 'https://host' + index + '.test/',
+    decision: 'allowed'
+  }));
+  const capped = ctx.inspector.snapshot().entries;
+  assert.strictEqual(capped.length, 256, 'inspector keeps a bounded ring buffer');
+  assert.strictEqual(capped[0].id, 46, 'oldest entries are dropped first');
+  assert.strictEqual(capped[capped.length - 1].id, 301);
+
+  const cleared = ctx.inspector.clear();
+  assert.strictEqual(cleared.entries.length, 0);
+  ctx.inspector.setEnabled(false);
+  assert.strictEqual(ctx.recordInspection({ url: 'https://ads.test/' }), null);
+}
+
 async function testWapiStorage() {
   const data = {};
   const storageCalls = [];
@@ -4336,8 +4391,8 @@ async function testBackgroundControllerRobustness() {
       'set-csp-report-blocking', 'set-csp-report-allow', 'reset-stats',
       'reload', 'suggested-lists', 'list-state', 'add-list', 'remove-list',
       'update-list', 'set-list-enabled', 'set-list-auto', 'cosmetic',
-      'diagnostics'
-    ].join(','), 'router registers every legacy wildfire action');
+      'diagnostics', 'inspect'
+    ].join(','), 'router registers every wildfire action');
     const unknown = await healthy.debug().onMessage({ type: 'wildfire:missing' }, {});
     assert.strictEqual(unknown.error, 'Unknown action: missing',
       'unknown actions keep the existing error shape');
@@ -4349,6 +4404,8 @@ async function testBackgroundControllerRobustness() {
       'startup exposes the native action adapter');
     assert.strictEqual(healthy.debug().wapiScripting, healthy.context.wapiScripting,
       'startup exposes the native scripting adapter');
+    assert.strictEqual(healthy.debug().inspector, healthy.context.inspector,
+      'startup exposes the local inspector');
     const caps = healthy.debug().wapiCapabilities.snapshot();
     assert.strictEqual(caps.publicSuffix, true,
       'startup exposes the native domain capability');
@@ -4394,6 +4451,59 @@ async function testBackgroundControllerRobustness() {
     const injectedCode = registered.js[registered.js.length - 1].code;
     assert.ok(injectedCode.includes('__wildfireScriptletGeneration'),
       'overlapping registrations are guarded by a generation stamp');
+
+    const inspectOn = await healthy.debug().onMessage({ type: 'wildfire:inspect', value: true }, {});
+    assert.strictEqual(inspectOn.inspect.enabled, true,
+      'inspect action enables local recording');
+    const savedRecordBlock = healthy.context.recordBlock;
+    healthy.context.recordBlock = () => {};
+    healthy.context.engine.matchRequest = () => ({
+      blocked: true,
+      rule: { pattern: '||ads.test^', sourceKind: 'custom', hash: 'block-hash' },
+      exception: null,
+      redirect: null,
+      rewrite: null
+    });
+    const blocked = healthy.context.onBeforeRequest({
+      url: 'https://ads.test/a.js',
+      type: 'script',
+      tabId: 11,
+      requestId: 'inspect-block',
+      documentUrl: 'https://page.test/'
+    });
+    assert.strictEqual(blocked.cancel, true, 'blocked request is cancelled');
+    const blockedEntries = (await healthy.debug()
+      .onMessage({ type: 'wildfire:inspect' }, {})).inspect.entries;
+    const blockedEntry = blockedEntries.find(entry =>
+      entry.decision === 'blocked' && entry.host === 'ads.test');
+    assert.ok(blockedEntry, 'a blocked request appears in the inspector');
+    assert.strictEqual(blockedEntry.rule.text, '||ads.test^');
+    assert.strictEqual(blockedEntry.rule.source, 'custom');
+
+    healthy.context.engine.matchRequest = () => ({
+      blocked: false,
+      rule: null,
+      exception: { pattern: '@@||ads.test^', sourceKind: 'custom', hash: 'exception-hash' },
+      redirect: null,
+      rewrite: null
+    });
+    healthy.context.onBeforeRequest({
+      url: 'https://ads.test/b.js',
+      type: 'script',
+      tabId: 11,
+      requestId: 'inspect-exception',
+      documentUrl: 'https://page.test/'
+    });
+    const exceptionEntries = (await healthy.debug()
+      .onMessage({ type: 'wildfire:inspect' }, {})).inspect.entries;
+    const exceptionEntry = exceptionEntries.find(entry => entry.decision === 'exception');
+    assert.ok(exceptionEntry, 'an exception appears in the inspector');
+    assert.strictEqual(exceptionEntry.rule.text, '@@||ads.test^');
+
+    const cleared = await healthy.debug()
+      .onMessage({ type: 'wildfire:inspect', reset: true }, {});
+    assert.strictEqual(cleared.inspect.entries.length, 0, 'inspect reset clears local entries');
+    healthy.context.recordBlock = savedRecordBlock;
   } finally {
     context.fetch = savedFetch;
     console.error = savedError;
@@ -4425,6 +4535,7 @@ Promise.resolve()
   .then(() => testWapiAction())
   .then(() => testWapiCapabilities())
   .then(() => testWapiScripting())
+  .then(() => testInspector())
   .then(() => testWapiContexts())
   .then(() => testBackgroundControllerRobustness())
   .then(() => testPopupPerSiteDisplay())
