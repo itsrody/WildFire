@@ -74,6 +74,8 @@ options page (one per line):
 | `||tracker.net^$script,redirect=noopjs` | Serve WildFire's empty script instead of cancelling |
 | `/ads\.example/([^/]+)\.js/$script,redirect-rule=tagged.svg` | Fill a redirect resource from regex captures |
 | `||tracker.net^$script,csp=no-script` | Add WildFire's `script-src 'none'` CSP header to matching script responses |
+| `site.example##+js(set-constant, adblockDetected, false)` | Freeze a detection flag before page scripts run |
+| `site.example#@#+js(set-constant, adblockDetected, false)` | Cancel that scriptlet on the matching site |
 | `example.com##.promo` | Hide `.promo` on example.com |
 | `example.com#@#.promo` | Keep `.promo` on example.com |
 | `##.ad-container` | Hide everywhere (generic cosmetic rule) |
@@ -109,6 +111,27 @@ Filter text can never supply a header value. Only these WildFire-owned aliases
 are accepted: `no-script`, `no-inline-script`, `no-frame`, `no-worker`,
 `no-object`, `no-font`, `no-media`, `no-connect`. Unknown aliases are rejected
 when the list loads and never turn into request blockers.
+
+## Curated scriptlets
+
+Some sites probe for blocker side effects. `##+js(alias, args)` lets a filter
+ask WildFire to neutralize those probes **before page scripts run**, using
+Firefox's `browser.contentScripts.register()` at `document_start`. The rules
+are accepted aliases and plain data only — no filter ever supplies code, and
+there is no `eval` in WildFire. `#@#+js(...)` cancels the same alias and
+arguments on matching domains.
+
+Available aliases:
+
+| Alias | Effect |
+| --- | --- |
+| `set-constant(property, value)` | Freeze a property to `true`, `false`, `null`, `0`, or `1` |
+| `abort-on-property-read(property)` | Throw when a page reads the property |
+| `abort-on-property-write(property)` | Throw when a page writes the property |
+
+Properties are plain dotted paths such as `adblockDetected` or
+`window.config.flag`; anything else is rejected when the filter list loads and
+again before it runs. Updated scriptlets apply to pages opened after the change.
 
 ## Design notes / limits
 

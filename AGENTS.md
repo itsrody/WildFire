@@ -51,6 +51,7 @@ lib/filter-engine.js   filter parser + matcher (self-contained, no deps)
 lib/document-scope.js  documentId -> document URL cache for request scope
 lib/redirect-resources.js  WildFire-owned data-URI redirect resources
 lib/csp-resources.js   curated CSP directives for $csp response headers
+lib/scriptlets.js      WildFire-owned scriptlet aliases (no filter-supplied code)
 lib/procedural.js      DOM-based procedural cosmetic evaluator (no browser APIs)
 lib/remote-lists.js    opt-in remote list store, key wildfire.remote.v1
 lib/store.js           browser.storage.local wrapper, key wildfire.state.v1
@@ -80,7 +81,8 @@ used **only** by `tools/`.
 4. `lib/redirect-resources.js` → `window.RedirectResources`
 5. `lib/remote-lists.js` → `window.RemoteLists`
 6. `lib/csp-resources.js` → `window.CspResources`
-7. `background.js` → the engine instance and all listeners
+7. `lib/scriptlets.js` → `window.WildFireScriptlets`
+8. `background.js` → the engine instance and all listeners
 
 Content scripts load in this order: `lib/procedural.js` → `content/cosmetic.js`,
 so the DOM evaluator exists before the content script runs.
@@ -130,15 +132,17 @@ rules cannot cancel navigation. `$popup` is evaluated from
   fallback matches, sorted by load order before exception/blocker selection.
 - `cosmeticByDomain` / `cosmeticExceptionsByDomain: Map<domain, selector[]>`
   plus `genericCosmetic` / `genericCosmeticExceptions`.
-- `counts: {network, exceptions, cosmetic, csp}` for the popup/options UI.
+- `scriptletRules`/`rejectedScriptlets` for `##+js(alias, args)` rules.
+- `counts: {network, exceptions, cosmetic, csp, scriptlets}` for the UI.
 
-`FilterEngine` accepts injected registrable-domain and CSP resolvers so the
-engine stays self-contained and unit-testable. Background supplies Firefox
-153's synchronous `browser.publicSuffix.getDomain()` (with IP, plain-suffix and
-unknown-suffix lookups enabled) and `CspResources.resolve()`; the engine falls
-back to a last-two-label scope when no domain resolver is given or a lookup
-fails, and rejects `$csp` rules when no CSP resolver is given. Never call
-`browser.*` from `lib/filter-engine.js`.
+`FilterEngine` accepts injected registrable-domain, CSP and scriptlet
+resolvers so the engine stays self-contained and unit-testable. Background
+supplies Firefox 153's synchronous `browser.publicSuffix.getDomain()` (with IP,
+plain-suffix and unknown-suffix lookups enabled), `CspResources.resolve()` and
+`WildFireScriptlets.validate()`. The engine falls back to a last-two-label scope
+when no domain resolver is given or a lookup fails, and rejects `$csp`/
+`##+js()` rules when their registry is unavailable. Never call `browser.*` from
+`lib/filter-engine.js`.
 
 `matchRequest()` returns `redirect: {alias, captures}` when the winning rule
 carries `$redirect` or `$redirect-rule`. `RedirectResources.resolve()` is the
@@ -157,6 +161,16 @@ rather than becoming a blocker. Background calls the synchronously registered
 and appends the directives as extra enforcing `Content-Security-Policy`
 headers without touching the site's own headers. CSP report requests are
 skipped. Filter text can never supply a header value itself.
+
+`getScriptletPayload()` returns plain `{alias, args, domains, isException}`
+data. Background registers `lib/scriptlets.js` through Firefox's
+`browser.contentScripts.register()` at `document_start` with
+`['<all_urls>']`/all frames, and injects only a JSON payload through the
+registered `code` step. There is no `eval`, no `Function`, and no filter-sourced
+script anywhere; `WildFireScriptlets.apply()` revalidates every entry, resolves
+domains against `location.hostname`, and lets `#@#+js()` cancel the matching
+alias/arguments. Registrations are replaced whenever the engine reloads, and
+only future navigations receive updated scriptlets.
 
 `getCosmetic(host)` merges generic selectors with every parent-domain selector
 and subtracts applicable exceptions. `content/cosmetic.js` asks for them once
@@ -264,6 +278,7 @@ fetched before consent, `data_collection_permissions.required` stays `["none"]`.
 | `##selector`, `#@#selector` | |
 | `##sel:has-text("…")`, `##sel:matches-path(/re/)`, `##sel:has(sel)` | |
 | `##sel:contains("…")`, `##sel:nth-ancestor(n)` | |
+| `domain##+js(alias, args)` (curated aliases only) | |
 
 Regex filters are checked at load time. Backreferences, nested or alternated
 quantifiers, excessive quantifier/group counts, long patterns and stateful
@@ -284,6 +299,16 @@ response. Unknown aliases are rejected into `engine.rejectedCsp` instead of
 becoming blocking rules, so a filter can never supply a header value or a
 weaker policy. `$csp` accepts the same type/domain/third-party options as
 network rules, and applies to main documents without `$document`.
+
+Scriptlet rules use `##+js(alias, args)` and may be scoped by comma-separated
+domains or negated with `#@#+js(...)`. The only aliases are
+`abort-on-property-read(property)`, `abort-on-property-write(property)` and
+`set-constant(property, value)` from `lib/scriptlets.js`; values are limited to
+`true`, `false`, `null`, `0`, `1`, and properties must be plain dotted paths.
+Bad aliases, wrong arity, injected code and unterminated rules go into
+`engine.rejectedScriptlets`. A `#@#` exception cancels the same alias/arguments
+on matching domains. This exists for sites that probe blockers; no filter can
+supply script text.
 
 Procedural cosmetic rules are parsed into a base selector plus ordered steps.
 `:has-text()` and `:contains()` accept a quoted literal (case-insensitive) or a
@@ -356,10 +381,10 @@ cosmetic hiding.
 These are the natural WildFire-native growth paths, in roughly this order.
 Each one must be written from scratch and land with tests:
 
-1. A curated, WildFire-owned scriptlet alias registry — never filter-supplied
-   script — for sites that detect blockers.
-2. `$rewrite`-style response rewriting with a fixed WildFire-owned mapping, if
+1. `$rewrite`-style response rewriting with a fixed WildFire-owned mapping, if
    the owner decides the extra header-processing path is worth it.
+2. More curated scriptlet aliases, always implemented in `lib/scriptlets.js`
+   with validated data arguments and never from filter-supplied script.
 
 Already implemented and tested: Firefox-native registrable-domain scoping
 (`publicSuffix`), `documentId`-keyed request scope, the 4-character token index,
@@ -367,8 +392,9 @@ safe regex filters, wider resource types with `$document`/`$popup`, a
 from-scratch redirect engine with WildFire-owned data-URI resources, DOM-based
 procedural cosmetic selectors (including native-CSS compilation, `:contains()`,
 and `:nth-ancestor()`), opt-in remote lists with a deterministic update store
-and user consent, and curated `$csp` response-header filtering on Firefox's
-`onHeadersReceived`.
+and user consent, curated `$csp` response-header filtering on Firefox's
+`onHeadersReceived`, and a curated scriptlet alias registry injected at
+`document_start` through Firefox's `contentScripts.register()`.
 
 Do not start a later item while an earlier one is only half-implemented. A
 small, correct, fully tested engine is the product.

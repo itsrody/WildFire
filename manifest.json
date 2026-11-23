@@ -43,6 +43,7 @@
       "lib/redirect-resources.js",
       "lib/remote-lists.js",
       "lib/csp-resources.js",
+      "lib/scriptlets.js",
       "background.js"
     ],
     "persistent": true

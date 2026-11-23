@@ -22,7 +22,8 @@
 
   const engine = new FilterEngine(
     registrableDomain,
-    alias => typeof CspResources !== 'undefined' ? CspResources.resolve(alias) : ''
+    alias => typeof CspResources !== 'undefined' ? CspResources.resolve(alias) : '',
+    typeof WildFireScriptlets !== 'undefined' ? WildFireScriptlets : null
   );
   const documentScope = new DocumentScope();
   const remoteLists = RemoteLists.create({
@@ -34,6 +35,7 @@
   let state = Object.assign({}, WildFireStore.defaults);
   let flushTimer = null;
   let ready = false;
+  let scriptletRegistration = null;
 
   function safeHost(url) {
     try {
@@ -104,6 +106,38 @@
     }
     engine.load(bundled + '\n' + (state.customFilters || '') + '\n' + remote);
     await refreshAllCosmetic();
+    await syncScriptlets();
+  }
+
+  // Firefox registers this content script at document_start so countermeasure
+  // code runs before page scripts. Only validated alias data is injected; the
+  // implementation always comes from WildFire's own file.
+  async function syncScriptlets() {
+    if (!browser.contentScripts || typeof browser.contentScripts.register !== 'function') return;
+    if (scriptletRegistration) {
+      try {
+        await scriptletRegistration.unregister();
+      } catch (error) {
+        console.warn('WildFire: scriptlet unregister failed', error);
+      }
+      scriptletRegistration = null;
+    }
+
+    const rules = engine.getScriptletPayload();
+    if (!rules.length) return;
+    try {
+      scriptletRegistration = await browser.contentScripts.register({
+        matches: ['<all_urls>'],
+        js: [
+          { file: 'lib/scriptlets.js' },
+          { code: 'window.WildFireScriptlets.apply(' + JSON.stringify(rules) + ');' }
+        ],
+        runAt: 'document_start',
+        allFrames: true
+      });
+    } catch (error) {
+      console.warn('WildFire: scriptlet registration failed', error);
+    }
   }
 
   async function syncRemoteAlarm() {

@@ -7,7 +7,10 @@ const path = require('path');
 const vm = require('vm');
 
 const ROOT = path.resolve(__dirname, '..');
-const context = vm.createContext({ console, URL, CSS: { supports: () => true } });
+const context = vm.createContext({
+  console, URL, CSS: { supports: () => true }, location: { hostname: 'page.example' }
+});
+context.window = context;
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/filter-engine.js'), 'utf8'), context, {
   filename: 'filter-engine.js'
 });
@@ -26,7 +29,10 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/remote-lists.js'), 'utf8'),
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/csp-resources.js'), 'utf8'), context, {
   filename: 'csp-resources.js'
 });
-const { FilterEngine, mapResourceType, DocumentScope, RedirectResources, WildFireProcedural, RemoteLists, CspResources } = context;
+vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/scriptlets.js'), 'utf8'), context, {
+  filename: 'scriptlets.js'
+});
+const { FilterEngine, mapResourceType, DocumentScope, RedirectResources, WildFireProcedural, RemoteLists, CspResources, WildFireScriptlets } = context;
 
 const engine = new FilterEngine();
 engine.load([
@@ -641,6 +647,85 @@ assert.deepStrictEqual(Array.from(injectedHeaders, header => ({
   { name: 'Content-Security-Policy', value: "script-src 'none'" },
   { name: 'Content-Security-Policy', value: "frame-src 'none'" }
 ], 'WildFire appends separate enforcing CSP headers');
+
+const scriptletEngine = new FilterEngine(null, null, WildFireScriptlets);
+scriptletEngine.load([
+  'page.example##+js(set-constant, adblockDetected, false)',
+  '##+js(abort-on-property-read, wildFireReadFlag)',
+  'other.example##+js(abort-on-property-write, wildFireWriteFlag)',
+  'page.example#@#+js(abort-on-property-read, wildFireReadFlag)',
+  'page.example##+js(no-such-alias, wildFireFlag)',
+  'page.example##+js(set-constant, wildFireFlag, "code")',
+  'page.example##+js(set-constant, wildFireFlag)',
+  'page.example##+js(set-constant, window.alert("x"), false)',
+  'page.example##+js(set-constant, wildFireFlag, false'
+].join('\n'));
+assert.strictEqual(scriptletEngine.counts.scriptlets, 4,
+  'valid and exception scriptlet rules are counted');
+assert.strictEqual(scriptletEngine.rejectedScriptlets.length, 5,
+  'unsafe or malformed scriptlet rules are rejected');
+assert.ok(scriptletEngine.rejectedScriptlets.some(entry => /unknown scriptlet alias/.test(entry.reason)),
+  'unknown aliases are rejected at load time');
+assert.ok(scriptletEngine.rejectedScriptlets.some(entry => /unterminated/.test(entry.reason)),
+  'unterminated rules are rejected at load time');
+assert.strictEqual(
+  scriptletEngine.matchRequest('https://page.example/ad.js', 'script', 'https://page.example/').blocked,
+  false, 'scriptlet rules never become network blockers');
+
+const scriptletPayload = Array.from(scriptletEngine.getScriptletPayload(), rule => ({
+  alias: rule.alias,
+  args: Array.from(rule.args),
+  domains: Array.from(rule.domains),
+  isException: rule.isException
+}));
+assert.deepStrictEqual(scriptletPayload[0], {
+  alias: 'set-constant',
+  args: ['adblockDetected', 'false'],
+  domains: ['page.example'],
+  isException: false
+}, 'the injected payload is plain alias data');
+assert.strictEqual(scriptletPayload[3].isException, true,
+  'exceptions are included so the content side can resolve them per host');
+
+assert.strictEqual(WildFireScriptlets.validate('set-constant', ['wildFireFlag', '1']), '',
+  'allowed constants validate');
+assert.notStrictEqual(WildFireScriptlets.validate('set-constant', ['wildFireFlag', 'alert(1)']), '',
+  'filter-supplied values are not accepted');
+assert.notStrictEqual(WildFireScriptlets.validate('eval', ['alert(1)']), '',
+  'unknown aliases fail validation');
+assert.notStrictEqual(WildFireScriptlets.validate('set-constant', ['window.alert("x")', 'false']), '',
+  'property arguments must be plain paths');
+assert.notStrictEqual(WildFireScriptlets.validate('set-constant', ['__proto__.flag', 'false']), '',
+  'prototype paths are rejected');
+
+WildFireScriptlets.apply(scriptletPayload);
+assert.strictEqual(context.adblockDetected, false,
+  'set-constant freezes a detection flag on its own domain');
+assert.strictEqual(context.wildFireReadFlag, undefined,
+  'a matching #@# rule cancels just that scriptlet');
+assert.strictEqual(context.wildFireWriteFlag, undefined,
+  'scriptlets do not run on other domains');
+
+WildFireScriptlets.apply([
+  { alias: 'abort-on-property-read', args: ['wildFireGuardedRead'], domains: [], isException: false }
+]);
+assert.throws(() => context.wildFireGuardedRead, /WildFire blocked read/,
+  'abort-on-property-read throws when a page reads the property');
+
+context.wildFireTestTarget = { flag: 42 };
+WildFireScriptlets.apply([
+  { alias: 'abort-on-property-write', args: ['wildFireTestTarget.flag'], domains: [], isException: false }
+]);
+assert.throws(() => { context.wildFireTestTarget.flag = 7; }, /WildFire blocked write/,
+  'abort-on-property-write throws when a page writes the property');
+assert.strictEqual(context.wildFireTestTarget.flag, 42,
+  'the guarded property keeps its original value');
+
+WildFireScriptlets.apply([
+  { alias: 'eval', args: ['wildFireInvalidAlias'], domains: [], isException: false }
+]);
+assert.strictEqual(context.wildFireInvalidAlias, undefined,
+  'invalid aliases never reach execution');
 
 engine.load(fs.readFileSync(path.join(ROOT, 'filters/default.txt'), 'utf8'));
 assert.ok(engine.counts.network > 50, 'bundled list should contain network rules');
