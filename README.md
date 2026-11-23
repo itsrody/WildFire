@@ -77,6 +77,8 @@ options page (one per line):
 | `||tracker.net^$script,csp=no-script` | Add WildFire's `script-src 'none'` CSP header to matching script responses |
 | `site.example##+js(set-constant, adblockDetected, false)` | Freeze a detection flag before page scripts run |
 | `site.example#@#+js(set-constant, adblockDetected, false)` | Cancel that scriptlet on the matching site |
+| `site.example#%#//scriptlet('set-constant', 'adblockDetected', 'false')` | AdGuard-style scriptlet with the same WildFire runtime |
+| `site.example#@%#//scriptlet('set-constant', 'adblockDetected', 'false')` | Cancel that AdGuard-style scriptlet |
 | `example.com##.promo` | Hide `.promo` on example.com |
 | `example.com#@#.promo` | Keep `.promo` on example.com |
 | `##.ad-container` | Hide everywhere (generic cosmetic rule) |
@@ -164,9 +166,27 @@ explicit source-trust model.
 
 The non-trusted uBO general-purpose and defuser catalog is implemented with
 original WildFire code. Trusted-only aliases (including `replace-node-text` /
-`rpnt`) remain rejected because WildFire has no source-trust model. AdGuard's
-`#%#//scriptlet()` syntax is the next phase. Updated scriptlets apply to pages
-opened after the change.
+`rpnt`) remain rejected because WildFire has no source-trust model. Updated
+scriptlets apply to pages opened after the change.
+
+AdGuard scriptlets are also accepted with
+`[domains]#%#//scriptlet('alias', 'arg', ...)`; `#@%#//scriptlet(...)`
+cancels the same rule. Arguments must be strings. AdGuard aliases are validated
+in their own registry and then reuse WildFire's implementations, so an
+AdGuard `set-constant` can be cancelled by the equivalent uBO `#@#+js()` rule.
+The catalog covers the documented untrusted AdGuard aliases, including:
+
+| Family | Examples |
+| --- | --- |
+| Shared behavior | `abort-current-inline-script`, `set-constant`, `prevent-fetch`, `remove-attr`, `json-prune`, `xml-prune` |
+| Privacy / navigation | `no-topics`, `no-protected-audience`, `prevent-navigation`, `prevent-constructor`, `prevent-canvas`, `prevent-element-src-loading` |
+| DOM / requests | `hide-in-shadow-dom`, `remove-in-shadow-dom`, `inject-css-in-shadow-dom`, `remove-request-query-parameter`, `prevent-innerHTML` |
+| Analytics / detector stubs | `google-analytics`, `matomo`, `metrika-yandex-tag`, `prebid`, `scorecardresearch-beacon`, `set-popads-dummy` |
+| Introspection | `log`, `log-eval`, `log-addEventListener`, `dir-string` |
+
+AdGuard aliases documented as debug-only or trusted-only are rejected. Filter
+text still never supplies code: values such as `trueFunc` map to WildFire-owned
+functions, and no `eval`, `Function` or dynamic source execution is used.
 
 ## Design notes / limits
 

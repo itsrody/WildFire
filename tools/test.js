@@ -1119,6 +1119,122 @@ flocContext.WildFireScriptlets.apply([
 assert.strictEqual(flocContext.document.interestCohort, undefined,
   'no-floc defuses the deprecated cohort probe');
 
+const adguardEngine = new FilterEngine(null, null, WildFireScriptlets);
+adguardEngine.load([
+  "page.example#%#//scriptlet('set-constant', 'adGuardFlag', 'yes')",
+  "page.example#@%#//scriptlet('abort-on-property-read', 'guardedByBothSyntaxes')",
+  'page.example##+js(abort-on-property-read, guardedByBothSyntaxes)',
+  "page.example#%#//scriptlet('remove-request-query-parameter', 'utm_source,utm_medium', '/ads\\.example/')",
+  "page.example#%#//scriptlet('log', 'comma,inside', '')",
+  "page.example#%#//scriptlet('no-topics')",
+  "page.example#%#//scriptlet('trusted-prevent-xhr', 'x')",
+  "page.example#%#//scriptlet('debug-on-property-read', 'x')",
+  "page.example#%#//scriptlet('no-such-adguard-alias')"
+].join('\n'));
+assert.strictEqual(adguardEngine.counts.scriptlets, 6,
+  'valid AdGuard scriptlets are counted alongside uBO rules');
+assert.strictEqual(adguardEngine.rejectedScriptlets.length, 3,
+  'trusted, debug and unknown AdGuard aliases are rejected');
+assert.ok(adguardEngine.rejectedScriptlets.some(entry => /trusted/.test(entry.reason)),
+  'AdGuard trusted aliases need the same source-trust model');
+assert.ok(adguardEngine.rejectedScriptlets.some(entry => /debug/.test(entry.reason)),
+  'debug-only aliases are not accepted from production filters');
+const adguardPayload = adguardEngine.getScriptletPayload();
+assert.strictEqual(adguardPayload[0].syntax, 'adguard',
+  'the injected payload records which scriptlet syntax was used');
+assert.deepStrictEqual(Array.from(adguardPayload[0].args), ['adGuardFlag', 'yes'],
+  'AdGuard arguments arrive as plain strings');
+assert.deepStrictEqual(Array.from(adguardPayload[4].args), ['comma,inside', ''],
+  'quoted commas and empty AdGuard arguments survive parsing');
+assert.strictEqual(adguardPayload[3].args[1], '/ads\\.example/',
+  'regex backslashes inside quoted AdGuard arguments are preserved');
+assert.strictEqual(WildFireScriptlets.canonical('abort-current-inline-script', 'adguard'),
+  'abort-current-script', 'AdGuard aliases share WildFire canonical behaviors');
+assert.strictEqual(WildFireScriptlets.validate('set-constant', ['flag', 'false'], 'adguard'), '',
+  'AdGuard set-constant validates as string data');
+assert.ok(/must be strings/.test(WildFireScriptlets.validate('set-constant', ['flag', 1], 'adguard')),
+  'AdGuard arguments must be strings');
+assert.ok(/unknown AdGuard/.test(WildFireScriptlets.validate('made-up', [], 'adguard')),
+  'unknown AdGuard aliases are rejected directly');
+
+function adguardScriptletContext(hostname) {
+  const sandbox = {
+    console: { log: () => {} },
+    Promise, WeakMap, WeakSet, URL, Date, Math, Reflect,
+    JSON: { parse: text => JSON.parse(text), stringify: value => JSON.stringify(value) },
+    location: {
+      hostname,
+      href: 'https://' + hostname + '/',
+      assign: url => { sandbox.navigated = url; },
+      replace: url => { sandbox.navigated = url; },
+      reload: () => { sandbox.reloaded = true; }
+    },
+    document: {
+      cookie: '',
+      browsingTopics: () => ['topic'],
+      querySelectorAll: () => []
+    },
+    fetch: url => { sandbox.fetched = url; return 'original'; },
+    localStorage: {
+      legacy: '1',
+      getItem(key) { return this[key] || null; },
+      setItem(key, value) { this[key] = value; },
+      removeItem(key) { delete this[key]; }
+    },
+    sessionStorage: {
+      getItem(key) { return this[key] || null; },
+      setItem(key, value) { this[key] = value; },
+      removeItem(key) { delete this[key]; }
+    }
+  };
+  sandbox.window = sandbox;
+  const vmContext = vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/scriptlets.js'), 'utf8'), vmContext, {
+    filename: 'scriptlets.js'
+  });
+  return vmContext;
+}
+
+const adguardContext = adguardScriptletContext('page.example');
+adguardContext.WildFireScriptlets.apply(adguardPayload);
+assert.strictEqual(adguardContext.adGuardFlag, true,
+  'AdGuard yes maps to a WildFire-owned true constant');
+assert.strictEqual(adguardContext.guardedByBothSyntaxes, undefined,
+  'a #@%# exception cancels the same behavior written with ##+js');
+assert.strictEqual(adguardContext.document.browsingTopics, undefined,
+  'AdGuard aliases without a uBO twin run through the same registry');
+
+const queryContext = adguardScriptletContext('page.example');
+queryContext.WildFireScriptlets.apply([{
+  alias: 'remove-request-query-parameter', syntax: 'adguard',
+  args: ['utm_source,utm_medium', '/ads/'], domains: [], isException: false
+}]);
+queryContext.fetch('https://ads.example/watch?utm_source=x&keep=1');
+assert.strictEqual(queryContext.fetched, 'https://ads.example/watch?keep=1',
+  'AdGuard query-parameter removal changes only matching request URLs');
+queryContext.fetch('https://other.example/watch?utm_source=x');
+assert.strictEqual(queryContext.fetched, 'https://other.example/watch?utm_source=x',
+  'non-matching URLs keep their query parameters');
+
+const constructorContext = adguardScriptletContext('page.example');
+constructorContext.Widget = function (value) { this.value = value; };
+constructorContext.WildFireScriptlets.apply([{
+  alias: 'prevent-constructor', syntax: 'adguard',
+  args: ['Widget', 'blocked'], domains: [], isException: false
+}]);
+assert.throws(() => new constructorContext.Widget('blocked'), /blocked constructor/,
+  'AdGuard constructor guards throw only for matching arguments');
+assert.strictEqual(new constructorContext.Widget('ok').value, 'ok',
+  'non-matching constructor calls still work');
+
+const storageContext = adguardScriptletContext('page.example');
+storageContext.WildFireScriptlets.apply([{
+  alias: 'set-local-storage-item', syntax: 'adguard',
+  args: ['/^legacy$/', '$remove$'], domains: [], isException: false
+}]);
+assert.strictEqual(storageContext.localStorage.legacy, undefined,
+  'AdGuard storage removal accepts WildFire-safe regex keys');
+
 const rewriteEngine = new FilterEngine(null, null, null,
   alias => RewriteResources.hasAlias(alias));
 rewriteEngine.load([

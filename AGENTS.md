@@ -299,6 +299,7 @@ fetched before consent, `data_collection_permissions.required` stays `["none"]`.
 | `##sel:has-text("…")`, `##sel:matches-path(/re/)`, `##sel:has(sel)` | |
 | `##sel:contains("…")`, `##sel:nth-ancestor(n)` | |
 | `domain##+js(alias, args)` (curated aliases only) | |
+| `domain#%#//scriptlet('alias', 'args')` (AdGuard, string-only) | AdGuard trusted/debug aliases |
 
 Regex filters are checked at load time. Backreferences, nested or alternated
 quantifiers, excessive quantifier/group counts, long patterns and stateful
@@ -340,8 +341,11 @@ Arguments are validated data: plain dotted property paths, fixed constant tokens
 subset as network filters. Bad aliases, wrong arity, unsafe regexes, injected
 code, unterminated rules and every `trusted-*` alias go into
 `engine.rejectedScriptlets`. A `#@#` exception cancels the same alias/arguments
-on matching domains. The catalog grows toward full uBO compatibility in the
-phases in §8; AdGuard syntax is phase 2. No filter can supply script text.
+on matching domains. The catalog covers the phases in §8. AdGuard
+`[domains]#%#//scriptlet('alias', 'arg', ...)` rules are parsed into the same
+payload with string-only arguments and validated in `lib/scriptlets.js`'s
+AdGuard registry; `#@%#//scriptlet()` cancels the same rule. No filter can
+supply script text.
 
 Procedural cosmetic rules are parsed into a base selector plus ordered steps.
 `:has-text()` and `:contains()` accept a quoted literal (case-insensitive) or a
@@ -411,8 +415,8 @@ cosmetic hiding.
 
 ## 8. Where to extend next
 
-The product direction is full uBO scriptlet compatibility, followed by AdGuard
-scriptlet compatibility. This is a multi-release expansion of the registry in
+The scriptlet catalog covers both uBO `##+js()` and AdGuard
+`#%#//scriptlet()` syntax. It grew as a phased expansion of the registry in
 `lib/scriptlets.js`; every alias lands with a validator, an original
 implementation, tests, and a README row. Keep these load-bearing rules:
 
@@ -436,12 +440,13 @@ Phase 1 — uBO syntax (`##+js()`), in batches:
    `prevent-fetch`/`prevent-xhr`, `nobab`/`nofab`/fingerprint defusers, remaining
    general aliases.
 
-Phase 2 — AdGuard syntax:
+Phase 2 — AdGuard syntax (implemented):
 
-4. Parse `[domains]#%#//scriptlet('name', 'arg', …)` and
-   `#@%#//scriptlet()` exceptions, add the AdGuard alias registry and its
-   string-only argument validation, and reuse the same Phase 1 runtime. AdGuard
-   trusted scriptlets stay rejected under the same rule as uBO `trusted-*`.
+4. `[domains]#%#//scriptlet('name', 'arg', …)` and `#@%#//scriptlet()`
+   exceptions are parsed into the same payload, validated by the AdGuard
+   string-only registry, and mapped to WildFire canonical behaviors. AdGuard
+   trusted and debug-only scriptlets stay rejected under the same rules as uBO
+   `trusted-*`.
 
 Already implemented and tested: Firefox-native registrable-domain scoping
 (`publicSuffix`), `documentId`-keyed request scope, the 4-character token index,
@@ -457,7 +462,10 @@ and user consent, curated `$csp` response-header filtering on Firefox's
 eval/timer/event/window defusers, DOM/storage aliases, `json-prune` with
 wildcard paths, response transforms, JSONPath/edit aliases, fetch/XHR guards and
 the detector defusers. All non-trusted uBO general-purpose and defuser aliases
-are covered; Phase 2 AdGuard syntax is still to come.
+are covered. Phase 2 AdGuard syntax is implemented: quoted string-only aliases
+are parsed into the same payload, validated in a separate AdGuard registry,
+mapped to WildFire canonical behaviors where possible, and rejected when
+trusted or debug-only.
 
 Do not start a later item while an earlier one is only half-implemented. A
 small, correct, fully tested engine is the product.
