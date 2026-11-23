@@ -2694,6 +2694,270 @@ async function testPhase1CRemoveModifiers() {
   assert.ok(e2.getCapabilities() & FilterEngine.CAP.REMOVEHEADER, 'compiled removeheader capability');
 }
 
+async function testPerSiteBadgeCounters() {
+  function memoryStorage(initial) {
+    let data = Object.assign({}, initial);
+    return {
+      async get(key) { return { [key]: data[key] }; },
+      async set(patch) { data = Object.assign({}, data, patch); }
+    };
+  }
+
+  const fakeCompiled = text => {
+    const compileEngine = new FilterEngine(null, () => '', null, () => false);
+    compileEngine.load(text);
+    return compileEngine.toCompiled();
+  };
+  class ImmediateWorker {
+    constructor() { this.terminated = false; }
+    postMessage(msg) {
+      if (msg.type === 'ping') {
+        this.onmessage({ data: { id: msg.id, ok: true, type: 'pong' } });
+        return;
+      }
+      if (msg.type === 'compile') {
+        setImmediate(() => {
+          if (this.terminated) return;
+          this.onmessage({
+            data: {
+              id: msg.id, ok: true, type: 'compiled',
+              compiled: fakeCompiled(msg.text), counts: {}
+            }
+          });
+        });
+      }
+    }
+    terminate() { this.terminated = true; }
+  }
+
+  const apiHooks = {};
+  const badgeTexts = [];
+  let bgMessageHandler;
+  let onActivated;
+  let onUpdated;
+  const ctx = vm.createContext({
+    console, URL, setTimeout, clearTimeout, setImmediate, Promise,
+    Map, Set, Array, Object, String, RegExp, JSON, Math, Boolean, Number, Error,
+    TextEncoder, TextDecoder, Uint8Array, ArrayBuffer,
+    fetch: async url => {
+      const u = String(url);
+      if (u.includes('default.compiled.json')) return { ok: true, json: async () => fakeCompiled('') };
+      if (u.includes('default.txt')) return { ok: true, text: async () => '' };
+      return { ok: false, status: 404, json: async () => ({}), text: async () => '' };
+    }
+  });
+  ctx.globalThis = ctx;
+  ctx.window = ctx;
+  ctx.CSS = { supports: () => true };
+  ctx.location = { hostname: 'page.example' };
+  ctx.Worker = ImmediateWorker;
+  ctx.indexedDB = undefined;
+  ctx.browser = {
+    runtime: {
+      getURL: p => 'moz-extension://test/' + p,
+      onMessage: { addListener: handler => { bgMessageHandler = handler; } }
+    },
+    storage: {
+      local: memoryStorage({
+        'wildfire.state.v1': {
+          enabled: true,
+          blocked: 0,
+          blockedBySite: { 'bad.test': 'x', '': 5 },
+          customFilters: '',
+          disabledSites: []
+        }
+      })
+    },
+    browserAction: {
+      setBadgeBackgroundColor: () => {},
+      setBadgeText: options => badgeTexts.push(Object.assign({}, options))
+    },
+    webRequest: {
+      onBeforeRequest: { addListener: fn => { apiHooks.onBeforeRequest = fn; } },
+      onBeforeSendHeaders: { addListener: fn => { apiHooks.onBeforeSendHeaders = fn; } },
+      onHeadersReceived: { addListener: fn => { apiHooks.onHeadersReceived = fn; } },
+      onCompleted: { addListener: () => {} },
+      onErrorOccurred: { addListener: () => {} },
+      onBeforeRedirect: { addListener: () => {} },
+      filterResponseData: () => ({})
+    },
+    webNavigation: {
+      onCreatedNavigationTarget: { addListener: () => {} },
+      onCommitted: { addListener: () => {} },
+      onReferenceFragmentUpdated: { addListener: () => {} },
+      onHistoryStateUpdated: { addListener: () => {} }
+    },
+    tabs: {
+      query: async () => [{ id: 1, url: 'https://www.example.com/' }],
+      get: async id => ({
+        id,
+        url: id === 1 ? 'https://www.example.com/' : 'https://news.other.test/'
+      }),
+      onUpdated: { addListener: fn => { onUpdated = fn; } },
+      onActivated: { addListener: fn => { onActivated = fn; } },
+      onRemoved: { addListener: () => {} },
+      sendMessage: async () => {},
+      remove: async () => {}
+    },
+    alarms: {
+      onAlarm: { addListener: () => {} },
+      clear: async () => {},
+      get: async () => null,
+      create: async () => {}
+    },
+    contentScripts: { register: async () => ({ unregister: async () => {} }) },
+    publicSuffix: { getDomain: host => host.split('.').slice(-2).join('.') }
+  };
+  loadFiles(ctx, [
+    'lib/state/store.js', ...ENGINE_FILES, 'lib/state/document-scope.js',
+    'lib/resources/redirect-resources.js', 'lib/state/remote-lists.js',
+    'lib/state/suggested-lists.js', 'lib/resources/csp-resources.js',
+    ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js',
+    'lib/compile/compile-cache.js', 'lib/compile/compiler.js'
+  ]);
+  const bgSource = fs.readFileSync(path.join(ROOT, 'background.js'), 'utf8')
+    .replace(/  init\(\);\n}\)\(\);\s*$/, '  globalThis.__wildfireTest = { getState: () => state, setState: patch => { state = Object.assign({}, state, patch); }, loadFilters }; init(); })();');
+  vm.runInContext(bgSource, ctx, { filename: 'background.js' });
+  await new Promise(resolve => setTimeout(resolve, 30));
+  const api = ctx.__wildfireTest;
+  const siteCounts = () => JSON.parse(JSON.stringify(api.getState().blockedBySite));
+
+  assert.strictEqual(Object.keys(api.getState().blockedBySite).length, 0,
+    'invalid persisted per-site counters are discarded');
+  api.setState({
+    enabled: true,
+    customFilters: '||ads.test^$script',
+    disabledSites: []
+  });
+  await api.loadFilters(true);
+  await new Promise(resolve => setTimeout(resolve, 30));
+
+  const blockOn = (tabId, documentUrl) => apiHooks.onBeforeRequest({
+    url: 'https://ads.test/banner.js',
+    type: 'script',
+    tabId,
+    frameId: 0,
+    documentUrl,
+    requestId: 'per-site-' + tabId
+  });
+  const lastBadge = tabId => badgeTexts.filter(entry => entry.tabId === tabId).pop();
+
+  assert.ok(blockOn(1, 'https://www.example.com/').cancel, 'a site block is counted');
+  assert.ok(blockOn(1, 'https://shop.example.com/').cancel, 'subdomains share a site counter');
+  assert.ok(blockOn(2, 'https://news.other.test/').cancel, 'another site has its own counter');
+  assert.strictEqual(api.getState().blocked, 3, 'the lifetime total still increments');
+  assert.strictEqual(JSON.stringify(siteCounts()),
+    JSON.stringify({ 'example.com': 2, 'other.test': 1 }),
+    'blocks are attributed to registrable domains');
+  assert.strictEqual(lastBadge(1).text, '2', 'tab badge shows the active site count');
+  assert.strictEqual(lastBadge(2).text, '1', 'a different tab badge shows its own site count');
+
+  onActivated({ tabId: 1 });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(lastBadge(1).text, '2', 'activating a tab refreshes its site badge');
+
+  const iframeBlock = apiHooks.onBeforeRequest({
+    url: 'https://ads.test/iframe.js',
+    type: 'script',
+    tabId: 2,
+    frameId: 1,
+    documentUrl: 'https://embed.third.test/',
+    requestId: 'per-site-iframe'
+  });
+  assert.ok(iframeBlock.cancel, 'an embedded frame request is counted');
+  assert.strictEqual(api.getState().blocked, 4, 'the iframe block joins the lifetime total');
+  assert.strictEqual(JSON.stringify(siteCounts()),
+    JSON.stringify({ 'example.com': 2, 'other.test': 2 }),
+    'iframe blocks are attributed to the tab site, not the frame document');
+  assert.strictEqual(lastBadge(2).text, '2', 'the tab badge includes embedded frame blocks');
+
+  onUpdated(1, { url: 'https://www.other.test/' }, { url: 'https://www.other.test/' });
+  assert.strictEqual(lastBadge(1).text, '2', 'navigating a tab refreshes the badge for the new site');
+
+  const exampleState = await bgMessageHandler({
+    type: 'wildfire:state', url: 'https://www.example.com/'
+  }, {});
+  assert.strictEqual(exampleState.state.blocked, 4, 'state keeps the lifetime total');
+  assert.strictEqual(exampleState.site.site, 'example.com', 'state reports the site key');
+  assert.strictEqual(exampleState.site.blocked, 2, 'state reports that site counter');
+
+  await bgMessageHandler({ type: 'wildfire:toggle' }, {});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(lastBadge(2).text, '', 'global pause clears known tab badges');
+  await bgMessageHandler({ type: 'wildfire:toggle' }, {});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(lastBadge(2).text, '2', 'global resume restores known tab badges');
+
+  const reset = await bgMessageHandler({ type: 'wildfire:reset-stats' }, {});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(reset.state.blocked, 0, 'reset clears the lifetime total');
+  assert.strictEqual(Object.keys(reset.state.blockedBySite).length, 0,
+    'reset clears every site counter');
+  assert.strictEqual(lastBadge(1).text, '0', 'reset returns the active site badge to zero');
+}
+
+async function testPopupPerSiteDisplay() {
+  function element() {
+    let text = '';
+    return {
+      title: '',
+      disabled: false,
+      listeners: {},
+      set textContent(value) { text = String(value); },
+      get textContent() { return text; },
+      addEventListener(type, handler) { this.listeners[type] = handler; }
+    };
+  }
+  const elements = {};
+  [
+    'status', 'count', 'count-label', 'network-count', 'cosmetic-count',
+    'exception-count', 'toggle', 'site', 'reload', 'options'
+  ].forEach(id => { elements[id] = element(); });
+
+  const sent = [];
+  const stateResult = {
+    state: { enabled: true, blocked: 12 },
+    counts: { network: 10, cosmetic: 2, exceptions: 1 },
+    site: {
+      url: 'https://www.example.com/', host: 'www.example.com',
+      site: 'example.com', blocked: 4, disabled: false
+    }
+  };
+  const ctx = vm.createContext({
+    console, setTimeout,
+    document: { getElementById: id => elements[id] },
+    browser: {
+      tabs: { query: async () => [{ url: 'https://www.example.com/' }] },
+      runtime: {
+        sendMessage: async message => {
+          sent.push(message.type);
+          return message.type === 'wildfire:toggle'
+            ? Object.assign({}, stateResult, { state: { enabled: false, blocked: 12 } })
+            : stateResult;
+        },
+        openOptionsPage: () => {}
+      }
+    }
+  });
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'popup/popup.js'), 'utf8'), ctx, {
+    filename: 'popup.js'
+  });
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.strictEqual(elements.count.textContent, '4',
+    'popup shows the active site counter, not the lifetime total');
+  assert.strictEqual(elements.count.title, '12 requests blocked in total',
+    'popup exposes the lifetime total as a tooltip');
+  assert.strictEqual(elements['count-label'].textContent,
+    'requests blocked on www.example.com', 'popup labels the site being counted');
+
+  elements.toggle.listeners.click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(elements.count.textContent, '4',
+    'later popup actions preserve the active site counter');
+  assert.ok(sent.includes('wildfire:toggle'), 'popup toggle uses the message API');
+}
+
 async function testRemoteLists() {
   assert.strictEqual(RemoteLists.normalizeUrl('javascript:alert(1)'), '',
     'javascript URLs are rejected');
@@ -2866,6 +3130,8 @@ Promise.resolve()
   .then(() => testBackgroundLoadFiltersIntegration())
   .then(() => testStaleGenerationWorkerHang())
   .then(() => testRemoveRuntimeIntegration())
+  .then(() => testPerSiteBadgeCounters())
+  .then(() => testPopupPerSiteDisplay())
   .then(() => testRemoteLists())
   .then(() => console.log('WildFire tests passed (' + engine.counts.network + ' network rules loaded from bundled list).'))
   .catch(error => {

@@ -68,6 +68,8 @@
     });
   }
   const blockedPopups = new Set();
+  // tabId -> registrable-domain site shown in that tab's badge.
+  const tabSites = new Map();
   // tabId -> source document URL for popups created by another browsing context.
   // onCreatedNavigationTarget gives us the source; onBeforeRequest gives us a
   // synchronous blocking point for the popup's main-frame request.
@@ -96,15 +98,75 @@
     return list.some(site => host === site || host.endsWith('.' + site));
   }
 
+  // "Site" means registrable domain, so subdomains share one counter. Firefox
+  // resolves the public suffix once here; the engine uses the same resolver.
+  function siteKey(host) {
+    const clean = String(host || '').toLowerCase();
+    return clean ? registrableDomain(clean) || clean : '';
+  }
+
+  function countForSite(site) {
+    const key = siteKey(site) || String(site || '').toLowerCase();
+    const counts = state.blockedBySite && typeof state.blockedBySite === 'object'
+      ? state.blockedBySite : {};
+    const count = Number(counts[key]);
+    return Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
+  }
+
+  function rememberTabSite(tabId, host) {
+    const site = siteKey(host);
+    if (tabId !== undefined && tabId !== null && site) tabSites.set(tabId, site);
+    return site;
+  }
+
+  // Count against the tab's top-level site, not an embedded frame's document.
+  function countHostFor(details, host) {
+    return tabSites.get(details.tabId) ||
+      safeHost(documentScope.urlForFrame(details.tabId, 0)) || host;
+  }
+
   function formatCount(value) {
     if (value < 1000) return String(value);
     if (value < 1000000) return (value / 1000).toFixed(value < 10000 ? 1 : 0) + 'k';
     return (value / 1000000).toFixed(1) + 'm';
   }
 
-  function updateBadge() {
-    browser.browserAction.setBadgeBackgroundColor({ color: state.enabled ? '#e2511d' : '#777777' });
-    browser.browserAction.setBadgeText({ text: state.enabled ? formatCount(state.blocked || 0) : '' });
+  function setBadgeText(options) {
+    const result = browser.browserAction.setBadgeText(options);
+    if (result && typeof result.catch === 'function') result.catch(() => {});
+  }
+
+  function setBadgeForTab(tabId, site) {
+    const key = site || tabSites.get(tabId) || '';
+    setBadgeText({
+      text: state.enabled && key ? formatCount(countForSite(key)) : '',
+      tabId
+    });
+  }
+
+  async function refreshActiveBadge() {
+    const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+    const tab = Array.isArray(tabs) ? tabs[0] : null;
+    if (!tab) {
+      setBadgeText({ text: '' });
+      return;
+    }
+    const url = tab.pendingUrl || tab.url || '';
+    const site = rememberTabSite(tab.id, safeHost(url)) || tabSites.get(tab.id) || '';
+    setBadgeForTab(tab.id, site);
+  }
+
+  function updateBadge(tabId) {
+    browser.browserAction.setBadgeBackgroundColor({
+      color: state.enabled ? '#e2511d' : '#777777'
+    });
+    if (tabId !== undefined && tabId !== null) {
+      setBadgeForTab(tabId);
+      return;
+    }
+    tabSites.forEach((site, knownTabId) => setBadgeForTab(knownTabId, site));
+    refreshActiveBadge().catch(error =>
+      console.warn('WildFire: active badge refresh failed', error));
   }
 
   async function persist(patch) {
@@ -121,11 +183,28 @@
     }, 1500);
   }
 
+  function recordBlock(tabId, host) {
+    const site = rememberTabSite(tabId, host);
+    const current = Number(state.blocked);
+    state.blocked = (Number.isFinite(current) && current > 0 ? Math.floor(current) : 0) + 1;
+    if (site) {
+      const counts = Object.assign({}, state.blockedBySite && typeof state.blockedBySite === 'object'
+        ? state.blockedBySite : {});
+      counts[site] = countForSite(site) + 1;
+      state.blockedBySite = counts;
+    }
+    updateBadge(tabId);
+    scheduleFlush();
+    return site;
+  }
+
   function snapshot() {
     return {
       state: {
         enabled: state.enabled,
         blocked: state.blocked,
+        blockedBySite: Object.assign({}, state.blockedBySite && typeof state.blockedBySite === 'object'
+          ? state.blockedBySite : {}),
         customFilters: state.customFilters,
         disabledSites: state.disabledSites
       },
@@ -578,13 +657,11 @@
       '';
   }
 
-  function countPopupBlock(tabId) {
+  function countPopupBlock(tabId, host) {
     if (blockedPopups.has(tabId)) return false;
     blockedPopups.add(tabId);
     popupSources.delete(tabId);
-    state.blocked = (state.blocked || 0) + 1;
-    updateBadge();
-    scheduleFlush();
+    recordBlock(tabId, host);
     return true;
   }
 
@@ -603,7 +680,7 @@
       if (!siteDisabled(safeHost(sourceUrl))) {
         const popup = engine.matchPopup(details.url, sourceUrl);
         if (popup.blocked) {
-          countPopupBlock(details.tabId);
+          countPopupBlock(details.tabId, sourceUrl || documentUrl);
           return { cancel: true };
         }
       }
@@ -627,9 +704,7 @@
         ? RedirectResources.resolve(result.redirect.alias, result.redirect.captures)
         : '';
 
-      state.blocked = (state.blocked || 0) + 1;
-      updateBadge();
-      scheduleFlush();
+      recordBlock(details.tabId, countHostFor(details, host));
       if (rewrite) {
         return startRewrite(details.requestId, rewrite) ? undefined : { cancel: true };
       }
@@ -642,9 +717,7 @@
       if (rp.params && rp.params.length) {
         const cleanUrl = applyRemoveparam(details.url, rp.params);
         if (cleanUrl && cleanUrl !== details.url) {
-          state.blocked = (state.blocked || 0) + 1;
-          updateBadge();
-          scheduleFlush();
+          recordBlock(details.tabId, countHostFor(details, host));
           return { redirectUrl: cleanUrl };
         }
       }
@@ -756,7 +829,7 @@
     const result = engine.matchPopup(details.url, sourceUrl);
     if (!result.blocked) return;
 
-    if (!countPopupBlock(details.tabId)) return;
+    if (!countPopupBlock(details.tabId, sourceUrl)) return;
     browser.tabs.remove(details.tabId).catch(error =>
       console.warn('WildFire: popup close failed', error));
   }
@@ -771,13 +844,19 @@
     const payload = snapshot();
 
     switch (action) {
-      case 'state':
+      case 'state': {
+        const url = message.url || (sender.tab && sender.tab.url) || '';
+        const host = safeHost(url);
+        const site = siteKey(host);
         payload.site = {
-          url: message.url || (sender.tab && sender.tab.url) || '',
-          host: safeHost(message.url || (sender.tab && sender.tab.url) || ''),
-          disabled: siteDisabled(safeHost(message.url || (sender.tab && sender.tab.url) || ''))
+          url,
+          host,
+          site,
+          blocked: site ? countForSite(site) : 0,
+          disabled: siteDisabled(host)
         };
         return payload;
+      }
 
       case 'toggle':
         return persist({ enabled: !state.enabled });
@@ -798,7 +877,7 @@
         return snapshot();
 
       case 'reset-stats':
-        return persist({ blocked: 0 });
+        return persist({ blocked: 0, blockedBySite: {} });
 
       case 'reload':
         await loadFilters();
@@ -932,12 +1011,34 @@
 
       browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
         if (changeInfo.url) documentScope.remember({ tabId, frameId: 0, url: changeInfo.url });
+        const url = changeInfo.url || (changeInfo.status === 'complete' && tab && tab.url) || '';
+        if (url) {
+          rememberTabSite(tabId, safeHost(url));
+          updateBadge(tabId);
+        }
         if (changeInfo.status === 'complete' && tab.url) sendCosmetic(tabId, tab.url);
       });
+      if (browser.tabs.onActivated && browser.tabs.onActivated.addListener) {
+        browser.tabs.onActivated.addListener(activeInfo => {
+          const tabId = activeInfo && activeInfo.tabId;
+          if (tabId === undefined || tabId === null) return;
+          const applyTab = tab => {
+            const url = tab && (tab.pendingUrl || tab.url) || '';
+            rememberTabSite(tabId, safeHost(url));
+            updateBadge(tabId);
+          };
+          if (typeof browser.tabs.get === 'function') {
+            browser.tabs.get(tabId).then(applyTab).catch(() => updateBadge(tabId));
+          } else {
+            updateBadge(tabId);
+          }
+        });
+      }
       browser.tabs.onRemoved.addListener(tabId => {
         documentScope.forgetTab(tabId);
         blockedPopups.delete(tabId);
         popupSources.delete(tabId);
+        tabSites.delete(tabId);
       });
 
       updateBadge();

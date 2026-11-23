@@ -4,6 +4,7 @@
   const elements = {
     status: document.getElementById('status'),
     count: document.getElementById('count'),
+    countLabel: document.getElementById('count-label'),
     network: document.getElementById('network-count'),
     cosmetic: document.getElementById('cosmetic-count'),
     exceptions: document.getElementById('exception-count'),
@@ -34,7 +35,13 @@
     const { state, counts, site } = current;
     const pausedHere = Boolean(site && site.host && site.disabled);
 
-    elements.count.textContent = Number(state.blocked || 0).toLocaleString();
+    const siteCount = Number(site && site.blocked || 0);
+    elements.count.textContent = siteCount.toLocaleString();
+    elements.count.title = Number(state.blocked || 0).toLocaleString() +
+      ' requests blocked in total';
+    elements.countLabel.textContent = site && site.host
+      ? 'requests blocked on ' + site.host
+      : 'requests blocked on this site';
     elements.network.textContent = counts.network.toLocaleString();
     elements.cosmetic.textContent = counts.cosmetic.toLocaleString();
     elements.exceptions.textContent = counts.exceptions.toLocaleString();

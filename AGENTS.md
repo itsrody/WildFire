@@ -151,8 +151,10 @@ graph without a deliberate redesign.
 - Skip if the document host is in `state.disabledSites` (exact or subdomain).
 - Map `details.type` through `mapResourceType`, then call
   `engine.matchRequest(url, type, documentUrl)`.
-- On a block: increment `state.blocked`, refresh the badge, schedule a
-  debounced stats save (1.5 s), return `{cancel:true}` — or `{redirectUrl}` when
+- On a block: increment `state.blocked` and `state.blockedBySite[site]` (keyed by
+  the tab's top-level registrable domain, not an embedded frame), refresh that
+  tab's badge, schedule a debounced stats save (1.5 s), return `{cancel:true}` —
+  or `{redirectUrl}` when
   the rule has `$redirect`/`$redirect-rule` and the alias resolves to a
   WildFire-owned data-URI resource. When the rule has `$rewrite`, create a
   `filterResponseData()` stream filter **synchronously**, discard the original
@@ -304,8 +306,12 @@ Filter text is never executed.
 
 ### State and messages
 
-Storage key `wildfire.state.v1` holds `{enabled, blocked, customFilters,
-disabledSites}`. `persist(patch)` merges into the in-memory copy and writes a
+Storage key `wildfire.state.v1` holds `{enabled, blocked, blockedBySite,
+customFilters, disabledSites}`. `blocked` is the lifetime total shown in Options;
+`blockedBySite` maps registrable domains to per-site counters shown by the
+toolbar badge and popup. The badge is set per tab and refreshed on activation
+and navigation, so subdomains share one site count while each tab shows its own
+site. `persist(patch)` merges into the in-memory copy and writes a
 **full snapshot** — do not write partial objects directly, or parallel message
 handlers will clobber unrelated fields. Storage key `wildfire.remote.v1` holds
 `{lists: [{url, enabled, autoUpdate, etag, lastModified, text, updatedAt, hash}]}`
@@ -315,11 +321,11 @@ Background listens for `wildfire:*` messages:
 
 | Action | Purpose |
 | --- | --- |
-| `state` | snapshot + active-tab `{url, host, disabled}` |
+| `state` | snapshot + active-tab `{url, host, site, blocked, disabled}` |
 | `toggle` | flip global `enabled` |
 | `toggle-site` | add/remove a host in `disabledSites` |
 | `set-filters` | save custom filters, reload engine, refresh cosmetics |
-| `reset-stats` | zero the blocked counter |
+| `reset-stats` | zero the lifetime total and every site counter |
 | `reload` | rebuild from bundled + custom + enabled remote filters |
 | `list-state` | return registered remote lists |
 | `suggested-lists` | return the inert catalog of suggested list URLs |

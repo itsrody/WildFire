@@ -38,6 +38,14 @@ npm run dev
 
 Requires Firefox or Firefox ESR **153 or newer**; older versions will refuse to install.
 
+## Counters
+
+The toolbar badge and popup count requests blocked on the active tab's site
+(registrable domain), so `www.example.com` and `shop.example.com` share one
+count. Each tab has its own badge, updated when you switch tabs or navigate.
+Options shows the lifetime total; **Reset stats** clears both the total and all
+site counters.
+
 ## Build the XPI
 
 ```sh
