@@ -34,7 +34,8 @@ const LOOP_STATEMENT = /^\s*(?:for\s*\(|while\s*\(|for\s+await\b|do\s*\{)/;
 const CLIENT_FILE = 'lib/wapi/wapi-client.js';
 const WAPI_FILES = [
   'lib/wapi/wapi.js',
-  'lib/wapi/wapi-contexts.js'
+  'lib/wapi/wapi-contexts.js',
+  'lib/wapi/wapi-background.js'
 ];
 const BACKGROUND_CHAIN = [
   'lib/background/helpers.js',
@@ -74,8 +75,10 @@ if (manifest.background && manifest.background.scripts) {
   backgroundScripts.forEach(value => referenced.add(value));
   const wapiIndex = backgroundScripts.indexOf(WAPI_FILES[0]);
   const contextsIndex = backgroundScripts.indexOf(WAPI_FILES[1]);
+  const backgroundWapiIndex = backgroundScripts.indexOf(WAPI_FILES[2]);
   const chainStart = backgroundScripts.indexOf(BACKGROUND_CHAIN[0]);
-  if (wapiIndex === -1 || contextsIndex !== wapiIndex + 1 || chainStart !== contextsIndex + 1) {
+  if (wapiIndex === -1 || contextsIndex !== wapiIndex + 1 ||
+      backgroundWapiIndex !== contextsIndex + 1 || chainStart !== backgroundWapiIndex + 1) {
     errors.push('wapi files must load immediately before the background chain');
   }
   const actualChain = backgroundScripts.slice(chainStart, chainStart + BACKGROUND_CHAIN.length);

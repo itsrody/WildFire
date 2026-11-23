@@ -51,6 +51,7 @@ lib/
   wapi/                Firefox-native API backbone (wapi), no browser shims
     wapi.js            named listener registry, prefix router, tabs/alarms/content scripts
     wapi-contexts.js   per-frame content script context registry and frame targeting
+    wapi-background.js background-side port channels for push updates
     wapi-client.js     client-side message API for extension pages and content scripts
   background/          background classic-script chain, load in order:
     helpers.js         counters/badge, snapshots, diagnostics and host helpers
@@ -137,21 +138,25 @@ used **only** by `tools/`.
 11. `lib/compile/compiler.js` → `window.WildFireCompiler`
 12. `lib/wapi/wapi.js` → `window.WildFireWapi` (aliased as `window.wapi`)
 13. `lib/wapi/wapi-contexts.js` → `window.WildFireWapiContexts` (aliased as `window.wapiContexts`)
-14. `lib/background/` chain, in order: `helpers.js`, `engine-host.js`,
+14. `lib/wapi/wapi-background.js` → `window.WildFireWapiBackground` (aliased as `window.wapiBackground`)
+15. `lib/background/` chain, in order: `helpers.js`, `engine-host.js`,
     `requests.js`, `messages.js`, `background.js` → `window.WildFireBackground`
-15. `background.js` → calls `WildFireBackground.create(...).start()`
+16. `background.js` → calls `WildFireBackground.create(...).start()`
 
 `wapi.js` is WildFire's Firefox-native API backbone: named idempotent listener
 registration, one prefix-filtered message listener, and thin promise wrappers for
 tabs, alarms, content-script registration and response-stream access.
 `wapi-contexts.js` builds on it to track per-frame content script contexts and
-route frame-targeted messages. Action dispatch stays in `lib/background/messages.js`.
-The background chain owns both modules; do not add a Chromium shim or callback
+route frame-targeted messages. `wapi-background.js` adds native `runtime.onConnect`
+port channels so the background can push debounced state updates to the popup.
+Action dispatch stays in `lib/background/messages.js`.
+The background chain owns these modules; do not add a Chromium shim or callback
 bridge there.
 
 `wapi-client.js` is the matching client-side backbone: popup, options and content
-scripts use one prefix-filtered message API and one runtime listener instead of
-scattering `browser.runtime` calls. It does not replace the background router.
+scripts use one prefix-filtered message API, one runtime listener, and native
+port handles instead of scattering `browser.runtime` calls. It does not replace
+the background router.
 
 Content scripts load in this order: `lib/wapi/wapi-client.js` → `lib/engine/procedural/` chain (`text.js`,
 `nodes.js`, `native.js`, `select.js`) → `content/cosmetic.js`, so the DOM

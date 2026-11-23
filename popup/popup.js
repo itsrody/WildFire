@@ -31,6 +31,10 @@
     applyResult(result);
   }
 
+  client.connect('state', message => {
+    if (message && message.state && message.counts) applyResult(message);
+  });
+
   function render() {
     if (!current) return;
     const { state, counts, site } = current;

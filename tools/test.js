@@ -43,7 +43,8 @@ const CLIENT_FILE = 'lib/wapi/wapi-client.js';
 /* Background controller is a classic-script chain loaded before the bootstrap. */
 const WAPI_FILES = [
   'lib/wapi/wapi.js',
-  'lib/wapi/wapi-contexts.js'
+  'lib/wapi/wapi-contexts.js',
+  'lib/wapi/wapi-background.js'
 ];
 const BACKGROUND_FILES = [
   'lib/background/helpers.js',
@@ -93,7 +94,8 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/compile/compiler.js'), 'utf
   filename: 'compiler.js'
 });
 loadFiles(context, [...WAPI_FILES, ...BACKGROUND_FILES]);
-const { FilterEngine, mapResourceType, WildFirePageStore, RedirectResources, WildFireProcedural, RemoteLists, WildFireSuggestedLists, CspResources, WildFireScriptlets, RewriteResources, WildFireCompileCache, WildFireCompiler, WildFireStore, WildFireBackground, WildFireWapi, wapi, WildFireWapiContexts, wapiContexts } = context;
+const { FilterEngine, mapResourceType, WildFirePageStore, RedirectResources, WildFireProcedural, RemoteLists, WildFireSuggestedLists, CspResources, WildFireScriptlets, RewriteResources, WildFireCompileCache, WildFireCompiler, WildFireStore, WildFireBackground, WildFireWapi, wapi, WildFireWapiContexts, wapiContexts,
+  WildFireWapiBackground, wapiBackground } = context;
 
 const engine = new FilterEngine();
 engine.load([
@@ -3109,6 +3111,20 @@ async function testPopupPerSiteDisplay() {
   ].forEach(id => { elements[id] = element(); });
 
   const sent = [];
+  const portListeners = [];
+  const nativePort = {
+    name: 'wildfire:state',
+    postMessage() {},
+    onMessage: {
+      addListener(listener) { portListeners.push(listener); },
+      removeListener(listener) {
+        const index = portListeners.indexOf(listener);
+        if (index !== -1) portListeners.splice(index, 1);
+      }
+    },
+    onDisconnect: { addListener() {} },
+    disconnect() {}
+  };
   const stateResult = {
     state: { enabled: true, blocked: 12 },
     counts: { network: 10, cosmetic: 2, exceptions: 1 },
@@ -3123,6 +3139,7 @@ async function testPopupPerSiteDisplay() {
     browser: {
       tabs: { query: async () => [{ url: 'https://www.example.com/' }] },
       runtime: {
+        connect: () => nativePort,
         sendMessage: async message => {
           sent.push(message.type);
           return message.type === 'wildfire:toggle'
@@ -3145,6 +3162,16 @@ async function testPopupPerSiteDisplay() {
     'popup exposes the lifetime total as a tooltip');
   assert.strictEqual(elements['count-label'].textContent,
     'requests blocked on www.example.com', 'popup labels the site being counted');
+
+  portListeners[0]({
+    type: 'wildfire:state',
+    state: { enabled: true, blocked: 99 },
+    counts: stateResult.counts
+  });
+  assert.strictEqual(elements.count.title, '99 requests blocked in total',
+    'background state pushes refresh the popup lifetime counter');
+  assert.strictEqual(elements.count.textContent, '4',
+    'background pushes preserve the active site counter');
 
   elements.toggle.listeners.click();
   await new Promise(resolve => setImmediate(resolve));
@@ -3397,11 +3424,27 @@ async function testWapiClient() {
     };
   };
   const messages = hub();
+  const portMessages = hub();
+  const portDisconnect = hub();
+  const posted = [];
+  let connectedName = '';
+  let disconnected = 0;
+  const nativePort = {
+    name: 'wildfire:state',
+    postMessage: payload => { posted.push(payload); },
+    onMessage: portMessages,
+    onDisconnect: portDisconnect,
+    disconnect: () => { disconnected += 1; }
+  };
   const ctx = vm.createContext({
     console,
     browser: {
       runtime: {
         onMessage: messages,
+        connect: options => {
+          connectedName = options.name;
+          return nativePort;
+        },
         sendMessage: async message => {
           sent.push(message);
           return { ok: true, echo: message.type };
@@ -3425,6 +3468,19 @@ async function testWapiClient() {
   assert.strictEqual(sent[1].type, 'wildfire:reload', 'full types are not double-prefixed');
   await client.openOptions();
   assert.strictEqual(opened, 1, 'client wraps the native options opener');
+
+  const pushed = [];
+  const handle = client.connect('state', payload => pushed.push(payload));
+  assert.strictEqual(connectedName, 'wildfire:state', 'connect() uses a prefixed port name');
+  assert.strictEqual(handle.connected, true);
+  handle.send({ ping: 1 });
+  assert.deepStrictEqual(posted, [{ ping: 1 }], 'port handles can send payloads');
+  portMessages.listeners[0]({ type: 'wildfire:state', state: { blocked: 3 } });
+  portMessages.listeners[0]({ type: 'other:state' });
+  assert.strictEqual(pushed.length, 1, 'port listeners ignore unrelated prefixes');
+  handle.close();
+  assert.strictEqual(portMessages.listeners.length, 0, 'close() removes the port listener');
+  assert.strictEqual(disconnected, 1, 'close() disconnects the native port');
 
   const seen = [];
   const off = client.on('apply', () => { seen.push('first'); return 'handled'; });
@@ -3466,6 +3522,70 @@ async function testWapiClient() {
     () => WildFireWapiClient.create({ browserApi: {} }).send('state'),
     /runtime\.sendMessage/,
     'missing runtime messaging fails loudly');
+}
+
+async function testWapiBackground() {
+  const connectHub = (() => {
+    const listeners = [];
+    return {
+      listeners,
+      addListener(listener) { listeners.push(listener); },
+      removeListener(listener) {
+        const index = listeners.indexOf(listener);
+        if (index !== -1) listeners.splice(index, 1);
+      }
+    };
+  })();
+  const wapiStub = WildFireWapi.create({
+    browserApi: { runtime: { onConnect: connectHub } }
+  });
+  const port = name => {
+    const messages = [];
+    const disconnects = [];
+    return {
+      name,
+      messages,
+      onMessage: { addListener() {}, removeListener() {} },
+      onDisconnect: {
+        addListener(listener) { disconnects.push(listener); },
+        fire() { disconnects.forEach(listener => listener()); }
+      },
+      postMessage(payload) { messages.push(payload); }
+    };
+  };
+
+  assert.strictEqual(wapiBackground, WildFireWapiBackground,
+    'wapi-background is exposed as a canonical backbone module');
+  const channels = WildFireWapiBackground.create({ wapi: wapiStub, autoStart: false });
+  assert.strictEqual(channels.connected, false, 'channels are inert before connect()');
+  assert.strictEqual(channels.connect(), true);
+  assert.strictEqual(channels.connect(), false, 'onConnect is registered once');
+
+  const statePort = port('wildfire:state');
+  const otherPort = port('other:state');
+  const connectListener = connectHub.listeners[0];
+  connectListener(statePort);
+  connectListener(otherPort);
+  assert.strictEqual(channels.size('state'), 1, 'only prefixed channels are tracked');
+  assert.strictEqual(channels.channelNames().join(','), 'state');
+
+  const payload = { type: 'wildfire:state', ok: true, state: { blocked: 7 } };
+  assert.strictEqual(channels.broadcast('state', payload), 1);
+  assert.deepStrictEqual(statePort.messages, [payload]);
+  assert.strictEqual(otherPort.messages.length, 0);
+
+  statePort.onDisconnect.fire();
+  assert.strictEqual(channels.size('state'), 0, 'disconnected ports are pruned');
+  const brokenPort = port('wildfire:state');
+  brokenPort.postMessage = () => { throw new Error('port closed'); };
+  connectListener(brokenPort);
+  assert.strictEqual(channels.size('state'), 1);
+  assert.strictEqual(channels.broadcast('state', payload), 0,
+    'failed posts are ignored and pruned');
+  assert.strictEqual(channels.size('state'), 0);
+
+  channels.close();
+  assert.strictEqual(connectHub.listeners.length, 0, 'close() removes onConnect');
 }
 
 async function testWapiContexts() {
@@ -3523,7 +3643,11 @@ async function testBackgroundControllerRobustness() {
     };
   };
   const makeBrowser = () => ({
-    runtime: { getURL: path => 'moz-extension://test/' + path, onMessage: eventHub() },
+    runtime: {
+      getURL: path => 'moz-extension://test/' + path,
+      onMessage: eventHub(),
+      onConnect: eventHub()
+    },
     storage: { local: makeLocalStore() },
     browserAction: {
       setBadgeBackgroundColor: () => {},
@@ -3607,6 +3731,16 @@ async function testBackgroundControllerRobustness() {
     await healthy.start();
     const firstCount = healthy.debug().getListenerCount();
     assert.ok(firstCount > 0, 'a healthy startup registers listeners');
+    const pushed = [];
+    healthyBrowser.runtime.onConnect.listeners[0]({
+      name: 'wildfire:state',
+      postMessage: payload => { pushed.push(payload); },
+      onDisconnect: { addListener() {} }
+    });
+    await healthy.context.persist({ blocked: 42 });
+    const push = pushed.find(payload => payload.type === 'wildfire:state');
+    assert.ok(push && push.state.blocked === 42,
+      'state persistence broadcasts to connected extension pages');
     await healthy.start();
     assert.strictEqual(healthy.debug().getListenerCount(), firstCount,
       'starting twice does not register duplicate listeners');
@@ -3668,6 +3802,7 @@ Promise.resolve()
   .then(() => testPerSiteBadgeCounters())
   .then(() => testWapiBackbone())
   .then(() => testWapiClient())
+  .then(() => testWapiBackground())
   .then(() => testWapiContexts())
   .then(() => testBackgroundControllerRobustness())
   .then(() => testPopupPerSiteDisplay())
