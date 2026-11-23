@@ -711,6 +711,24 @@ assert.strictEqual(classify(nthRule, '/').mode, 'js', ':nth-ancestor stays in th
   const minSel = WildFireProcedural.select(minRoot, minRule, '/');
   assert.strictEqual(JSON.stringify(minSel.map(n => n.textContent)), JSON.stringify(['long enough text']), 'min-text-length filters by text length');
 
+  const attrEngine = new FilterEngine();
+  attrEngine.load([
+    'example.com##div:matches-attr(data-ad)',
+    'example.com##div:matches-attr(data-ad=/^yes/)',
+    'example.com##div:matches-attr(bad name)'
+  ].join('\n'));
+  assert.strictEqual(attrEngine.getProcedural('example.com').length, 2, 'matches-attr parses');
+  assert.strictEqual(attrEngine.rejectedCosmetic.length, 1, 'invalid matches-attr rejected');
+  const a1 = stubNode('div', ''); a1.getAttribute = n => n==='data-ad' ? 'yes-1' : null;
+  const a2 = stubNode('div', ''); a2.getAttribute = n => n==='data-ad' ? 'no' : null;
+  const a3 = stubNode('div', ''); a3.getAttribute = () => null;
+  const attrRoot = stubNode('body', '', [a1,a2,a3]);
+  const attrRules = attrEngine.getProcedural('example.com');
+  const hasRuleA = attrRules.find(r => r.steps.some(s => s.op==='matches-attr' && !s.matcher));
+  const reRuleA = attrRules.find(r => r.steps.some(s => s.op==='matches-attr' && s.matcher));
+  assert.strictEqual(WildFireProcedural.select(attrRoot, hasRuleA, '/').length, 2, 'matches-attr presence');
+  assert.strictEqual(WildFireProcedural.select(attrRoot, reRuleA, '/').length, 1, 'matches-attr regex');
+
 const resolveCsp = alias => CspResources.resolve(alias);
 // Arrays built inside the vm realm have a different prototype than Node's.
 const cspFor = (instance, url, type, documentUrl) =>

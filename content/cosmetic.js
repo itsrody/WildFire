@@ -35,21 +35,28 @@
     return false;
   }
 
-  function observeOptions(textSensitive) {
+  function hasAttrStep(step) {
+    if (!step) return false;
+    if (step.op === 'matches-attr') return true;
+    if (step.op === 'has' && step.inner && Array.isArray(step.inner.steps)) return step.inner.steps.some(hasAttrStep);
+    return false;
+  }
+
+  function observeOptions(textSensitive, attrSensitive) {
     return {
       childList: true,
       subtree: true,
       characterData: textSensitive,
       attributes: true,
-      attributeFilter: ['class', 'id']
+      attributeFilter: attrSensitive ? undefined : ['class', 'id']
     };
   }
 
-  function watch(textSensitive) {
+  function watch(textSensitive, attrSensitive) {
     if (!observer) return;
     observer.disconnect();
     if (!dynamicEntries.length) return;
-    observer.observe(document.documentElement || document, observeOptions(textSensitive));
+    observer.observe(document.documentElement || document, observeOptions(textSensitive, attrSensitive));
   }
 
   function scheduleReapply() {
@@ -107,7 +114,7 @@
       proceduralStyle.textContent = ATTRIBUTE_HIDE;
     }
 
-    watch(dynamicEntries.some(item => item.steps.some(needsText)));
+    watch(dynamicEntries.some(item => item.steps.some(needsText)), dynamicEntries.some(item => item.steps.some(hasAttrStep)));
   }
 
   function apply(selectors, procedural) {

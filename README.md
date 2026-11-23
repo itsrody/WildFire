@@ -89,6 +89,7 @@ options page (one per line):
 | `example.com##.leaf:nth-ancestor(2)` / `:upward(2)` | Hide the nth parent of every `.leaf` match |
 | `example.com##.leaf:upward(.panel)` | Hide the nearest matching ancestor |
 | `example.com##.ad:min-text-length(200)` | Hide `.ad` when its text is at least N characters |
+| `example.com##div:matches-attr(data-ad=/^promo/)` | Hide when an attribute matches a safe regex |
 | `example.com#?#div:-abp-has(.ad)` | ABP procedural form, mapped safely to `:has()` |
 | `example.com#?#div:-abp-contains(Ad)` | ABP procedural form, mapped safely to `:has-text()` |
 
