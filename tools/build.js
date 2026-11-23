@@ -93,9 +93,23 @@ function walk(directory, base, output) {
 
 execFileSync(process.execPath, [path.join(__dirname, 'check.js')], { stdio: 'inherit' });
 
+function compiledDefault() {
+  const vm = require('vm');
+  const src = fs.readFileSync(path.join(ROOT, 'lib/filter-engine.js'), 'utf8');
+  const ctx = { console, URL, Map, Set, Array, Object, String, RegExp, JSON, Math, Boolean, Number };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(src, ctx, { filename: 'filter-engine.js' });
+  const Engine = ctx.FilterEngine;
+  const engine = new Engine();
+  engine.load(fs.readFileSync(path.join(ROOT, 'filters/default.txt'), 'utf8'));
+  return Buffer.from(JSON.stringify(engine.toCompiled()), 'utf8');
+}
+
 const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'));
 const entries = [];
 walk(ROOT, '', entries);
+entries.push({ name: 'filters/default.compiled.json', data: compiledDefault() });
 entries.sort((a, b) => a.name.localeCompare(b.name));
 
 const dist = path.join(ROOT, 'dist');

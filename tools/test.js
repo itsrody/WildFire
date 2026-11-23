@@ -329,6 +329,32 @@ assert.strictEqual(mapResourceType('websocket'), 'websocket', 'websocket is its 
 assert.strictEqual(mapResourceType('web_manifest'), 'manifest', 'web_manifest alias');
 assert.strictEqual(mapResourceType('csp_report'), 'csp', 'csp_report alias');
 
+// Compiled DAT-like round-trip preserves matching behavior.
+const compiledSource = new FilterEngine(null, null, { validate: () => null });
+compiledSource.load([
+  '||ads.example^$script,third-party',
+  '||ads.example^$redirect=noopjs,script',
+  '@@||ads.example/allow.js$script',
+  'example.com##.ad',
+  '##.global',
+  'example.com#@#.global',
+  'example.com##div:has-text(Ad)',
+  'example.com##+js(set-constant, a, 1)'
+].join('\n'));
+const compiledBlob = compiledSource.toCompiled();
+assert.strictEqual(compiledBlob.v, FilterEngine.COMPILED_VERSION, 'compiled version present');
+const compiledEngine = new FilterEngine(null, null, { validate: () => null });
+assert.strictEqual(compiledEngine.loadCompiled(compiledBlob), true, 'compiled blob loads');
+assert.strictEqual(compiledEngine.matchRequest('https://ads.example/app.js', 'script', 'https://news.test/').blocked,
+  true, 'compiled network rule matches');
+assert.strictEqual(compiledEngine.matchRequest('https://ads.example/allow.js', 'script', 'https://news.test/').blocked,
+  false, 'compiled exception matches');
+assert.deepStrictEqual(Array.from(compiledEngine.getCosmetic('example.com')).sort(), ['.ad'],
+  'compiled cosmetic rules match');
+assert.strictEqual(compiledEngine.getProcedural('example.com').length, 1, 'compiled procedural rule matches');
+assert.strictEqual(compiledEngine.scriptletRules.length, 1, 'compiled scriptlet rule loads');
+assert.strictEqual(compiledEngine.getScriptletPayload().length, 1, 'compiled scriptlet payload available');
+
 const documentEngine = new FilterEngine();
 documentEngine.load([
   '||blocked.example^$document',

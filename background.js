@@ -158,22 +158,40 @@
   }
 
   async function loadFilters() {
-    let bundled = '';
-    try {
-      const response = await fetch(browser.runtime.getURL('filters/default.txt'));
-      if (response.ok) bundled = await response.text();
-    } catch (error) {
-      console.warn('WildFire: bundled filter list unavailable', error);
-    }
     // Bundled rules first, then the user's own rules, then opted-in remote
     // lists. Exceptions still win regardless of where they were loaded.
-    let remote = '';
+    engine.reset();
+    let bundledLoaded = false;
     try {
-      remote = await remoteLists.enabledText();
+      const response = await fetch(browser.runtime.getURL('filters/default.compiled.json'));
+      if (response.ok) {
+        const compiled = await response.json();
+        bundledLoaded = engine.loadCompiled(compiled);
+      }
+    } catch (error) {
+      bundledLoaded = false;
+    }
+    if (!bundledLoaded) {
+      try {
+        const response = await fetch(browser.runtime.getURL('filters/default.txt'));
+        if (response.ok) {
+          const bundled = await response.text();
+          engine.load(bundled);
+        }
+      } catch (error) {
+        console.warn('WildFire: bundled filter list unavailable', error);
+      }
+    }
+
+    const custom = String(state.customFilters || '').trim();
+    if (custom) engine.load(custom, { append: true });
+    try {
+      const remote = await remoteLists.enabledText();
+      if (remote) engine.load(remote, { append: true });
     } catch (error) {
       console.warn('WildFire: remote list store unavailable', error);
     }
-    engine.load(bundled + '\n' + (state.customFilters || '') + '\n' + remote);
+
     await refreshAllCosmetic();
     await syncScriptlets();
   }
