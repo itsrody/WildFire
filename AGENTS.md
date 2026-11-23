@@ -453,10 +453,11 @@ and user consent, curated `$csp` response-header filtering on Firefox's
 `onHeadersReceived`, fixed-mapping `$rewrite` response bodies through Firefox's
 `filterResponseData()` stream filter, and a scriptlet alias registry injected at
 `document_start` through Firefox's `contentScripts.register()`. Phase 1A, 1B and
-the core of 1C are implemented: canonical short aliases, safe needles, property
-traps, eval/timer/event/window defusers, DOM/storage aliases, `json-prune` with
-wildcard paths, `prevent-fetch`/`prevent-xhr` and common detector defusers.
-Remaining general aliases and Phase 2 AdGuard syntax are still to come.
+1C are implemented: canonical short aliases, safe needles, property traps,
+eval/timer/event/window defusers, DOM/storage aliases, `json-prune` with
+wildcard paths, response transforms, JSONPath/edit aliases, fetch/XHR guards and
+the detector defusers. All non-trusted uBO general-purpose and defuser aliases
+are covered; Phase 2 AdGuard syntax is still to come.
 
 Do not start a later item while an earlier one is only half-implemented. A
 small, correct, fully tested engine is the product.

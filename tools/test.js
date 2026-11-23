@@ -909,12 +909,47 @@ assert.notStrictEqual(WildFireScriptlets.validate('prevent-fetch', ['ads', 'fetc
 assert.strictEqual(WildFireScriptlets.canonical('no-fetch-if'), 'prevent-fetch',
   'no-fetch-if canonicalizes to prevent-fetch');
 
+function resolved(value) {
+  return { then: callback => resolved(callback(value)) };
+}
+
 function dataScriptletContext() {
   const sandbox = {
-    console, Promise, WeakSet, URL, Date, Math,
+    console, Promise, WeakMap, WeakSet, URL, Date, Math,
     JSON: { parse: (text, reviver) => JSON.parse(text, reviver), stringify: (value) => JSON.stringify(value) },
     location: { hostname: 'page.example', href: 'https://page.example/' },
-    fetch: url => { sandbox.fetched = url; return 'original'; }
+    document: { cookie: '' },
+    fetch: (url, init) => {
+      sandbox.fetched = url;
+      sandbox.sentBody = init && init.body;
+      return 'original';
+    }
+  };
+  sandbox.Response = class FakeResponse {
+    constructor(body) { this.body = String(body); }
+    json() { return resolved(JSON.parse(this.body)); }
+    text() { return resolved(this.body); }
+  };
+  sandbox.XMLHttpRequest = class FakeXMLHttpRequest {
+    open(method, url) { this.url = url; }
+    setRequestHeader() {}
+    send(body) { this.sentBody = body; }
+    get responseText() { return this.body || ''; }
+    set responseText(value) { this.body = value; }
+  };
+  sandbox.DOMParser = class FakeDOMParser {
+    parseFromString() {
+      return {
+        querySelectorAll: () => [{
+          nodeType: 1,
+          parentNode: { removeChild: () => { sandbox.xmlRemoved = true; } }
+        }],
+        evaluate: () => ({ snapshotLength: 0, snapshotItem: () => null })
+      };
+    }
+  };
+  sandbox.XMLSerializer = class FakeXMLSerializer {
+    serializeToString() { return '<pruned/>'; }
   };
   sandbox.window = sandbox;
   const vmContext = vm.createContext(sandbox);
@@ -968,6 +1003,121 @@ detectorContext.WildFireScriptlets.apply([
 ]);
 assert.strictEqual(detectorContext.BlockAdblock(), false,
   'nobab defuses the BlockAdblock detector');
+
+assert.strictEqual(WildFireScriptlets.validate('json-prune-fetch-response', []), '',
+  'response prune aliases accept their optional arguments');
+assert.strictEqual(WildFireScriptlets.validate('xml-prune', ['ad']), '',
+  'xml-prune accepts only a selector');
+assert.strictEqual(WildFireScriptlets.validate('m3u-prune', ['/ads\\.example/']), '',
+  'm3u-prune accepts a safe regex needle');
+assert.strictEqual(WildFireScriptlets.validate('json-edit-fetch-response', ['$.ad']), '',
+  'edit aliases accept a simple JSONPath query');
+assert.notStrictEqual(WildFireScriptlets.validate('json-edit', ['eval(1)']), '',
+  'JSONPath queries cannot contain filter-supplied code');
+assert.notStrictEqual(WildFireScriptlets.validate('replace-node-text', ['a', 'x']), '',
+  'trusted-only aliases stay rejected through their short names');
+assert.strictEqual(WildFireScriptlets.canonical('no-floc'), 'no-floc',
+  'the deprecated no-floc alias is still accepted safely');
+
+const nestedObligatoryContext = dataScriptletContext();
+nestedObligatoryContext.WildFireScriptlets.apply([
+  { alias: 'json-prune', args: ['ad', 'ads.url'], domains: [], isException: false }
+]);
+assert.deepStrictEqual(
+  nestedObligatoryContext.JSON.parse('{"one":1,"ad":2,"ads":{"url":"x"}}'),
+  { one: 1, ads: { url: 'x' } },
+  'obligatory paths are resolved inside nested objects');
+
+const editContext = dataScriptletContext();
+editContext.WildFireScriptlets.apply([
+  { alias: 'json-edit', args: ['$.ad'], domains: [], isException: false }
+]);
+assert.deepStrictEqual(editContext.JSON.parse('{"one":1,"ad":2}'), { one: 1 },
+  'json-edit prunes a JSONPath target from parsed data');
+
+const responsePruneContext = dataScriptletContext();
+responsePruneContext.WildFireScriptlets.apply([
+  { alias: 'json-prune-fetch-response', args: ['ad', '', 'page.example'],
+    domains: [], isException: false }
+]);
+new responsePruneContext.Response('{"one":1,"ad":2}').json().then(value => {
+  responsePruneContext.transformed = value;
+});
+assert.deepStrictEqual(responsePruneContext.transformed, { one: 1 },
+  'json-prune-fetch-response prunes a matching fetch response');
+
+const xhrPruneContext = dataScriptletContext();
+xhrPruneContext.WildFireScriptlets.apply([
+  { alias: 'json-edit-xhr-response', args: ['$.ad', 'ads.example'],
+    domains: [], isException: false }
+]);
+const prunedXhr = new xhrPruneContext.XMLHttpRequest();
+prunedXhr.open('GET', 'https://ads.example/data.json');
+prunedXhr.body = '{"one":1,"ad":2}';
+assert.strictEqual(prunedXhr.responseText, '{"one":1}',
+  'json-edit-xhr-response prunes a matching XHR response body');
+
+const requestEditContext = dataScriptletContext();
+requestEditContext.WildFireScriptlets.apply([
+  { alias: 'json-edit-fetch-request', args: ['$.ad', 'ads.example'],
+    domains: [], isException: false }
+]);
+requestEditContext.fetch('https://ads.example/collect', {
+  method: 'POST', body: '{"one":1,"ad":2}'
+});
+assert.strictEqual(requestEditContext.sentBody, '{"one":1}',
+  'json-edit-fetch-request prunes a matching outbound body');
+
+const xmlContext = dataScriptletContext();
+xmlContext.WildFireScriptlets.apply([
+  { alias: 'xml-prune', args: ['ad'], domains: [], isException: false }
+]);
+new xmlContext.Response('<root><ad>1</ad></root>').text().then(text => {
+  xmlContext.transformed = text;
+});
+assert.strictEqual(xmlContext.transformed, '<pruned/>',
+  'xml-prune serializes a pruned document with WildFire-owned code');
+assert.strictEqual(xmlContext.xmlRemoved, true,
+  'xml-prune removes the selected nodes');
+
+const m3uContext = dataScriptletContext();
+m3uContext.WildFireScriptlets.apply([
+  { alias: 'm3u-prune', args: ['/ads\\.example/'], domains: [], isException: false }
+]);
+new m3uContext.Response('#EXTM3U\nhttps://ads.example/a.ts\nhttps://ok.example/b.ts\n')
+  .text().then(text => { m3uContext.transformed = text; });
+assert.strictEqual(m3uContext.transformed, '#EXTM3U\n\nhttps://ok.example/b.ts\n',
+  'm3u-prune drops matching playlist lines');
+
+const outboundEditContext = dataScriptletContext();
+outboundEditContext.makeAd = () => ({ ad: 1, keep: 2 });
+outboundEditContext.WildFireScriptlets.apply([
+  { alias: 'edit-outbound-object', args: ['makeAd', '$.ad'], domains: [], isException: false }
+]);
+assert.deepStrictEqual(outboundEditContext.makeAd(), { keep: 2 },
+  'edit-outbound-object prunes a returned object');
+
+const inboundEditContext = dataScriptletContext();
+inboundEditContext.consume = value => {
+  inboundEditContext.seen = value;
+  return 'ok';
+};
+inboundEditContext.WildFireScriptlets.apply([
+  { alias: 'edit-inbound-object', args: ['consume', '0', '$.ad'],
+    domains: [], isException: false }
+]);
+assert.strictEqual(inboundEditContext.consume({ ad: 1, keep: 2 }), 'ok',
+  'edit-inbound-object preserves the original method return value');
+assert.deepStrictEqual(inboundEditContext.seen, { keep: 2 },
+  'edit-inbound-object prunes an argument before the page sees it');
+
+const flocContext = dataScriptletContext();
+flocContext.document.interestCohort = () => 'cohort';
+flocContext.WildFireScriptlets.apply([
+  { alias: 'no-floc', args: [], domains: [], isException: false }
+]);
+assert.strictEqual(flocContext.document.interestCohort, undefined,
+  'no-floc defuses the deprecated cohort probe');
 
 const rewriteEngine = new FilterEngine(null, null, null,
   alias => RewriteResources.hasAlias(alias));

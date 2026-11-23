@@ -146,11 +146,13 @@ Implemented uBO-compatible alias families:
 | Property traps | `set-constant` (`set`), `abort-on-property-read` (`aopr`), `abort-on-property-write` (`aopw`), `abort-on-stack-trace` (`aost`) |
 | Script guards | `abort-current-script` (`acs`), `noeval`, `noeval-silent`, `noeval-if` |
 | Timer / event defusers | `prevent-setTimeout`, `prevent-setInterval`, `adjust-setTimeout`, `adjust-setInterval`, `addEventListener-defuser`, `prevent-requestAnimationFrame`, `prevent-refresh` |
-| Window / browser defusers | `prevent-window-open`, `close-window`, `window.name-defuser`, `nowebrtc`, `webrtc-if`, `alert-buster`, `prevent-dialog` |
+| Window / browser defusers | `prevent-window-open`, `close-window`, `window.name-defuser`, `nowebrtc`, `webrtc-if`, `no-floc`, `alert-buster`, `prevent-dialog` |
 | DOM / style | `remove-attr` (`ra`), `remove-class` (`rc`), `set-attr`, `remove-node-text` (`rmnt`), `disable-newtab-links`, `href-sanitizer`, `overlay-buster`, `spoof-css`, `prevent-canvas` |
 | Cookies / storage | `set-cookie`, `set-cookie-reload`, `remove-cookie`, `set-local-storage-item`, `set-session-storage-item` |
 | Data | `json-prune`, `evaldata-prune`, `prevent-fetch`, `prevent-xhr` |
-| Detectors | `nobab`, `nobab2`, `nofab`, `fingerprint2`, `fingerprint3`, `popads`, `prebid-ads`, `ampproject_v0` |
+| Response transforms | `json-prune-fetch-response`, `json-prune-xhr-response`, `xml-prune`, `m3u-prune` |
+| Object / JSONPath edits | `json-edit`, `json-edit-fetch/xhr-request`, `json-edit-fetch/xhr-response`, `jsonl-edit-fetch/xhr-response`, `edit-outbound-object`, `edit-inbound-object`, `edit-this-object`, `edit-element-object` |
+| Detectors | `nobab`, `nobab2`, `nofab`, `fingerprint2`, `fingerprint3`, `popads`, `popads-dummy`, `prebid-ads`, `ampproject_v0` |
 
 Constants include `true`, `false`, `null`, `undefined`, `0`, `1`, `emptyObj`,
 `emptyArr` and `emptyStr`. Needles can be case-insensitive literals or a
@@ -160,10 +162,11 @@ and prototype paths such as `__proto__` are rejected. Every alias is validated
 again before it runs. `trusted-*` aliases stay rejected until WildFire has an
 explicit source-trust model.
 
-WildFire is working toward the full uBO catalog; remaining aliases land in
-batches with validators, original implementations, tests and a row here.
-AdGuard's `#%#//scriptlet()` syntax is planned after uBO parity. Updated
-scriptlets apply to pages opened after the change.
+The non-trusted uBO general-purpose and defuser catalog is implemented with
+original WildFire code. Trusted-only aliases (including `replace-node-text` /
+`rpnt`) remain rejected because WildFire has no source-trust model. AdGuard's
+`#%#//scriptlet()` syntax is the next phase. Updated scriptlets apply to pages
+opened after the change.
 
 ## Design notes / limits
 
