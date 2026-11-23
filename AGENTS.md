@@ -202,8 +202,8 @@ it validates each selector with `CSS.supports('selector', …)` and
 
 Procedural selectors (`:has-text()`, `:contains()`, `:matches-path()`, `:has()`,
 `:nth-ancestor()`, `:upward()`, `:min-text-length()`, `:matches-attr()`,
-`:matches-css()`, `:xpath()`) are parsed in `lib/filter-engine.js` into trees
-with `base` plus ordered `steps`; malformed or unsafe ones are recorded in
+`:matches-css()`, `:xpath()`, `:not()`) are parsed in `lib/filter-engine.js` into
+trees with `base` plus ordered `steps`; malformed or unsafe ones are recorded in
 `engine.rejectedCosmetic` and never sent to pages.
 `getProcedural(host)` merges generic and domain trees and subtracts `#@#`
 exceptions. Background sends them in the same `wildfire:apply` message as CSS.
@@ -224,6 +224,10 @@ style read-only (with `-before`/`-after` pseudo variants) and stays JS-evaluated
 `:xpath(expr)` is a transforming step that calls Gecko's native
 `document.evaluate` (read-only, `FIRST_ORDERED_NODE_TYPE`) with the current node
 as context and hides the first element result; it stays JS-driven, not CSS.
+`:not(<procedural>)` negates a procedural operand on the node itself and stays
+JS-evaluated; it contributes no native prefilter (negating a `:has()` prefilter
+would select the opposite nodes). A plain `:not(.x)` is never lifted and stays in
+the native CSS base.
 `:has-text()` checks an element's own text nodes; `:contains()` also searches
 descendants. Both share the safe literal/regex matcher. `:nth-ancestor(n)` is a
 transforming step: the rule hides the nth parent of a match instead of the
@@ -310,7 +314,7 @@ fetched before consent, `data_collection_permissions.required` stays `["none"]`.
 | `/regex/` filters (`i`, `m`, `s`, `u` flags only) | |
 | `##selector`, `#@#selector` | |
 | `##sel:has-text("…")`, `##sel:matches-path(/re/)`, `##sel:has(sel)` | |
-| `##sel:contains("…")`, `##sel:nth-ancestor(n)`, `##sel:upward(n|sel)`, `##sel:min-text-length(n)`, `##sel:matches-attr(name[=value|/re/])`, `##sel:matches-css[-before|-after](prop: value|/re/)`, `##sel:xpath(expr)` (bounded, read-only) | |
+| `##sel:contains("…")`, `##sel:nth-ancestor(n)`, `##sel:upward(n|sel)`, `##sel:min-text-length(n)`, `##sel:matches-attr(name[=value|/re/])`, `##sel:matches-css[-before|-after](prop: value|/re/)`, `##sel:xpath(expr)` (bounded, read-only), `##sel:not(<procedural>)` | |
 | `#?#` / `#@?#` with safe `:-abp-has()`/`:-abp-contains()` | unsupported ABP action/procedural selectors rejected |
 | `domain##+js(alias, args)` (curated aliases only) | |
 | `domain#%#//scriptlet('alias', 'args')` (AdGuard, string-only) | AdGuard trusted/debug aliases |
@@ -383,9 +387,12 @@ plain CSS identifier and the value a bounded literal or safe regex. `:xpath(expr
 is bounded data, never code: the expression is capped at 512 chars, must have
 paired quotes/brackets, and is evaluated read-only by Gecko's `document.evaluate`
 (`FIRST_ORDERED_NODE_TYPE`, single first element result per base match). A
-runtime syntax error yields no match, never a throw into the page. Invalid rules
-land in `engine.rejectedCosmetic`. Evaluation lives entirely in
-`lib/procedural.js` and `content/cosmetic.js` — never in injected script.
+runtime syntax error yields no match, never a throw into the page. `:not(<procedural>)`
+negates a procedural operand tested against the node itself (base plus steps);
+only a recognized procedural operand is lifted, while a plain `:not(.x)` stays in
+the native CSS base. Invalid rules land in `engine.rejectedCosmetic`. Evaluation
+lives entirely in `lib/procedural.js` and `content/cosmetic.js` — never in
+injected script.
 
 Add new syntax by extending `lib/filter-engine.js` **and** `tools/test.js` in
 the same change. `README.md` gets a syntax-table row when the feature is

@@ -94,6 +94,7 @@ options page (one per line):
 | `example.com##.bar:matches-css(position: fixed)` | Hide when a computed CSS property matches a value or `/regex/` |
 | `example.com##.bar:matches-css-before(content: "ad")` | Same, reading the `::before` pseudo-element (`-after` too) |
 | `example.com##.box:xpath(.//span[@class="ad"])` | Hide the first element returned by a bounded, read-only native XPath |
+| `example.com##.ad:not(:has-text("Sponsored"))` | Hide `.ad` only when it does NOT match the procedural operand |
 | `example.com#?#div:-abp-has(.ad)` | ABP procedural form, mapped safely to `:has()` |
 | `example.com#?#div:-abp-contains(Ad)` | ABP procedural form, mapped safely to `:has-text()` |
 
@@ -242,8 +243,8 @@ This is deliberately a *minimal* engine, not a full uBO port:
   response is a bundled `data:` URI, never a URL from the filter. Unknown
   aliases cancel normally.
 - Procedural cosmetic rules (`:has-text()`, `:contains()`, `:matches-path()`,
-  `:has()`, `:nth-ancestor()`, `:matches-attr()`, `:matches-css()`) use
-  Firefox-native CSS wherever possible: plain `:has()` rules and
+  `:has()`, `:nth-ancestor()`, `:matches-attr()`, `:matches-css()`, `:xpath()`,
+  `:not()`) use Firefox-native CSS wherever possible: plain `:has()` rules and
   `:matches-attr(name)`/`=(name="literal")` are compiled into the cosmetic
   stylesheet, and `:matches-path()` is checked once per page. Only
   text/regex/ancestor/computed-style-dependent rules are evaluated in
@@ -254,8 +255,9 @@ This is deliberately a *minimal* engine, not a full uBO port:
   style (read-only), with `-before`/`-after` variants for pseudo-elements.
   `:xpath(expr)` delegates to Gecko's native XPath engine (`document.evaluate`),
   read-only and bounded (expression length capped, single first element result
-  per base match); a malformed expression simply matches nothing. No script from
-  a filter is ever injected.
+  per base match); a malformed expression simply matches nothing. `:not()`
+  negates a procedural operand on the node itself; a plain `:not(.x)` stays in
+  the native CSS base. No script from a filter is ever injected.
 
 ## Message API (internal)
 

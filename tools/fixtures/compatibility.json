@@ -316,6 +316,27 @@
         "host": "example.com",
         "count": 2
       }
+    },
+    {
+      "name": "not procedural negation",
+      "rules": [
+        "example.com##div:not(:has-text(Ad))",
+        "example.com##div:not(.plain)",
+        "example.com##div:not(:nth-ancestor(99))"
+      ],
+      "expect": {
+        "capabilities": [
+          "COSMETIC",
+          "PROCEDURAL"
+        ],
+        "diagnosticCategories": [
+          "cosmetic"
+        ]
+      },
+      "proceduralCount": {
+        "host": "example.com",
+        "count": 1
+      }
     }
   ]
 }

@@ -29,7 +29,7 @@
   function needsText(step) {
     if (!step) return false;
     if (step.op === 'has-text' || step.op === 'contains' || step.op === 'min-text-length') return true;
-    if (step.op === 'has' && step.inner && Array.isArray(step.inner.steps)) {
+    if ((step.op === 'has' || step.op === 'not') && step.inner && Array.isArray(step.inner.steps)) {
       return step.inner.steps.some(needsText);
     }
     return false;
@@ -40,7 +40,7 @@
     // matches-css reads computed style and xpath may test any attribute, so
     // both need the same all-attributes watch as matches-attr.
     if (step.op === 'matches-attr' || step.op === 'matches-css' || step.op === 'xpath') return true;
-    if (step.op === 'has' && step.inner && Array.isArray(step.inner.steps)) return step.inner.steps.some(hasAttrStep);
+    if ((step.op === 'has' || step.op === 'not') && step.inner && Array.isArray(step.inner.steps)) return step.inner.steps.some(hasAttrStep);
     return false;
   }
 

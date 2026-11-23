@@ -828,6 +828,41 @@ assert.strictEqual(classify(nthRule, '/').mode, 'js', ':nth-ancestor stays in th
   assert.strictEqual(xpReload.loadCompiled(xpBlob), true, 'xpath compiled round-trip');
   assert.strictEqual(xpReload.getProcedural('example.com').length, 2, 'xpath survives compiled load');
 
+  const notEngine = new FilterEngine();
+  notEngine.load([
+    'example.com##div:not(:has-text(Ad))',
+    'example.com##div:not(:has(.x))',
+    'example.com##div:not(.plain)',
+    'example.com##div:not(:min-text-length(0))',
+    'example.com##div:not(:nth-ancestor(99))'
+  ].join('\n'));
+  assert.strictEqual(notEngine.getProcedural('example.com').length, 2, 'procedural :not parses');
+  assert.strictEqual(notEngine.rejectedCosmetic.length, 2, 'invalid procedural :not operands rejected');
+  assert.ok(notEngine.getCosmetic('example.com').includes('div:not(.plain)'), 'plain :not stays native CSS');
+  const notRules = notEngine.getProcedural('example.com');
+  const notTextRule = notRules.find(r => r.steps[0].op === 'not' && r.steps[0].inner.steps[0].op === 'has-text');
+  const notHasRule = notRules.find(r => r.steps[0].op === 'not' && r.steps[0].inner.steps[0].op === 'has');
+  assert.ok(notTextRule && notHasRule, ':not stores its inner procedural tree');
+
+  const adDiv = stubNode('div', 'Ad text');
+  const cleanDiv = stubNode('div', 'clean');
+  const notTextRoot = stubNode('body', '', [adDiv, cleanDiv]);
+  const notTextSel = WildFireProcedural.select(notTextRoot, notTextRule, '/');
+  assert.strictEqual(notTextSel.length, 1, ':not(:has-text) hides only non-matching nodes');
+  assert.strictEqual(notTextSel[0], cleanDiv, ':not(:has-text) excludes the Ad node');
+
+  const withX = stubNode('div', '', [stubNode('.x', '')]);
+  const withoutX = stubNode('div', '');
+  const notHasRoot = stubNode('body', '', [withX, withoutX]);
+  const notHasSel = WildFireProcedural.select(notHasRoot, notHasRule, '/');
+  assert.strictEqual(notHasSel.length, 1, ':not(:has) hides only nodes without the descendant');
+  assert.strictEqual(notHasSel[0], withoutX, ':not(:has) excludes the node containing .x');
+  assert.strictEqual(WildFireProcedural.classify(notTextRule, '/').mode, 'js', ':not stays JS-evaluated');
+  const notBlob = notEngine.toCompiled();
+  const notReload = new FilterEngine();
+  assert.strictEqual(notReload.loadCompiled(notBlob), true, ':not compiled round-trip');
+  assert.strictEqual(notReload.getProcedural('example.com').length, 2, ':not survives compiled load');
+
 const resolveCsp = alias => CspResources.resolve(alias);
 // Arrays built inside the vm realm have a different prototype than Node's.
 const cspFor = (instance, url, type, documentUrl) =>
