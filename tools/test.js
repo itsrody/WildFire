@@ -1423,6 +1423,67 @@ assert.ok(engine.counts.cosmetic > 5, 'bundled list should contain cosmetic rule
 assert.strictEqual(blocked('https://securepubads.g.doubleclick.net/gampad/ads', 'script'), true,
   'bundled list blocks ads');
 
+async function testIncrementalRemoteCompileSemantics() {
+  function memoryStorage(initial) {
+    let data = Object.assign({}, initial);
+    return {
+      async get(key) { return { [key]: data[key] }; },
+      async set(patch) { data = Object.assign({}, data, patch); },
+      get data() { return data; }
+    };
+  }
+
+  const cache = WildFireCompileCache.create({ browserApi: { storage: { local: memoryStorage({}) } }, version: FilterEngine.COMPILED_VERSION });
+  const calls = [];
+  const compiler = {
+    async compile(text) {
+      calls.push(text);
+      const e = new FilterEngine(null, () => '', null, () => false);
+      e.load(text);
+      return { compiled: e.toCompiled(), counts: e.counts };
+    }
+  };
+
+  async function loadCompiledOrText(engine, text) {
+    let compiled = await cache.get(text);
+    if (!compiled) compiled = (await compiler.compile(text)).compiled;
+    if (compiled && compiled.v === FilterEngine.COMPILED_VERSION) await cache.set(text, compiled);
+    if (!compiled || !engine.loadCompiled(compiled, { append: true })) engine.load(text, { append: true });
+  }
+
+  const remoteA = '! wildfire remote: https://a\n||a.example^$script';
+  const remoteB = '! wildfire remote: https://b\n@@||a.example/allow.js$script';
+  const engine1 = new FilterEngine();
+  await loadCompiledOrText(engine1, remoteA);
+  await loadCompiledOrText(engine1, remoteB);
+  assert.strictEqual(calls.length, 2, 'two remote lists compile once');
+
+  const engine2 = new FilterEngine();
+  await loadCompiledOrText(engine2, remoteA);
+  await loadCompiledOrText(engine2, remoteB);
+  assert.strictEqual(calls.length, 2, 'unchanged remote lists use cache, no recompile');
+
+  assert.strictEqual(engine2.matchRequest('https://a.example/app.js', 'script', 'https://site.test/').blocked, true, 'block rule applies');
+  assert.strictEqual(engine2.matchRequest('https://a.example/allow.js', 'script', 'https://site.test/').blocked, false, 'exception semantics preserved');
+
+  const remoteBChanged = '! wildfire remote: https://b\n@@||a.example/allow.js$script\n||b.example^';
+  const engine3 = new FilterEngine();
+  await loadCompiledOrText(engine3, remoteA);
+  await loadCompiledOrText(engine3, remoteBChanged);
+  assert.strictEqual(calls.length, 3, 'only changed remote list recompiles');
+  assert.strictEqual(engine3.matchRequest('https://b.example/x.js', 'script', 'https://site.test/').blocked, true, 'changed list rule applies');
+
+  const corruptKey = cache.keyFor(remoteA);
+  const corruptStorage = memoryStorage({ 'wildfire.compiled.cache.v1': { [corruptKey]: { v: FilterEngine.COMPILED_VERSION, compiled: { v: FilterEngine.COMPILED_VERSION, n: 'bad' }, at: Date.now() } } });
+  const corruptCache = WildFireCompileCache.create({ browserApi: { storage: { local: corruptStorage } }, version: FilterEngine.COMPILED_VERSION });
+  const engine4 = new FilterEngine();
+  const cached = await corruptCache.get(remoteA);
+  assert.strictEqual(cached, null, 'corrupt cache entry rejected');
+  engine4.load(remoteA, { append: true });
+  await loadCompiledOrText(engine4, remoteB);
+  assert.strictEqual(engine4.matchRequest('https://a.example/app.js', 'script', 'https://site.test/').blocked, true, 'fallback load keeps rule active');
+}
+
 async function testCompileCacheAndCompiler() {
   function memoryStorage(initial) {
     let data = Object.assign({}, initial);
@@ -1634,6 +1695,7 @@ async function testRemoteLists() {
 
 Promise.resolve()
   .then(() => testCompileCacheAndCompiler())
+  .then(() => testIncrementalRemoteCompileSemantics())
   .then(() => testRemoteLists())
   .then(() => console.log('WildFire tests passed (' + engine.counts.network + ' network rules loaded from bundled list).'))
   .catch(error => {
