@@ -295,6 +295,27 @@
         "host": "example.com",
         "count": 2
       }
+    },
+    {
+      "name": "xpath bounded native procedural",
+      "rules": [
+        "example.com##div:xpath(.//span[@class='ad'])",
+        "example.com##div:xpath(ancestor::section[1])",
+        "example.com##div:xpath(//div[@class=\"ad\")"
+      ],
+      "expect": {
+        "capabilities": [
+          "COSMETIC",
+          "PROCEDURAL"
+        ],
+        "diagnosticCategories": [
+          "cosmetic"
+        ]
+      },
+      "proceduralCount": {
+        "host": "example.com",
+        "count": 2
+      }
     }
   ]
 }

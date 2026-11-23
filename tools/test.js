@@ -792,6 +792,42 @@ assert.strictEqual(classify(nthRule, '/').mode, 'js', ':nth-ancestor stays in th
   assert.strictEqual(cssReload.loadCompiled(cssBlob), true, 'matches-css compiled round-trip');
   assert.strictEqual(cssReload.getProcedural('example.com').length, 3, 'matches-css survives compiled load');
 
+  const xpEngine = new FilterEngine();
+  xpEngine.load([
+    'example.com##div:xpath(.//span)',
+    'example.com##div:xpath(ancestor::section[1])',
+    'example.com##div:xpath()',
+    'example.com##div:xpath(//div[@class="ad")',
+    'example.com##div:xpath(//div[@id="' + 'z'.repeat(600) + '"])'
+  ].join('\n'));
+  assert.strictEqual(xpEngine.getProcedural('example.com').length, 2, 'xpath parses valid expressions');
+  assert.strictEqual(xpEngine.rejectedCosmetic.length, 3, 'empty/unbalanced/overlong xpath rejected');
+  const spanRule = xpEngine.getProcedural('example.com').find(r => r.steps[0].expr === './/span');
+  assert.strictEqual(spanRule.steps[0].op, 'xpath', 'xpath step parsed');
+
+  // Fake native XPath reached through the node keeps procedural.js DOM-only.
+  const spanTarget = stubNode('span', ''); spanTarget.nodeType = 1;
+  const textTarget = stubNode('#text', ''); textTarget.nodeType = 3;
+  const docFor = target => ({
+    evaluate: (expr, context, ns, type) => {
+      assert.strictEqual(type, 9, 'xpath uses FIRST_ORDERED_NODE_TYPE (bounded single node)');
+      return { singleNodeValue: target };
+    }
+  });
+  const baseA = stubNode('div', ''); baseA.ownerDocument = docFor(spanTarget);
+  const baseB = stubNode('div', ''); baseB.ownerDocument = docFor(textTarget);
+  const baseC = stubNode('div', ''); baseC.ownerDocument = { evaluate: () => { throw new Error('bad xpath'); } };
+  const baseD = stubNode('div', ''); // no ownerDocument -> no match, no throw
+  const xpRoot = stubNode('body', '', [baseA, baseB, baseC, baseD]);
+  const xpSel = WildFireProcedural.select(xpRoot, spanRule, '/');
+  assert.strictEqual(xpSel.length, 1, 'xpath hides only element results');
+  assert.strictEqual(xpSel[0], spanTarget, 'xpath target is the returned element node');
+  assert.strictEqual(WildFireProcedural.classify(spanRule, '/').mode, 'js', 'xpath stays JS-driven (native evaluate per node)');
+  const xpBlob = xpEngine.toCompiled();
+  const xpReload = new FilterEngine();
+  assert.strictEqual(xpReload.loadCompiled(xpBlob), true, 'xpath compiled round-trip');
+  assert.strictEqual(xpReload.getProcedural('example.com').length, 2, 'xpath survives compiled load');
+
 const resolveCsp = alias => CspResources.resolve(alias);
 // Arrays built inside the vm realm have a different prototype than Node's.
 const cspFor = (instance, url, type, documentUrl) =>

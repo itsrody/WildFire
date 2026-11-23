@@ -93,6 +93,7 @@ options page (one per line):
 | `example.com##div:matches-attr(data-ad)` / `:matches-attr(data-ad="promo")` | Hide by attribute presence or exact literal value (native CSS) |
 | `example.com##.bar:matches-css(position: fixed)` | Hide when a computed CSS property matches a value or `/regex/` |
 | `example.com##.bar:matches-css-before(content: "ad")` | Same, reading the `::before` pseudo-element (`-after` too) |
+| `example.com##.box:xpath(.//span[@class="ad"])` | Hide the first element returned by a bounded, read-only native XPath |
 | `example.com#?#div:-abp-has(.ad)` | ABP procedural form, mapped safely to `:has()` |
 | `example.com#?#div:-abp-contains(Ad)` | ABP procedural form, mapped safely to `:has-text()` |
 
@@ -250,8 +251,11 @@ This is deliberately a *minimal* engine, not a full uBO port:
   per shared selector. `:has-text()` checks an element's own text;
   `:contains()` also searches descendants. `:nth-ancestor(n)`/`:upward(n|selector)` hides an ancestor
   parent of a match. `:matches-css(prop: value|/re/)` reads Gecko's computed
-  style (read-only), with `-before`/`-after` variants for pseudo-elements. No
-  script from a filter is ever injected.
+  style (read-only), with `-before`/`-after` variants for pseudo-elements.
+  `:xpath(expr)` delegates to Gecko's native XPath engine (`document.evaluate`),
+  read-only and bounded (expression length capped, single first element result
+  per base match); a malformed expression simply matches nothing. No script from
+  a filter is ever injected.
 
 ## Message API (internal)
 
