@@ -732,6 +732,12 @@ assert.strictEqual(classify(nthRule, '/').mode, 'js', ':nth-ancestor stays in th
   const attrClass = WildFireProcedural.classify(attrPresence, '/');
   assert.strictEqual(attrClass.mode, 'css', 'matches-attr presence compiles to native CSS');
   assert.strictEqual(attrClass.selector, 'div[data-ad]', 'matches-attr native selector');
+  const litEngine = new FilterEngine();
+  litEngine.load('example.com##div:matches-attr(data-ad="promo")');
+  const litRule = litEngine.getProcedural('example.com')[0];
+  const litClass = WildFireProcedural.classify(litRule, '/');
+  assert.strictEqual(litClass.mode, 'css', 'matches-attr literal compiles to native CSS');
+  assert.strictEqual(litClass.selector, 'div[data-ad="promo"]', 'matches-attr literal selector');
 
 const resolveCsp = alias => CspResources.resolve(alias);
 // Arrays built inside the vm realm have a different prototype than Node's.
