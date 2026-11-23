@@ -74,6 +74,7 @@ lib/
     wapi-client.js     client-side message API for extension pages and content scripts
   background/          background classic-script chain, load in order:
     helpers.js         counters/badge, snapshots, diagnostics and host helpers
+    url-skip.js        local scheme bypass policy before engine matching
     engine-host.js     engine lifecycle, compiler/cache, cosmetic and scriptlet sync
     inspector.js       local-only bounded request decision log
     requests.js        synchronous webRequest handlers and rewrite streams
@@ -167,8 +168,9 @@ used **only** by `tools/`.
 18. `lib/wapi/wapi-action.js` → `window.WildFireWapiAction` (aliased as `window.wapiAction`)
 19. `lib/wapi/wapi-capabilities.js` → `window.WildFireWapiCapabilities` (aliased as `window.wapiCapabilities`)
 20. `lib/wapi/wapi-scripting.js` → `window.WildFireWapiScripting` (aliased as `window.wapiScripting`)
-21. `lib/background/` chain, in order: `helpers.js`, `engine-host.js`,
-    `inspector.js`, `requests.js`, `messages.js`, `background.js` → `window.WildFireBackground`
+21. `lib/background/` chain, in order: `helpers.js`, `url-skip.js`,
+    `engine-host.js`, `inspector.js`, `requests.js`, `messages.js`,
+    `background.js` → `window.WildFireBackground`
 22. `background.js` → calls `WildFireBackground.create(...).start()`
 
 `wapi.js` is WildFire's Firefox-native API backbone: named idempotent listener
@@ -217,6 +219,10 @@ graph without a deliberate redesign.
 
 - Skip when `state.enabled` is false, or when the tab's popup was already
   cancelled/closed by `$popup`.
+- Apply the local `url-skip.js` scheme policy before any engine matching: only
+  `http`, `https`, `ws`, `wss` and `ftp` URLs are filterable. Internal, extension,
+  `data:`, `blob:` and `file:` URLs return no blocking response and record a
+  `skipped` Inspector reason instead of a counter.
 - Resolve the document URL through `WildFirePageStore`: `details.documentUrl`,
   then `details.originUrl`, then the frame URL cached by `documentId` from
   `webNavigation`/`webRequest`, then the top-level page URL, then the last frame
@@ -291,17 +297,19 @@ URIs, fills `{{1}}`–`{{9}}` placeholders from regex captures with
 percent-encoding, and returns `''` for unknown aliases so the listener falls
 back to a cancel. Filter text can never supply a redirect URL itself.
 
-`matchRequest()` also returns `rewrite: {alias}` for the winning `$rewrite`
-rule. `RewriteResources.resolve()` is the only place substitute bodies and MIME
-types are defined; it returns a copied `Uint8Array` so no caller can mutate the
-registry. Background creates the stream filter from `onBeforeRequest`,
-normalizes headers through `RewriteResources.withHeaders()` in the existing
-blocking `onHeadersReceived` listener, and lets `onCompleted`/`onErrorOccurred`/
-`onBeforeRedirect` forget the request id. Unknown aliases are rejected at load
-time into `engine.rejectedRewrite` instead of becoming blockers. `$rewrite` does
-not accept captures (`$rewrite-rule` is not supported), never applies to
-navigations, and counts as one filtered/blocked request. Filter text can never
-supply a response body.
+`matchRequest()` also returns `rewrite: {alias, captures}` for a winning
+`$rewrite` or `$rewrite-rule` rule. `RewriteResources.resolve()` is the only
+place substitute bodies and MIME types are defined; fixed aliases return a
+copied `Uint8Array`, and capture aliases fill WildFire-authored templates from
+percent-encoded regex captures. Background creates the stream filter from
+`onBeforeRequest`, normalizes headers through `RewriteResources.withHeaders()`
+in the existing blocking `onHeadersReceived` listener, and lets
+`onCompleted`/`onErrorOccurred`/`onBeforeRedirect` forget the request id. Unknown
+aliases are rejected at load time into `engine.rejectedRewrite` instead of
+becoming blockers. `$rewrite-rule` requires a regex filter and a separate
+curated capture alias; fixed bodies cannot be used with captures. Rewrites never
+apply to navigations and count as one filtered/blocked request. Filter text can
+never supply a response body.
 
 `matchCsp()` is the response-header counterpart: any applicable `@@` exception
 stops injection, otherwise all matching curated directives are returned once
@@ -485,16 +493,16 @@ and fetching still requires a separate explicit step.
 
 | Supported | Not supported (yet) |
 | --- | --- |
-| `||host^` domain anchors, subdomains | `$rewrite-rule` |
-| `|url|` start/end anchors | `elemhide`, `generichide`, `ghide` |
-| `*` wildcards, `^` separator | other advanced selectors |
-| `@@` exceptions | full EasyList-scale list curation |
-| `$script`, `$image`, `$~type`, other resource types | `domain=` with wildcard `.*` patterns |
-| `$third-party`, `$~third-party`, `$1p`, `$3p` | full EasyList-scale performance tuning |
-| `$domain=a\|~b` (`from=` alias) | |
+| `||host^` domain anchors, subdomains | `elemhide`, `generichide`, `ghide` |
+| `|url|` start/end anchors | other advanced selectors |
+| `*` wildcards, `^` separator | full EasyList-scale list curation |
+| `@@` exceptions | full EasyList-scale performance tuning |
+| `$script`, `$image`, `$~type`, other resource types | |
+| `$third-party`, `$~third-party`, `$1p`, `$3p` | |
+| `$domain=a\|~b` (`from=` alias), including `example.*` and `*.example.*` | |
 | `$document`, `$popup`, `$important`, `$badfilter` | |
 | `$redirect=alias`, `$redirect-rule=alias` | |
-| `$rewrite=alias` (curated aliases only) | |
+| `$rewrite=alias`, `/regex/$rewrite-rule=alias` (curated aliases only) | |
 | `$csp=alias` (curated aliases only) | |
 | `$removeparam`, `$removeheader` (capability-gated) | |
 | `/regex/` filters (`i`, `m`, `s`, `u` flags only) | |
@@ -518,14 +526,18 @@ Redirect rules name an alias from `lib/resources/redirect-resources.js`: `noopjs
 An unregistered alias cancels instead. No upstream resources are bundled.
 
 `$rewrite=alias` replaces a matching response body through Firefox's
-`webRequest.filterResponseData()` stream filter. The only aliases are
-`blank-js`, `blank-css`, `blank-text`, `blank-json`, `blank-html` and
-`blank-image` from `lib/resources/rewrite-resources.js`; each maps to a fixed MIME type
-and WildFire-authored bytes. Unknown aliases are rejected into
-`engine.rejectedRewrite` at load time instead of becoming blockers. Rewrites
-honor the usual type/domain/third-party options and `@@` exceptions, never
-apply to navigations, and count as one filtered request. `$rewrite-rule` and
-filter-supplied bodies are not supported.
+`webRequest.filterResponseData()` stream filter. Fixed aliases are `blank-js`,
+`blank-css`, `blank-text`, `blank-json`, `blank-html` and `blank-image` from
+`lib/resources/rewrite-resources.js`; each maps to a fixed MIME type and
+WildFire-authored bytes. `/regex/$rewrite-rule=alias` uses the separate capture
+aliases `tagged-js`, `tagged-json`, `tagged-text` and `tagged-html`. Regex
+captures fill `{{1}}`–`{{9}}` placeholders after percent-encoding; only capture
+aliases accept `$rewrite-rule`, and combining it with `$rewrite` is rejected.
+Malformed wildcard `domain=` options, non-regex rewrite rules, and unknown
+aliases are rejected into `engine.rejectedRegex` or `engine.rejectedRewrite` at
+load time instead of becoming blockers. Rewrites honor the usual
+type/domain/third-party options and `@@` exceptions, never apply to navigations,
+and count as one filtered request. Filter-supplied bodies are not supported.
 
 `$removeparam` and `$removeheader` are parsed/validated in the IR and applied
 only when compiled capabilities require them. `$removeparam` redirects to a

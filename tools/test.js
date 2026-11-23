@@ -54,6 +54,7 @@ const WAPI_FILES = [
 ];
 const BACKGROUND_FILES = [
   'lib/background/helpers.js',
+  'lib/background/url-skip.js',
   'lib/background/engine-host.js',
   'lib/background/inspector.js',
   'lib/background/requests.js',
@@ -151,6 +152,42 @@ assert.strictEqual(blocked('https://ads.example.com/app.png', 'image', 'https://
 assert.strictEqual(blocked('https://exact.example/ad.js', 'script'), true, 'anchored pattern');
 assert.strictEqual(blocked('https://exact.example/ad.js?x=1', 'script'), false, 'anchored end must match');
 assert.strictEqual(blocked('https://example.org/path/banner.gif?v=2', 'image'), true, 'wildcard pattern');
+
+const wildcardDomainEngine = new FilterEngine();
+wildcardDomainEngine.load([
+  '||wildads.example^$domain=page.*',
+  '||wildsub.example^$domain=*.page.*',
+  '@@||wildads.example^$domain=skip.page.*'
+].join('\n'));
+const wildcardBlocked = (url, documentUrl) =>
+  wildcardDomainEngine.matchRequest(url, mapResourceType('script'), documentUrl).blocked;
+assert.strictEqual(wildcardBlocked('https://wildads.example/a.js', 'https://page.com/'), true,
+  'domain=page.* matches the bare registrable host with any suffix');
+assert.strictEqual(wildcardBlocked('https://wildads.example/a.js', 'https://shop.page.co.uk/'), true,
+  'domain=page.* matches subdomains and multi-label suffixes');
+assert.strictEqual(wildcardBlocked('https://wildads.example/a.js', 'https://page/'), false,
+  'domain=page.* still requires a suffix');
+assert.strictEqual(wildcardBlocked('https://wildads.example/a.js', 'https://notpage.com/'), false,
+  'domain=page.* does not match lookalike hosts');
+assert.strictEqual(wildcardBlocked('https://wildsub.example/a.js', 'https://sub.page.com/'), true,
+  'domain=*.page.* requires a subdomain');
+assert.strictEqual(wildcardBlocked('https://wildsub.example/a.js', 'https://page.com/'), false,
+  'domain=*.page.* does not match the bare host');
+assert.strictEqual(wildcardBlocked('https://wildads.example/a.js', 'https://skip.page.dev/'), false,
+  'a wildcard domain exception wins');
+const wildcardBlob = wildcardDomainEngine.toCompiled();
+const wildcardReload = new FilterEngine();
+assert.strictEqual(wildcardReload.loadCompiled(wildcardBlob), true,
+  'wildcard domain rules survive compiled round-trip');
+assert.strictEqual(wildcardReload.matchRequest('https://wildads.example/a.js', 'script', 'https://page.io/').blocked,
+  true, 'compiled wildcard domain rules keep their scope');
+const invalidDomainEngine = new FilterEngine();
+invalidDomainEngine.load('||invalid.example^$domain=page*.*');
+assert.strictEqual(invalidDomainEngine.rejectedRegex.length, 1,
+  'malformed wildcard domain options are rejected');
+assert.strictEqual(invalidDomainEngine.matchRequest(
+  'https://invalid.example/a.js', 'script', 'https://page.com/').blocked, false,
+  'a rejected domain rule never blocks');
 
 assert.deepStrictEqual(Array.from(engine.getCosmetic('example.com')), ['.shared'],
   'cosmetic rules plus generic, minus exception');
@@ -1713,7 +1750,8 @@ assert.strictEqual(storageContext.localStorage.legacy, undefined,
   'AdGuard storage removal accepts WildFire-safe regex keys');
 
 const rewriteEngine = new FilterEngine(null, null, null,
-  alias => RewriteResources.hasAlias(alias));
+  alias => RewriteResources.hasAlias(alias),
+  alias => RewriteResources.hasCaptureAlias(alias));
 rewriteEngine.load([
   '||tracker.example^$rewrite=blank-js',
   '||cdn.example^$script,rewrite=blank-image',
@@ -1721,12 +1759,18 @@ rewriteEngine.load([
   '@@||promo.example^$script',
   '||doc.example^$document,rewrite=blank-js',
   '||evil.example^$rewrite=alert(1)',
-  '||rule.example^$rewrite-rule=blank-js'
+  '||rule.example^$rewrite-rule=tagged-js',
+  '/ads\\.example\\/([^/]+)\\.js/$script,rewrite-rule=tagged-js',
+  '/json\\.example\\/([^/]+)/$script,rewrite-rule=tagged-json',
+  '/fixed\\.example\\/(x)/$rewrite-rule=blank-js',
+  '/unknown\\.example\\/(x)/$rewrite-rule=alert(1)'
 ].join('\n'));
-assert.strictEqual(rewriteEngine.counts.rewrite, 4, 'valid $rewrite rules are counted');
-assert.strictEqual(rewriteEngine.rejectedRewrite.length, 1,
-  'an alias that is not curated is rejected');
-assert.ok(/^unknown rewrite alias/.test(rewriteEngine.rejectedRewrite[0].reason),
+assert.strictEqual(rewriteEngine.counts.rewrite, 6, 'valid $rewrite rules are counted');
+assert.strictEqual(rewriteEngine.rejectedRewrite.length, 3,
+  'non-curated rewrite aliases are rejected');
+assert.ok(rewriteEngine.rejectedRegex.some(entry => /rewrite-rule requires a regex filter/.test(entry.reason)),
+  'rewrite-rule requires a regex pattern');
+assert.ok(rewriteEngine.rejectedRewrite.some(entry => /unknown rewrite alias/.test(entry.reason)),
   'rejected rewrite aliases record a clear reason');
 
 const rewritten = rewriteEngine.matchRequest(
@@ -1747,20 +1791,53 @@ assert.strictEqual(rewriteEngine.matchRequest(
 assert.strictEqual(rewriteEngine.matchRequest(
   'https://doc.example/', 'document', 'https://page.example/').blocked, false,
   'navigations are never rewritten');
-const ignoredOption = rewriteEngine.matchRequest(
-  'https://rule.example/a.js', 'script', 'https://page.example/');
-assert.strictEqual(ignoredOption.blocked, true, 'unknown $rewrite-rule is ignored like other options');
-assert.strictEqual(ignoredOption.rewrite, null, 'unknown $rewrite-rule never rewrites');
+
+const ruleRewrite = rewriteEngine.matchRequest(
+  'https://ads.example/creative.js', 'script', 'https://page.example/');
+assert.strictEqual(ruleRewrite.rewrite.alias, 'tagged-js', '$rewrite-rule reaches the listener');
+assert.deepStrictEqual(Array.from(ruleRewrite.rewrite.captures), ['creative'],
+  'regex captures are returned for the template');
+const ruleBody = RewriteResources.resolve(
+  ruleRewrite.rewrite.alias, ruleRewrite.rewrite.captures).bytes;
+assert.strictEqual(Array.from(ruleBody, code => String.fromCharCode(code)).join(''),
+  '/* WildFire: creative */', 'the WildFire template is filled from captures');
+const rewriteBlob = rewriteEngine.toCompiled();
+const rewriteReload = new FilterEngine(null, null, null,
+  alias => RewriteResources.hasAlias(alias),
+  alias => RewriteResources.hasCaptureAlias(alias));
+assert.strictEqual(rewriteReload.loadCompiled(rewriteBlob), true,
+  '$rewrite-rule survives compiled round-trip');
+assert.deepStrictEqual(Array.from(rewriteReload.matchRequest(
+  'https://json.example/item/', 'script', 'https://page.example/').rewrite.captures),
+  ['item'], 'compiled rewrite rules keep their captures');
 
 const noRewriteEngine = new FilterEngine();
 noRewriteEngine.load('||unavailable.example^$rewrite=blank-js');
 assert.strictEqual(noRewriteEngine.rejectedRewrite.length, 1,
   'rewrite rules are rejected without a curated registry');
 
+const syncCompiler = WildFireCompiler.create({ browserApi: {} });
+const syncRewrite = syncCompiler.compileSync([
+  '/fixed\\.example\\/(x)/$rewrite-rule=blank-js',
+  '/tagged\\.example\\/(x)/$rewrite-rule=tagged-js'
+].join('\n'));
+assert.strictEqual(syncRewrite.counts.rewrite, 1,
+  'sync compiler keeps fixed bodies out of rewrite-rule');
+assert.strictEqual(syncRewrite.capabilities & FilterEngine.CAP.REWRITE,
+  FilterEngine.CAP.REWRITE, 'sync compiler still accepts curated capture aliases');
+syncCompiler.destroy();
+
 assert.strictEqual(RewriteResources.resolve('BLANK-JS').type,
   'application/javascript; charset=utf-8', 'aliases are normalized without trusting filter casing');
 assert.strictEqual(RewriteResources.resolve('https://evil.example/x'), null,
   'filter text cannot supply its own response body');
+assert.strictEqual(RewriteResources.hasCaptureAlias('tagged-json'), true,
+  'capture templates have a separate curated registry');
+assert.strictEqual(RewriteResources.hasCaptureAlias('blank-js'), false,
+  'fixed bodies cannot be used by rewrite-rule');
+const encodedBody = RewriteResources.resolve('tagged-json', ['a"b<']).bytes;
+assert.strictEqual(Array.from(encodedBody, code => String.fromCharCode(code)).join(''),
+  '{"tag":"a%22b%3C"}', 'captures are percent-encoded before entering a template');
 const jsonBody = RewriteResources.resolve('blank-json').bytes;
 assert.strictEqual(Array.from(jsonBody, code => String.fromCharCode(code)).join(''), '{}',
   'the JSON body is authored by WildFire');
@@ -3706,6 +3783,25 @@ async function testInspectorPage() {
     '0 shown · 0 of 256 decisions recorded locally in memory.');
 }
 
+function testUrlSkip() {
+  const policy = context.WildFireBackgroundCore.createUrlSkip();
+  assert.strictEqual(policy.urlSkipReason('https://ads.test/a.js'), '',
+    'HTTP requests are filterable');
+  assert.strictEqual(policy.urlSkipReason('wss://socket.test/'), '',
+    'secure WebSockets are filterable');
+  assert.strictEqual(policy.urlSkipReason('moz-extension://wildfire/panel.html'),
+    'unsupported URL scheme moz-extension', 'extension pages are skipped');
+  assert.strictEqual(policy.urlSkipReason('about:blank'),
+    'unsupported URL scheme about', 'internal pages are skipped');
+  assert.strictEqual(policy.urlSkipReason('data:text/plain,hello'),
+    'unsupported URL scheme data', 'data URLs are skipped');
+  assert.strictEqual(policy.urlSkipReason('file:///Users/me/ad.js'),
+    'unsupported URL scheme file', 'local files are skipped');
+  assert.strictEqual(policy.urlSkipReason(''), 'empty URL', 'empty URLs are skipped');
+  assert.strictEqual(policy.isSkippedUrl('https://ads.test/a.js'), false);
+  assert.strictEqual(policy.isSkippedUrl('blob:https://page.test/uuid'), true);
+}
+
 async function testWapiStorage() {
   const data = {};
   const storageCalls = [];
@@ -4593,6 +4689,28 @@ async function testBackgroundControllerRobustness() {
       'inspect action enables local recording');
     const savedRecordBlock = healthy.context.recordBlock;
     healthy.context.recordBlock = () => {};
+    let skippedMatches = 0;
+    healthy.context.engine.matchRequest = () => {
+      skippedMatches += 1;
+      return { blocked: false, rule: null, exception: null, redirect: null, rewrite: null };
+    };
+    const skipped = healthy.context.onBeforeRequest({
+      url: 'moz-extension://wildfire/panel.html',
+      type: 'document',
+      tabId: 11,
+      requestId: 'inspect-skipped',
+      documentUrl: 'https://page.test/'
+    });
+    assert.strictEqual(skipped, undefined, 'skipped URLs are not cancelled');
+    assert.strictEqual(skippedMatches, 0, 'URL skip bypasses engine matching');
+    const skippedEntries = (await healthy.debug()
+      .onMessage({ type: 'wildfire:inspect' }, {})).inspect.entries;
+    const skippedEntry = skippedEntries.find(entry =>
+      entry.decision === 'skipped' && entry.url === 'moz-extension://wildfire/panel.html');
+    assert.ok(skippedEntry, 'URL skip is recorded in the local inspector');
+    assert.strictEqual(skippedEntry.detail,
+      'url skip: unsupported URL scheme moz-extension');
+
     healthy.context.engine.matchRequest = () => ({
       blocked: true,
       rule: { pattern: '||ads.test^', sourceKind: 'custom', hash: 'block-hash' },
@@ -4673,6 +4791,7 @@ Promise.resolve()
   .then(() => testWapiScripting())
   .then(() => testInspector())
   .then(() => testInspectorPage())
+  .then(() => testUrlSkip())
   .then(() => testWapiContexts())
   .then(() => testBackgroundControllerRobustness())
   .then(() => testPopupPerSiteDisplay())

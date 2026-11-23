@@ -87,11 +87,14 @@ options page (one per line):
 | `||tracker.net^$~image` | Block everything except images |
 | `||tracker.net^$third-party` | Only block cross-site requests |
 | `||tracker.net^$domain=site.com\|~good.site.com` | Only on matching document hosts |
+| `||tracker.net^$domain=site.*` | Match document hosts with any suffix |
+| `||tracker.net^$domain=*.site.*` | Match subdomains with any suffix |
 | `||landing.example^$document` | Block a top-level navigation to that host |
 | `||popup.example^$popup` | Block a popup opened as a new tab/window (Firefox native tab close + request cancel) |
 | `||tracker.net^$script,redirect=noopjs` | Serve WildFire's empty script instead of cancelling |
 | `/ads\.example/([^/]+)\.js/$script,redirect-rule=tagged.svg` | Fill a redirect resource from regex captures |
 | `||tracker.net^$script,rewrite=blank-js` | Replace the response body with WildFire's empty script |
+| `/ads\.example/([^/]+)\.js/$script,rewrite-rule=tagged-js` | Fill a WildFire rewrite template from regex captures |
 | `||tracker.net^$script,csp=no-script` | Add WildFire's `script-src 'none'` CSP header to matching script responses |
 | `site.example##+js(set-constant, adblockDetected, false)` | Freeze a detection flag before page scripts run |
 | `site.example#@#+js(set-constant, adblockDetected, false)` | Cancel that scriptlet on the matching site |
@@ -170,8 +173,10 @@ redirects, rewrites, CSP headers, and CSP-report cancellations. Each row shows
 the decision, request host, matching WildFire rule, detail, and duration; the
 table can be filtered by decision or site.
 
-Nothing is persisted or sent anywhere, recording is off by default, and
-inspection never changes counters or filter decisions. The blocking listener
+Internal, extension, `data:`, `blob:` and `file:` URLs are skipped before engine
+matching; with recording on they appear as `skipped` decisions and never change
+counters. Nothing is persisted or sent anywhere, recording is off by default,
+and inspection never changes counters or filter decisions. The blocking listener
 only records while the inspector is enabled.
 
 ## Curated response rewrites
@@ -184,11 +189,16 @@ setting the right MIME type). The site's other headers are left alone. Rewrites
 count as one filtered request and honor the usual resource type, domain,
 third-party and `@@` options; navigations are never rewritten.
 
-Filter text can never supply a body, URL, or header value. Only these
-WildFire-owned aliases are accepted: `blank-js`, `blank-css`, `blank-text`,
-`blank-json`, `blank-html`, `blank-image`. Unknown aliases are rejected when the
-list loads and never turn into request blockers. `$rewrite-rule` is not
-supported. `elemhide/generichide/specifichide` are supported as document exception modifiers; unsupported ABP procedural selectors are rejected safely.
+Filter text can never supply a body, URL, or header value. Fixed-body
+WildFire-owned aliases are `blank-js`, `blank-css`, `blank-text`, `blank-json`,
+`blank-html` and `blank-image`. `/regex/$rewrite-rule=alias` requires a regex
+filter and one of the separate capture aliases `tagged-js`, `tagged-json`,
+`tagged-text` or `tagged-html`; captures are percent-encoded before filling
+WildFire's `{{1}}`–`{{9}}` placeholders. It cannot be combined with `$rewrite`.
+Unknown aliases, malformed rules and unsupported domain patterns are rejected
+when the list loads and never turn into request blockers.
+`elemhide/generichide/specifichide` are supported as document exception modifiers;
+unsupported ABP procedural selectors are rejected safely.
 
 ## Removeparam / removeheader (capability-gated)
 
@@ -273,7 +283,8 @@ This is deliberately a *minimal* engine, not a full uBO port:
 
 - Regex filters use a safe subset: backreferences, nested/alternated quantifiers,
   long patterns and stateful flags are rejected when the list loads.
-- `$rewrite-rule` and `elemhide` are not supported.
+- Advanced `domain=` patterns are limited to `example.*` and `*.example.*`;
+  `elemhide` is not supported as a standalone network option.
 - Rules are indexed by their `||host^` key and 4-character tokens; patterns with
   no usable token (including regex filters) are scanned per request.
 - Page/tab/frame state lives in a synchronous in-memory store. It tracks document
