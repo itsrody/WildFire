@@ -2058,8 +2058,17 @@ async function testPhase1CRemoveModifiers() {
 
   assert.ok(e.getCapabilities() & FilterEngine.CAP.REMOVEPARAM, 'removeparam capability');
   assert.ok(e.getCapabilities() & FilterEngine.CAP.REMOVEHEADER, 'removeheader capability');
-  // Runtime mutation is not wired yet: rules are parsed/indexed safely, not applied.
+  // Match API excludes remove rules from blocking path.
   assert.strictEqual(e.matchRequest('https://track.example/pixel?utm_source=x', 'image', 'https://site.test/').blocked, false, 'removeparam does not block');
+  const rpExcept = e.matchRemoveparam('https://track.example/pixel?utm_source=x&utm_ok=1', 'image', 'https://site.test/');
+  assert.strictEqual(rpExcept.exception, true, 'removeparam exception wins');
+  const eNoEx = new FilterEngine();
+  eNoEx.load('||track.example^$removeparam=utm_source\n||track.example^$removeparam=/^utm_/'.replace('\\n','\n'));
+  const rp = eNoEx.matchRemoveparam('https://track.example/pixel?utm_source=x&utm_ok=1', 'image', 'https://site.test/');
+  assert.strictEqual(rp.exception, false, 'removeparam not excepted');
+  assert.ok(rp.params.length >= 1, 'removeparam rules returned');
+  const rh = e.matchRemoveheader('https://api.example/data', 'xmlhttprequest', 'https://site.test/');
+  assert.ok(rh.headers.includes('request:cookie'), 'removeheader rule returned');
   assert.ok(e.getDiagnostics().some(d => /invalid removeheader/.test(d.reason)), 'invalid removeheader diagnostic');
   assert.ok(e.getDiagnostics().some(d => /invalid removeparam/.test(d.reason)), 'invalid removeparam diagnostic');
 

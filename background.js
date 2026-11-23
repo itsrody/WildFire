@@ -587,6 +587,21 @@
       popupSources.delete(details.tabId);
     }
 
+    // Capability-gated removeparam: redirect to cleaned URL before normal
+    // blocking/mutation decisions. No work when capability is absent.
+    if ((engine.capabilities & FilterEngine.CAP.REMOVEPARAM) && type !== 'document' && type !== 'subdocument') {
+      const rp = engine.matchRemoveparam(details.url, type, documentUrl);
+      if (rp.params && rp.params.length) {
+        const cleanUrl = applyRemoveparam(details.url, rp.params);
+        if (cleanUrl && cleanUrl !== details.url) {
+          state.blocked = (state.blocked || 0) + 1;
+          updateBadge();
+          scheduleFlush();
+          return { redirectUrl: cleanUrl };
+        }
+      }
+    }
+
     const result = engine.matchRequest(details.url, type, documentUrl);
     if (!result.blocked) return undefined;
 
@@ -614,6 +629,57 @@
   // Firefox applies every CSP header independently, so adding a curated
   // WildFire header tightens a response without rewriting the site's headers.
   // This listener is synchronous, like onBeforeRequest.
+  function applyRemoveparam(url, rules) {
+    if (!rules || !rules.length) return url;
+    try {
+      const u = new URL(url);
+      let changed = false;
+      rules.forEach(rule => {
+        const value = String(rule.value || '');
+        if (!value) {
+          if (u.search) { u.search = ''; changed = true; }
+          return;
+        }
+        if (rule.regex) {
+          Array.from(u.searchParams.keys()).forEach(key => {
+            if (rule.regex.test(key)) { u.searchParams.delete(key); changed = true; }
+          });
+          return;
+        }
+        if (u.searchParams.has(value)) { u.searchParams.delete(value); changed = true; }
+      });
+      return changed ? u.toString() : url;
+    } catch (error) {
+      return url;
+    }
+  }
+
+  function removeHeaders(headers, names, kind) {
+    if (!Array.isArray(headers) || !names || !names.length) return headers;
+    const set = new Set(names.map(n => {
+      const v = String(n || '').toLowerCase();
+      if (v.startsWith('request:') || v.startsWith('response:')) return v;
+      return kind + ':' + v;
+    }));
+    const filtered = headers.filter(h => {
+      const name = String(h.name || '').toLowerCase();
+      return !(set.has(kind + ':' + name) || set.has(name));
+    });
+    return filtered.length === headers.length ? headers : filtered;
+  }
+
+  function onBeforeSendHeaders(details) {
+    if (!state.enabled) return;
+    if (!(engine.capabilities & FilterEngine.CAP.REMOVEHEADER)) return;
+    const type = mapResourceType(details.type);
+    const documentUrl = type === 'document' ? details.url : documentScope.documentUrl(details);
+    if (siteDisabled(safeHost(documentUrl))) return;
+    const result = engine.matchRemoveheader(details.url, type, documentUrl);
+    if (!result.headers.length) return;
+    const requestHeaders = removeHeaders(details.requestHeaders || [], result.headers, 'request');
+    return requestHeaders === (details.requestHeaders || []) ? undefined : { requestHeaders };
+  }
+
   function onHeadersReceived(details) {
     if (details.type === 'csp_report') return undefined;
     // A rewrite stream may already exist even if the user just paused the
@@ -628,18 +694,26 @@
     const disabled = siteDisabled(safeHost(documentUrl));
     if (disabled && !rewriteType) return undefined;
 
-    const result = state.enabled && !disabled
-      ? engine.matchCsp(details.url, type, documentUrl)
-      : { directives: [] };
     let headers = details.responseHeaders || [];
     let changed = false;
     if (rewriteType && typeof RewriteResources !== 'undefined') {
       headers = RewriteResources.withHeaders(headers, rewriteType);
       changed = true;
     }
-    if (result.directives.length) {
-      headers = CspResources.withDirective(headers, result.directives);
-      changed = true;
+
+    if (state.enabled && !disabled) {
+      if (engine.capabilities & FilterEngine.CAP.REMOVEHEADER) {
+        const rh = engine.matchRemoveheader(details.url, type, documentUrl);
+        if (rh.headers.length) {
+          const next = removeHeaders(headers, rh.headers, 'response');
+          if (next !== headers) { headers = next; changed = true; }
+        }
+      }
+      const result = engine.matchCsp(details.url, type, documentUrl);
+      if (result.directives.length) {
+        headers = CspResources.withDirective(headers, result.directives);
+        changed = true;
+      }
     }
     return changed ? { responseHeaders: headers } : undefined;
   }
@@ -776,12 +850,20 @@
         ['blocking']
       );
 
-      const needsHeaders = true || (cap & (FilterEngine.CAP.CSP | FilterEngine.CAP.REWRITE));
+      const needsHeaders = true || (cap & (FilterEngine.CAP.CSP | FilterEngine.CAP.REWRITE | FilterEngine.CAP.REMOVEHEADER));
       if (needsHeaders) {
         browser.webRequest.onHeadersReceived.addListener(
           onHeadersReceived,
           { urls: ['<all_urls>'] },
           ['blocking', 'responseHeaders']
+        );
+      }
+
+      if (cap & FilterEngine.CAP.REMOVEHEADER) {
+        browser.webRequest.onBeforeSendHeaders.addListener(
+          onBeforeSendHeaders,
+          { urls: ['<all_urls>'] },
+          ['blocking', 'requestHeaders']
         );
       }
 
