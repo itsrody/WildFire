@@ -50,7 +50,8 @@
     lastError: '',
     restarts: 0,
     lastEvent: '',
-    lastAt: 0
+    lastAt: 0,
+    capabilities: 0
   };
   if (compiler && typeof compiler.on === 'function') {
     compiler.on(event => {
@@ -237,6 +238,7 @@
         if (result && result.compiled) {
           compilerStatus.lastMode = 'worker';
           compilerStatus.lastError = '';
+          if (typeof result.capabilities === 'number') compilerStatus.capabilities = result.capabilities;
           if (compileCache && result.compiled.v === FilterEngine.COMPILED_VERSION) {
             compileCache.set(source, result.compiled, meta).catch(error =>
               console.warn('WildFire: compile cache write failed', error));
@@ -378,6 +380,7 @@
       if (generation !== activeFilterGeneration) return;
       lastCustomHash = customHash;
       lastRemoteSignature = remoteSig;
+      compilerStatus.capabilities = engine.capabilities || 0;
       await refreshAllCosmetic();
       await syncScriptlets();
     });

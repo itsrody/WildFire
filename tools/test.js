@@ -349,6 +349,8 @@ compiledSource.load([
 ].join('\n'));
 const compiledBlob = compiledSource.toCompiled();
 assert.strictEqual(compiledBlob.v, FilterEngine.COMPILED_VERSION, 'compiled version present');
+assert.strictEqual(typeof compiledBlob.cap, 'number', 'compiled capabilities present');
+assert.ok(Array.isArray(compiledBlob.d), 'compiled diagnostics present');
 const compiledEngine = new FilterEngine(null, null, { validate: () => null });
 assert.strictEqual(compiledEngine.loadCompiled(compiledBlob), true, 'compiled blob loads');
 assert.strictEqual(compiledEngine.matchRequest('https://ads.example/app.js', 'script', 'https://news.test/').blocked,
@@ -360,6 +362,8 @@ assert.deepStrictEqual(Array.from(compiledEngine.getCosmetic('example.com')).sor
 assert.strictEqual(compiledEngine.getProcedural('example.com').length, 1, 'compiled procedural rule matches');
 assert.strictEqual(compiledEngine.scriptletRules.length, 1, 'compiled scriptlet rule loads');
 assert.strictEqual(compiledEngine.getScriptletPayload().length, 1, 'compiled scriptlet payload available');
+assert.strictEqual(compiledEngine.getCapabilities() & FilterEngine.CAP.SCRIPTLET, FilterEngine.CAP.SCRIPTLET, 'scriptlet capability set');
+assert.strictEqual(compiledEngine.getCapabilities() & FilterEngine.CAP.REDIRECT, FilterEngine.CAP.REDIRECT, 'redirect capability set');
 
 const documentEngine = new FilterEngine();
 documentEngine.load([
@@ -1768,7 +1772,7 @@ async function testCompileCacheAndCompiler() {
   const storage = memoryStorage({});
   const cache = WildFireCompileCache.create({ browserApi: { storage: { local: storage } }, version: FilterEngine.COMPILED_VERSION });
   const text = '||cache.example^';
-  const compiled = { v: FilterEngine.COMPILED_VERSION, n: [], c: { g: [], ge: [], d: [], de: [] }, p: { g: [], ge: [], d: [], de: [] }, s: [] };
+  const compiled = { v: FilterEngine.COMPILED_VERSION, cap: 0, n: [], c: { g: [], ge: [], d: [], de: [] }, p: { g: [], ge: [], d: [], de: [] }, s: [], d: [] };
   await cache.set(text, compiled, { source: 'remote', hash: 'h' });
   assert.deepStrictEqual(await cache.get(text), compiled, 'compile cache round-trips compiled data');
 
@@ -1821,6 +1825,66 @@ async function testCompileCacheAndCompiler() {
   compiler.restart('test');
   assert.strictEqual(oldWorker.terminated, true, 'restart terminates old worker');
   compiler.destroy();
+}
+
+async function testPhase0Foundation() {
+  // Rule IR / diagnostics / capabilities
+  const ir = new FilterEngine(null, alias => alias === 'no-script' ? "script-src 'none'" : '', { validate: () => null }, alias => alias === 'blank-js');
+  ir.load([
+    '||ads.example^$script,third-party,important',
+    '@@||ads.example/allow.js$script',
+    '||track.example^$redirect=noopjs,script',
+    '||page.example^$csp=no-script',
+    '||asset.example^$rewrite=blank-js,script',
+    'example.com##.ad',
+    'example.com##div:has-text(Ad)',
+    'example.com##+js(set-constant, a, 1)',
+    '/bad(regex/',
+    '||bad.example^$csp=unknown-alias'
+  ].join('\n'));
+
+  assert.ok(ir.getCapabilities() & FilterEngine.CAP.NETWORK, 'network capability');
+  assert.ok(ir.getCapabilities() & FilterEngine.CAP.EXCEPTION, 'exception capability');
+  assert.ok(ir.getCapabilities() & FilterEngine.CAP.IMPORTANT, 'important capability');
+  assert.ok(ir.getCapabilities() & FilterEngine.CAP.REDIRECT, 'redirect capability');
+  assert.ok(ir.getCapabilities() & FilterEngine.CAP.CSP, 'csp capability');
+  assert.ok(ir.getCapabilities() & FilterEngine.CAP.REWRITE, 'rewrite capability');
+  assert.ok(ir.getCapabilities() & FilterEngine.CAP.THIRD_PARTY, 'third-party capability');
+  assert.ok(ir.getCapabilities() & FilterEngine.CAP.COSMETIC, 'cosmetic capability');
+  assert.ok(ir.getCapabilities() & FilterEngine.CAP.PROCEDURAL, 'procedural capability');
+  assert.ok(ir.getCapabilities() & FilterEngine.CAP.SCRIPTLET, 'scriptlet capability');
+
+  const diags = ir.getDiagnostics();
+  assert.ok(diags.some(d => d.category === 'network' && d.type === 'rejected'), 'regex parse diagnostic');
+  assert.ok(diags.some(d => d.category === 'csp' && /unknown CSP alias/.test(d.reason)), 'csp rejection diagnostic');
+  assert.ok(diags.every(d => typeof d.hash === 'string' && d.hash.length > 0), 'diagnostics have hashes');
+  assert.ok(diags.every(d => ['wildfire', 'ubo', 'adguard', 'abp'].includes(d.sourceKind)), 'diagnostics have source kind');
+
+  // Compiled IR round-trip preserves capabilities and diagnostics
+  const compiled = ir.toCompiled();
+  assert.strictEqual(compiled.v, FilterEngine.COMPILED_VERSION, 'compiled v2');
+  assert.strictEqual(compiled.cap, ir.getCapabilities(), 'compiled cap matches');
+  assert.ok(Array.isArray(compiled.d), 'compiled diagnostics');
+  const ir2 = new FilterEngine(null, () => 'script-src \'none\'', { validate: () => null }, () => true);
+  assert.strictEqual(ir2.loadCompiled(compiled), true, 'load compiled v2');
+  assert.strictEqual(ir2.getCapabilities(), ir.getCapabilities(), 'capabilities round-trip');
+  assert.ok(ir2.getDiagnostics().length >= diags.length, 'diagnostics round-trip');
+
+  // v1 compiled blobs are rejected (schema bump invalidation)
+  const v1Blob = { v: 1, n: [], c: { g: [], ge: [], d: [], de: [] }, p: { g: [], ge: [], d: [], de: [] }, s: [] };
+  const ir3 = new FilterEngine();
+  assert.strictEqual(ir3.loadCompiled(v1Blob), false, 'v1 compiled rejected');
+
+  // Safe rejection of unsupported/invalid syntax does not throw
+  const safe = new FilterEngine(null, () => '', { validate: () => null }, () => true);
+  assert.doesNotThrow(() => safe.load([
+    '||ok.example^',
+    '/(a+)+$/',
+    '##+js(trusted-click-element, body)',
+    '||x.example^$csp=nope',
+    '||x.example^$rewrite=nope'
+  ].join('\n')), 'unsupported/invalid rules do not throw');
+  assert.strictEqual(safe.matchRequest('https://ok.example/x.js', 'script', 'https://site.test/').blocked, true, 'valid rule still active after rejections');
 }
 
 async function testRemoteLists() {
@@ -1965,6 +2029,7 @@ async function testRemoteLists() {
 }
 
 Promise.resolve()
+  .then(() => testPhase0Foundation())
   .then(() => testCompileCacheAndCompiler())
   .then(() => testIncrementalRemoteCompileSemantics())
   .then(() => testBackgroundLoadFiltersIntegration())
