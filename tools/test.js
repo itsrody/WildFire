@@ -806,16 +806,18 @@ assert.strictEqual(classify(nthRule, '/').mode, 'js', ':nth-ancestor stays in th
   assert.strictEqual(spanRule.steps[0].op, 'xpath', 'xpath step parsed');
 
   // Fake native XPath reached through the node keeps procedural.js DOM-only.
+  // ORDERED_NODE_SNAPSHOT_TYPE (7) returns a native snapshot; WildFire keeps
+  // only element nodes from it.
   const spanTarget = stubNode('span', ''); spanTarget.nodeType = 1;
   const textTarget = stubNode('#text', ''); textTarget.nodeType = 3;
-  const docFor = target => ({
+  const docFor = targets => ({
     evaluate: (expr, context, ns, type) => {
-      assert.strictEqual(type, 9, 'xpath uses FIRST_ORDERED_NODE_TYPE (bounded single node)');
-      return { singleNodeValue: target };
+      assert.strictEqual(type, 7, 'xpath uses ORDERED_NODE_SNAPSHOT_TYPE (native node-set)');
+      return { snapshotLength: targets.length, snapshotItem: index => targets[index] };
     }
   });
-  const baseA = stubNode('div', ''); baseA.ownerDocument = docFor(spanTarget);
-  const baseB = stubNode('div', ''); baseB.ownerDocument = docFor(textTarget);
+  const baseA = stubNode('div', ''); baseA.ownerDocument = docFor([spanTarget]);
+  const baseB = stubNode('div', ''); baseB.ownerDocument = docFor([textTarget]);
   const baseC = stubNode('div', ''); baseC.ownerDocument = { evaluate: () => { throw new Error('bad xpath'); } };
   const baseD = stubNode('div', ''); // no ownerDocument -> no match, no throw
   const xpRoot = stubNode('body', '', [baseA, baseB, baseC, baseD]);
@@ -827,6 +829,37 @@ assert.strictEqual(classify(nthRule, '/').mode, 'js', ':nth-ancestor stays in th
   const xpReload = new FilterEngine();
   assert.strictEqual(xpReload.loadCompiled(xpBlob), true, 'xpath compiled round-trip');
   assert.strictEqual(xpReload.getProcedural('example.com').length, 2, 'xpath survives compiled load');
+
+  // Multi-target parity: every element result is hidden, not just the first.
+  const multiRule = { base: 'div', steps: [{ op: 'xpath', expr: './/span' }] };
+  const m1 = stubNode('span', ''); m1.nodeType = 1;
+  const m2 = stubNode('span', ''); m2.nodeType = 1;
+  const m3 = stubNode('span', ''); m3.nodeType = 1;
+  const multiBase = stubNode('div', ''); multiBase.ownerDocument = docFor([m1, m2, m3]);
+  const multiSel = WildFireProcedural.select(stubNode('body', '', [multiBase]), multiRule, '/');
+  assert.strictEqual(multiSel.length, 3, 'xpath hides all element results');
+  assert.ok(multiSel[0] === m1 && multiSel[1] === m2 && multiSel[2] === m3, 'xpath preserves node-set order');
+
+  // Non-element results are dropped even inside a mixed node-set.
+  const mixedBase = stubNode('div', ''); mixedBase.ownerDocument = docFor([m1, textTarget, m2]);
+  const mixedSel = WildFireProcedural.select(stubNode('body', '', [mixedBase]), multiRule, '/');
+  assert.strictEqual(mixedSel.length, 2, 'xpath drops non-element results from a mixed set');
+  assert.ok(mixedSel[0] === m1 && mixedSel[1] === m2, 'xpath keeps the element results');
+
+  // The hide set stays bounded even when the native node-set is huge.
+  const many = Array.from({ length: 300 }, () => { const n = stubNode('span', ''); n.nodeType = 1; return n; });
+  const capBase = stubNode('div', ''); capBase.ownerDocument = docFor(many);
+  const capSel = WildFireProcedural.select(stubNode('body', '', [capBase]), multiRule, '/');
+  assert.strictEqual(capSel.length, 256, 'xpath result set is capped for safety');
+
+  // A testing step after :xpath() filters the expanded set.
+  const shortSpan = stubNode('span', 'hi'); shortSpan.nodeType = 1;
+  const longSpan = stubNode('span', 'long enough text'); longSpan.nodeType = 1;
+  const filterBase = stubNode('div', ''); filterBase.ownerDocument = docFor([shortSpan, longSpan]);
+  const filterRule = { base: 'div', steps: [{ op: 'xpath', expr: './/span' }, { op: 'min-text-length', length: 10 }] };
+  const filterSel = WildFireProcedural.select(stubNode('body', '', [filterBase]), filterRule, '/');
+  assert.strictEqual(filterSel.length, 1, 'steps after xpath filter the node-set');
+  assert.strictEqual(filterSel[0], longSpan, 'only the matching xpath result survives the filter');
 
   const notEngine = new FilterEngine();
   notEngine.load([
