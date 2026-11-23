@@ -232,6 +232,48 @@
           "blocked": false
         }
       ]
+    },
+    {
+      "name": "hide exception modifiers with badfilter",
+      "rules": [
+        "##.global",
+        "example.com##.specific",
+        "@@||example.com^$specifichide",
+        "@@||example.com^$specifichide,badfilter"
+      ],
+      "cosmetic": [
+        {
+          "host": "example.com",
+          "includes": [
+            ".global",
+            ".specific"
+          ]
+        }
+      ],
+      "expect": {
+        "capabilities": [
+          "COSMETIC",
+          "BADFILTER"
+        ]
+      }
+    },
+    {
+      "name": "ABP unsupported action selectors rejected",
+      "rules": [
+        "example.com#?#div:-abp-has(.ad)",
+        "example.com#?#div:-abp-remove()",
+        "example.com#?#div:-abp-properties(color: red)"
+      ],
+      "expect": {
+        "capabilities": [
+          "COSMETIC",
+          "PROCEDURAL"
+        ]
+      },
+      "proceduralCount": {
+        "host": "example.com",
+        "count": 1
+      }
     }
   ]
 }

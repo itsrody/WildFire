@@ -2170,6 +2170,26 @@ async function testHideExceptionModifiers() {
   e3.load(['##.global-ad', 'example.com##.specific-ad', '@@||example.com^$specifichide'].join('\n'));
   const p3 = e3.getHidePolicy('https://example.com/page', 'document', 'https://example.com/page');
   assert.strictEqual(JSON.stringify(e3.getCosmetic('example.com', p3).slice().sort()), JSON.stringify(['.global-ad']), 'specifichide hides domain-specific only');
+
+  const e4 = new FilterEngine();
+  e4.load([
+    '##.global-ad',
+    'example.com##.specific-ad',
+    '@@||example.com^$generichide',
+    '@@||example.com^$generichide,badfilter'
+  ].join('\n'));
+  const p4 = e4.getHidePolicy('https://example.com/page', 'document', 'https://example.com/page');
+  assert.strictEqual(p4.generichide, false, 'badfilter disables generichide exception');
+  assert.ok(e4.getCosmetic('example.com', p4).includes('.global-ad'), 'generic visible when generichide badfiltered');
+
+  const e5 = new FilterEngine();
+  e5.load([
+    'example.com#?#div:-abp-has(.ad)',
+    'example.com#?#div:-abp-properties(color: red)',
+    'example.com#?#div:-abp-remove()'
+  ].join('\n'));
+  assert.strictEqual(e5.getProcedural('example.com').length, 1, 'safe ABP procedural mapped');
+  assert.strictEqual(e5.rejectedCosmetic.length, 2, 'unsupported ABP action/procedural rejected');
 }
 
 async function testPhase1BBadfilter() {
