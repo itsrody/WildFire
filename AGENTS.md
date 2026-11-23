@@ -64,6 +64,7 @@ assets/                generated PNG icons (16/32/48/96/128)
 tools/                 icon generator, validator, tests, XPI packager
 dist/                  generated XPI — ignored, never reviewed or committed
 docs/                  design notes for non-shipped architecture explorations
+browser/               FOSS Firefox native bridge scaffold (not packaged in XPI)
 AGENTS.md, README.md   this guide and the user-facing overview
 ```
 

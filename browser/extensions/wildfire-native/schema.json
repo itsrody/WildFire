@@ -1,0 +1,56 @@
+[
+  {
+    "namespace": "wildfireNative",
+    "description": "Privileged WildFire bridge for realm-birth scriptlet application. Data-only; no code execution.",
+    "permissions": ["mozillaAddons"],
+    "types": [
+      {
+        "id": "ScriptletEntry",
+        "type": "object",
+        "properties": {
+          "alias": { "type": "string" },
+          "syntax": { "type": "string", "optional": true },
+          "args": { "type": "array", "items": { "type": "any" } },
+          "domains": { "type": "array", "items": { "type": "string" }, "optional": true },
+          "isException": { "type": "boolean", "optional": true }
+        }
+      },
+      {
+        "id": "Payload",
+        "type": "object",
+        "properties": {
+          "version": { "type": "integer" },
+          "generation": { "type": "integer" },
+          "hash": { "type": "string" },
+          "phases": {
+            "type": "object",
+            "properties": {
+              "realmBirth": { "type": "array", "items": { "$ref": "ScriptletEntry" } },
+              "documentStart": { "type": "array", "items": { "$ref": "ScriptletEntry" }, "optional": true }
+            }
+          }
+        }
+      }
+    ],
+    "functions": [
+      {
+        "name": "setPayload",
+        "type": "function",
+        "async": true,
+        "parameters": [{ "name": "payload", "$ref": "Payload" }]
+      },
+      {
+        "name": "clearPayload",
+        "type": "function",
+        "async": true,
+        "parameters": []
+      },
+      {
+        "name": "getStatus",
+        "type": "function",
+        "async": true,
+        "parameters": []
+      }
+    ]
+  }
+]

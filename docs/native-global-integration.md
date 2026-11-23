@@ -6,6 +6,11 @@ This document explores a Firefox-integrated execution path for WildFire scriptle
 It does not change the shipped extension. The current MV2 extension remains the
 reference implementation and must keep working without any Firefox patch.
 
+**FOSS distribution target:** the intended delivery is a custom/FOSS Firefox build
+(or a build that ships a privileged WildFire component), not AMO. The WildFire
+XPI remains data-only and falls back to stock-extension behavior when the native
+bridge is absent.
+
 ## 1. Goal
 
 The current scriptlet runtime patches the page at `document_start`. With
@@ -51,25 +56,51 @@ It can observe all globals in the JS runtime, which is why ordinary WebExtension
 cannot use it. There is no `browser.debugger` API in Firefox and no WebExtension
 permission that exposes raw SpiderMonkey `Debugger`.
 
+`browser.contentScripts.register()` supports `world: "MAIN"` and
+`runAt: "document_start"` (Firefox 128+), but
+`toolkit/components/extensions/ExtensionContent.sys.mjs` executes MAIN scripts
+through `script.executeInGlobal(context.contentWindow, ...)` after content-script
+scheduling/parsing control. It is still runtime injection.
+
 Therefore:
 
-- A normal MV2 extension cannot request this behavior.
-- A WebExtension Experiment or a Firefox source patch can.
-- `MAIN` world at `document_start` remains the maximum stock-extension path.
+- A normal MV2 extension cannot request realm-birth behavior.
+- A WebExtension Experiment or Firefox source patch can.
+- `MAIN` world at `document_start` remains the maximum stock-extension
+  mitigation/fallback, not proof of realm-birth initialization.
+
+## 2.1. Real-Firefox smoke evidence (Firefox 160.0.1)
+
+`tools/smoke.js` (`npm run smoke`) runs the same localhost smoke page against
+baseline WildFire and a temporary copy patched with `world: 'MAIN'`. The smoke
+rule is `localhost##+js(set-constant, wildFireSmokeValue, false)`.
+
+| Case | First inline script | Cosmetic/content markers | Page leakage |
+| --- | --- | --- | --- |
+| Baseline isolated | `window.wildFireSmokeValue`/bare identifier threw or were `undefined` | cosmetic applied, content marker present, scriptlet marker absent | no `WildFireScriptlets` in page |
+| `MAIN` + `document_start` | value `false`, descriptor present at first inline script | cosmetic and markers present | `window.WildFireScriptlets` and WildFire-named globals visible to page |
+
+Conclusion: `MAIN` is a useful mitigation and prototype signal, but it is
+insufficient for the stated requirement. It also has a leak-hardening problem:
+WildFire runtime globals must never be exposed to page code.
 
 ## 3. Product decision required
 
-This design changes WildFire from a standalone WebExtension into a hybrid:
+The FOSS distribution target makes a hybrid viable:
 
 ```text
-normal MV2 extension  +  privileged Firefox component
+FOSS/custom Firefox build  +  privileged WildFire component  +  normal MV2 extension
 ```
 
-That is a product decision, not a refactor. It affects signing, distribution,
-AMO compatibility, Firefox updates, and the trust model for `trusted-*` aliases.
+The extension keeps filter parsing, validation, UI, and stock fallback. The
+privileged component only applies validated data-only scriptlet payloads.
+
+This is still a product decision: users need the custom/FOSS Firefox build for
+realm-birth behavior. Stock Firefox users get the best-effort `document_start`
+fallback, not realm-birth guarantees.
 
 Until an explicit source-trust model exists, `trusted-*` aliases remain rejected
-in both layers.
+in all layers.
 
 ## 4. Architecture overview
 
@@ -105,11 +136,24 @@ The extension keeps its current responsibilities:
 2. Canonicalize aliases and merge `#@#+js()` / `#@%#//scriptlet()` exceptions.
 3. Reject unknown, malformed, unsafe, and `trusted-*` aliases.
 4. Build `engine.getScriptletPayload()`.
-5. Send the payload to a versioned native bridge if the bridge exists.
-6. Fall back to the existing `browser.contentScripts.register()` path if the
-   bridge does not exist.
+5. Split payload by phase: `realmBirth` for data-only aliases proven safe before
+   DOM startup; `documentStart` for DOM-dependent aliases.
+6. Send payload to `browser.wildfireNative` when present.
+7. Register `document_start` fallback through `browser.contentScripts.register()`
+   for `documentStart` rules, or for all rules when the bridge is absent/fails.
 
 No new filter syntax is required by this design.
+
+### Stock `MAIN` fallback hardening
+
+The smoke probe showed `world: 'MAIN'` can expose `window.WildFireScriptlets`.
+Before using `MAIN` as a mitigation, harden it:
+
+- Execute scriptlets through a non-page-visible trampoline (no persistent
+  `window.WildFireScriptlets` object, no enumerable WildFire globals).
+- Keep the implementation in WildFire-owned extension files; payload remains data.
+- Treat `MAIN` as best-effort `document_start`, never as realm-birth.
+- Re-run `tools/smoke.js` and add a leakage assertion to CI/manual smoke checks.
 
 ## 6. Native bridge API
 
@@ -197,6 +241,22 @@ Responsibilities:
 
 ## 8. New-global hook
 
+### Smallest robust hook points
+
+- **Realm birth (required for "from beginning"):**
+  `nsGlobalWindowInner::FireOnNewGlobalObject()` in
+  `dom/base/nsGlobalWindowInner.cpp`. It already enters the global through
+  `AutoEntryScript` and calls `JS_FireOnNewGlobalObject()` before page script can
+  compile. A C++ fast path would define WildFire-owned properties here, behind a
+  content-process payload cache and strict principal/URL filters.
+- **Privileged JS prototype:** content-process `Debugger.onNewGlobalObject`
+  installed from a privileged component (`addDebuggerToGlobal` via
+  `moz-src:///devtools/platform/jsdebugger.sys.mjs`). Same realm-birth contract,
+  easier to prototype/audit, but must be profiled for overhead.
+- **Not realm birth:** `ExtensionContent.sys.mjs` content-script scheduling and
+  `script.executeInGlobal()` for `MAIN`. Keep this only as fallback for
+  document-start aliases.
+
 The child component can use the privileged Debugger API:
 
 ```js
@@ -205,24 +265,21 @@ ChromeUtils.importESModule("moz-src:///devtools/platform/jsdebugger.sys.mjs")
 
 const debuggerInstance = new Debugger();
 debuggerInstance.onNewGlobalObject = globalObject => {
-  // Filter by principal/URL first.
-  // Apply realm-birth entries through Debugger.Object data APIs.
+  // 1. Filter by principal/class/URL before dereferencing or defining.
+  // 2. Apply only realmBirth entries through Debugger.Object data APIs.
+  // 3. Never retain globalObject strongly.
 };
 ```
 
 Implementation constraints:
 
-- The hook must be installed once per content process.
-- The `Debugger` object must be rooted by the component for its lifetime.
-- Do not attach broad `onEnterFrame` or `onNewScript` hooks; that would add
-  unnecessary debugger overhead and can deoptimize debuggees.
-- Hook errors are caught and reported only to browser diagnostics.
-- The hook must not hold every page global strongly after application.
-
-A later C++ fast path can replace the JS `Debugger` hook with a direct hook near
-`nsGlobalWindowInner::FireOnNewGlobalObject()` using `JS_DefineProperty()` or
-`JS_DefineProperties()`. Keep the JS experiment first because it is easier to
-audit and iterate.
+- Install once per content process; root the `Debugger` for process lifetime.
+- Add no `onEnterFrame`, `onNewScript`, or `onPromiseSettled` hooks.
+- Filter before touching page objects: system/chrome/extension/resource globals
+  out; `http/https/file` content windows in; workers/worklets out in Phase A.
+- Catch and report hook errors to browser diagnostics; never throw into page.
+- No strong references to page globals; payload is immutable data.
+- Revalidate payload in the privileged layer even if extension validated it.
 
 ## 9. Realm filtering
 
@@ -370,30 +427,54 @@ A dedicated test page should place assertions before any external script loads.
 
 ## 14. Delivery phases
 
-### Phase A — prototype
+### Phase A — prototype (start here)
 
-- Add the experiment API and child component.
-- Install `Debugger.onNewGlobalObject`.
-- Support only `set-constant`.
-- Add integration tests and benchmark startup impact.
+- Add the privileged bridge API and child hook in a FOSS Firefox build.
+- Support only `set-constant` at realm birth; data-only payload, double
+  validation, bounded size/count/arg limits.
+- Keep all other aliases on `document_start` fallback (`MAIN` only after leakage
+  hardening; otherwise isolated fallback).
+- Add smoke/integration tests: first inline script sees value, no page-visible
+  WildFire globals, exceptions cancel, payload updates affect future loads only.
+- Benchmark `onNewGlobalObject` overhead on representative pages.
 
 ### Phase B — realm-birth catalog
 
-- Add pure global/builtin aliases after verification.
-- Add descriptor preservation and exception handling.
-- Add fallback behavior.
+- Add pure global/builtin aliases after per-alias proof (descriptor semantics,
+  no DOM dependency, no page leakage).
+- Preserve original descriptors/prototypes where applicable.
+- Keep `trusted-*` rejected.
 
 ### Phase C — hybrid runtime
 
-- Keep DOM-dependent aliases in `MAIN` at `document_start`.
-- Coordinate exceptions across both phases.
-- Update user docs only after behavior is stable.
+- Harden `MAIN` fallback to remove `window.WildFireScriptlets` leakage.
+- Coordinate exceptions across realm-birth and document-start phases.
+- Keep stock XPI fully functional with fallback.
 
 ### Phase D — optional C++ fast path
 
-- Replace the `Debugger` hook with direct JSAPI definitions if profiling shows
-  measurable overhead.
-- Keep the data-only validation boundary unchanged.
+- If Debugger overhead is measurable, move hot path near
+  `nsGlobalWindowInner::FireOnNewGlobalObject()` using JSAPI property defines.
+- Keep the same payload schema and validation boundary.
+
+## 15. Implementation plan (concrete)
+
+1. **Harden extension boundary (done in this repo as scaffold):** split payload by
+   phase in `background.js`, detect `browser.wildfireNative`, send realm-birth
+   rules over bridge, register only document-start fallback rules. No manifest
+   permission changes.
+2. **FOSS Firefox component prototype:** move `browser/extensions/wildfire-native`
+   scaffold into Firefox source as privileged experiment/component; wire
+   `schema.json`/manifest registration; implement parent sharedData broadcast and
+   child `Debugger.onNewGlobalObject` hook.
+3. **Validation parity:** port/duplicate WildFire scriptlet validation in the
+   component (alias allowlist, arg types, constant tokens, domain syntax, max
+   sizes, no `trusted-*`).
+4. **Smoke gate:** extend `tools/smoke.js` with a native mode that runs against a
+   custom Firefox build containing the component; require value at first inline
+   script and zero WildFire globals.
+5. **Rollout:** ship as FOSS/custom Firefox build artifact; keep normal XPI as
+   fallback channel for stock Firefox.
 
 ## 15. Open decisions
 

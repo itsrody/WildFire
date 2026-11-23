@@ -7,7 +7,7 @@ const zlib = require('zlib');
 const { execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'tools']);
+const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'tools', 'browser', 'docs']);
 const SKIP_FILES = new Set(['.DS_Store', '.gitignore', 'package-lock.json']);
 
 function crc32(buffer) {

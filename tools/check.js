@@ -72,7 +72,7 @@ referenced.forEach(relative => {
   if (!fs.existsSync(path.join(ROOT, relative))) errors.push('missing referenced file: ' + relative);
 });
 
-const allFiles = collectFiles(ROOT, new Set(['.git', 'node_modules', 'dist']));
+const allFiles = collectFiles(ROOT, new Set(['.git', 'node_modules', 'dist', 'browser']));
 const scripts = allFiles.filter(file => file.endsWith('.js'));
 scripts.forEach(script => {
   try {

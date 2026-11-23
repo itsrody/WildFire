@@ -40,6 +40,8 @@
   let flushTimer = null;
   let ready = false;
   let scriptletRegistration = null;
+  let scriptletGeneration = 0;
+  const REALM_BIRTH_ALIASES = new Set(['set-constant']);
 
   function safeHost(url) {
     try {
@@ -92,6 +94,53 @@
     };
   }
 
+  function scriptletHash(rules) {
+    return String(rules.length) + ':' + rules.map(rule => [
+      rule.alias,
+      rule.syntax || 'ubo',
+      rule.isException ? '1' : '0',
+      (rule.domains || []).join(','),
+      (rule.args || []).join('\u001f')
+    ].join('\u001e')).join('\u001d');
+  }
+
+  function splitScriptletPayload(rules) {
+    const payload = { realmBirth: [], documentStart: [] };
+    rules.forEach(rule => {
+      const name = WildFireScriptlets.canonical(rule.alias, rule.syntax);
+      if (!rule.isException && REALM_BIRTH_ALIASES.has(name)) payload.realmBirth.push(rule);
+      else payload.documentStart.push(rule);
+    });
+    return payload;
+  }
+
+  function nativeBridge() {
+    const api = browser.wildfireNative;
+    if (!api || typeof api.setPayload !== 'function') return null;
+    return api;
+  }
+
+  async function syncNativeScriptlets(payload) {
+    const bridge = nativeBridge();
+    if (!bridge) return false;
+    try {
+      if (!payload.realmBirth.length && !payload.documentStart.length) {
+        if (typeof bridge.clearPayload === 'function') await bridge.clearPayload();
+        return true;
+      }
+      await bridge.setPayload({
+        version: 1,
+        generation: ++scriptletGeneration,
+        hash: scriptletHash(payload.realmBirth.concat(payload.documentStart)),
+        phases: payload
+      });
+      return true;
+    } catch (error) {
+      console.warn('WildFire: native scriptlet bridge failed', error);
+      return false;
+    }
+  }
+
   async function loadFilters() {
     let bundled = '';
     try {
@@ -117,6 +166,10 @@
   // code runs before page scripts. Only validated alias data is injected; the
   // implementation always comes from WildFire's own file.
   async function syncScriptlets() {
+    const rules = engine.getScriptletPayload();
+    const payload = splitScriptletPayload(rules);
+    const nativeReady = await syncNativeScriptlets(payload);
+
     if (!browser.contentScripts || typeof browser.contentScripts.register !== 'function') return;
     if (scriptletRegistration) {
       try {
@@ -127,14 +180,14 @@
       scriptletRegistration = null;
     }
 
-    const rules = engine.getScriptletPayload();
-    if (!rules.length) return;
+    const fallbackRules = nativeReady ? payload.documentStart : rules;
+    if (!fallbackRules.length) return;
     try {
       scriptletRegistration = await browser.contentScripts.register({
         matches: ['<all_urls>'],
         js: [
           { file: 'lib/scriptlets.js' },
-          { code: 'window.WildFireScriptlets.apply(' + JSON.stringify(rules) + ');' }
+          { code: 'window.WildFireScriptlets.apply(' + JSON.stringify(fallbackRules) + ');' }
         ],
         runAt: 'document_start',
         allFrames: true
