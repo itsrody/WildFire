@@ -37,7 +37,9 @@
 
   function hasAttrStep(step) {
     if (!step) return false;
-    if (step.op === 'matches-attr') return true;
+    // matches-css reads computed style, which changes with class/style/id and
+    // other attribute mutations, so it needs the same all-attributes watch.
+    if (step.op === 'matches-attr' || step.op === 'matches-css') return true;
     if (step.op === 'has' && step.inner && Array.isArray(step.inner.steps)) return step.inner.steps.some(hasAttrStep);
     return false;
   }

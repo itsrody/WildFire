@@ -201,7 +201,8 @@ it validates each selector with `CSS.supports('selector', …)` and
 `document.querySelector` before injecting a `<style id="wildfire-cosmetic">`.
 
 Procedural selectors (`:has-text()`, `:contains()`, `:matches-path()`, `:has()`,
-`:nth-ancestor()`) are parsed in `lib/filter-engine.js` into trees with `base`
+`:nth-ancestor()`, `:upward()`, `:min-text-length()`, `:matches-attr()`,
+`:matches-css()`) are parsed in `lib/filter-engine.js` into trees with `base`
 plus ordered `steps`; malformed or unsafe ones are recorded in
 `engine.rejectedCosmetic` and never sent to pages.
 `getProcedural(host)` merges generic and domain trees and subtracts `#@#`
@@ -210,20 +211,25 @@ exceptions. Background sends them in the same `wildfire:apply` message as CSS.
 `WildFireProcedural.classify()` picks the cheapest Firefox-native route per
 rule. `:matches-path()` is a page constant, so it is matched once per apply and
 dropped from the node steps; non-matching rules are skipped entirely. Plain
-`:has()` steps are compiled to CSS and validated with `CSS.supports`, so Gecko
-handles them in `#wildfire-cosmetic-procedural` with no JS re-evaluation. When
-text steps remain, every `:has()` inner tree contributes its plain base as a
-native `:has()` **prefilter** on the `querySelectorAll` call. `selectAll()` groups
-rules sharing a base (or prefilter) into one query pass instead of one per rule.
-Only the remaining text-dependent rules hide nodes via `data-wildfire-hidden`,
-and the attribute is diffed so unchanged nodes are never touched.
+`:has()` steps and `:matches-attr(name)`/`=(name="literal")` are compiled to CSS
+and validated with `CSS.supports`, so Gecko handles them in
+`#wildfire-cosmetic-procedural` with no JS re-evaluation. When dynamic steps
+remain, every native-safe fragment (`:has()` base, attribute presence/literal)
+contributes a native **prefilter** on the `querySelectorAll` call. `selectAll()`
+groups rules sharing a base (or prefilter) into one query pass instead of one
+per rule. Only the remaining text/regex/ancestor/computed-style-dependent rules
+hide nodes via `data-wildfire-hidden`, and the attribute is diffed so unchanged
+nodes are never touched. `:matches-css(prop: value|/re/)` reads Gecko's computed
+style read-only (with `-before`/`-after` pseudo variants) and stays JS-evaluated.
 `:has-text()` checks an element's own text nodes; `:contains()` also searches
 descendants. Both share the safe literal/regex matcher. `:nth-ancestor(n)` is a
 transforming step: the rule hides the nth parent of a match instead of the
 match itself, so `targetOf()` returns the final node to hide.
 `content/cosmetic.js` schedules re-applies with `requestAnimationFrame` to merge
-multiple `MutationObserver` batches per frame, and only observes `characterData`
-when a live rule actually depends on text. Filter text is never executed.
+multiple `MutationObserver` batches per frame, only observes `characterData`
+when a live rule actually depends on text, and widens the attribute watch to all
+attributes when a rule uses `:matches-attr()` or `:matches-css()`. Filter text is
+never executed.
 
 ### State and messages
 
@@ -301,7 +307,7 @@ fetched before consent, `data_collection_permissions.required` stays `["none"]`.
 | `/regex/` filters (`i`, `m`, `s`, `u` flags only) | |
 | `##selector`, `#@#selector` | |
 | `##sel:has-text("…")`, `##sel:matches-path(/re/)`, `##sel:has(sel)` | |
-| `##sel:contains("…")`, `##sel:nth-ancestor(n)`, `##sel:upward(n|sel)`, `##sel:min-text-length(n)`, `##sel:matches-attr(name=/re/)` | |
+| `##sel:contains("…")`, `##sel:nth-ancestor(n)`, `##sel:upward(n|sel)`, `##sel:min-text-length(n)`, `##sel:matches-attr(name[=value|/re/])`, `##sel:matches-css[-before|-after](prop: value|/re/)` | |
 | `#?#` / `#@?#` with safe `:-abp-has()`/`:-abp-contains()` | unsupported ABP action/procedural selectors rejected |
 | `domain##+js(alias, args)` (curated aliases only) | |
 | `domain#%#//scriptlet('alias', 'args')` (AdGuard, string-only) | AdGuard trusted/debug aliases |
@@ -366,9 +372,13 @@ Procedural cosmetic rules are parsed into a base selector plus ordered steps.
 searches descendants. `:matches-path()` takes a `/regex/` checked against
 `location.pathname + location.search`; `:has()` accepts another plain or
 procedural selector and can be nested up to eight levels; `:nth-ancestor(n)`
-accepts 1–8 and hides the nth parent of a match. Invalid rules land in
-`engine.rejectedCosmetic`. Evaluation lives entirely in `lib/procedural.js` and
-`content/cosmetic.js` — never in injected script.
+accepts 1–8 and hides the nth parent of a match. `:min-text-length(n)` accepts
+1–16384. `:matches-attr(name)`, `=(name="literal")` or `=(name=/re/)` tests an
+attribute (presence/literal compile to native CSS). `:matches-css(prop: value|/re/)`
+(and `-before`/`-after`) reads computed style read-only; the property must be a
+plain CSS identifier and the value a bounded literal or safe regex. Invalid rules
+land in `engine.rejectedCosmetic`. Evaluation lives entirely in
+`lib/procedural.js` and `content/cosmetic.js` — never in injected script.
 
 Add new syntax by extending `lib/filter-engine.js` **and** `tools/test.js` in
 the same change. `README.md` gets a syntax-table row when the feature is

@@ -274,6 +274,27 @@
         "host": "example.com",
         "count": 1
       }
+    },
+    {
+      "name": "matches-css computed-style procedural",
+      "rules": [
+        "example.com##div:matches-css(position: fixed)",
+        "example.com##div:matches-css-before(content: \"ad\")",
+        "example.com##div:matches-css(bad argument)"
+      ],
+      "expect": {
+        "capabilities": [
+          "COSMETIC",
+          "PROCEDURAL"
+        ],
+        "diagnosticCategories": [
+          "cosmetic"
+        ]
+      },
+      "proceduralCount": {
+        "host": "example.com",
+        "count": 2
+      }
     }
   ]
 }

@@ -90,6 +90,9 @@ options page (one per line):
 | `example.com##.leaf:upward(.panel)` | Hide the nearest matching ancestor |
 | `example.com##.ad:min-text-length(200)` | Hide `.ad` when its text is at least N characters |
 | `example.com##div:matches-attr(data-ad=/^promo/)` | Hide when an attribute matches a safe regex |
+| `example.com##div:matches-attr(data-ad)` / `:matches-attr(data-ad="promo")` | Hide by attribute presence or exact literal value (native CSS) |
+| `example.com##.bar:matches-css(position: fixed)` | Hide when a computed CSS property matches a value or `/regex/` |
+| `example.com##.bar:matches-css-before(content: "ad")` | Same, reading the `::before` pseudo-element (`-after` too) |
 | `example.com#?#div:-abp-has(.ad)` | ABP procedural form, mapped safely to `:has()` |
 | `example.com#?#div:-abp-contains(Ad)` | ABP procedural form, mapped safely to `:has-text()` |
 
@@ -238,13 +241,17 @@ This is deliberately a *minimal* engine, not a full uBO port:
   response is a bundled `data:` URI, never a URL from the filter. Unknown
   aliases cancel normally.
 - Procedural cosmetic rules (`:has-text()`, `:contains()`, `:matches-path()`,
-  `:has()`, `:nth-ancestor()`) use Firefox-native CSS wherever possible: plain
-  `:has()` rules are compiled into the cosmetic stylesheet, and
-  `:matches-path()` is checked once per page. Only text/ancestor-dependent
-  rules are evaluated in WildFire's DOM code, using native `:has()` prefilters
-  and one query per shared selector. `:has-text()` checks an element's own text;
+  `:has()`, `:nth-ancestor()`, `:matches-attr()`, `:matches-css()`) use
+  Firefox-native CSS wherever possible: plain `:has()` rules and
+  `:matches-attr(name)`/`=(name="literal")` are compiled into the cosmetic
+  stylesheet, and `:matches-path()` is checked once per page. Only
+  text/regex/ancestor/computed-style-dependent rules are evaluated in
+  WildFire's DOM code, using native `:has()`/attribute prefilters and one query
+  per shared selector. `:has-text()` checks an element's own text;
   `:contains()` also searches descendants. `:nth-ancestor(n)`/`:upward(n|selector)` hides an ancestor
-  parent of a match. No script from a filter is ever injected.
+  parent of a match. `:matches-css(prop: value|/re/)` reads Gecko's computed
+  style (read-only), with `-before`/`-after` variants for pseudo-elements. No
+  script from a filter is ever injected.
 
 ## Message API (internal)
 

@@ -743,6 +743,55 @@ assert.strictEqual(classify(nthRule, '/').mode, 'js', ':nth-ancestor stays in th
   assert.strictEqual(mixedClass.mode, 'js', 'mixed rule stays JS');
   assert.strictEqual(mixedClass.prefilter, 'div[data-ad]', 'native self fragments prefilter JS rules');
 
+  const cssEngine = new FilterEngine();
+  cssEngine.load([
+    'example.com##div:matches-css(position: fixed)',
+    'example.com##div:matches-css(color: /^rgb\\(255/)',
+    'example.com##div:matches-css-before(content: "ad")',
+    'example.com##div:matches-css(bad argument)'
+  ].join('\n'));
+  assert.strictEqual(cssEngine.getProcedural('example.com').length, 3, 'matches-css variants parse');
+  assert.strictEqual(cssEngine.rejectedCosmetic.length, 1, 'invalid matches-css rejected');
+  const cssRules = cssEngine.getProcedural('example.com');
+  const fixedRule = cssRules.find(r => r.steps[0].name === 'position');
+  const colorRule = cssRules.find(r => r.steps[0].name === 'color');
+  const beforeRule = cssRules.find(r => r.steps[0].pseudo === '::before');
+  assert.strictEqual(fixedRule.steps[0].matcher.type, 'text', 'matches-css literal matcher');
+  assert.strictEqual(colorRule.steps[0].matcher.type, 'regex', 'matches-css regex matcher');
+  assert.strictEqual(beforeRule.steps[0].pseudo, '::before', 'matches-css-before targets pseudo');
+
+  // Fake computed style reached through the node, keeping procedural.js DOM-only.
+  function styledNode(selector, styles, pseudoStyles) {
+    const node = stubNode(selector, '');
+    node.ownerDocument = {
+      defaultView: {
+        getComputedStyle: (el, pseudo) => ({
+          getPropertyValue: name => {
+            const map = pseudo ? (pseudoStyles || {}) : (styles || {});
+            return Object.prototype.hasOwnProperty.call(map, name) ? map[name] : '';
+          }
+        })
+      }
+    };
+    return node;
+  }
+  const fixedNode = styledNode('div', { position: 'fixed' });
+  const staticNode = styledNode('div', { position: 'static' });
+  const redNode = styledNode('div', { color: 'rgb(255, 0, 0)' });
+  const cssRoot = stubNode('body', '', [fixedNode, staticNode, redNode]);
+  assert.strictEqual(WildFireProcedural.select(cssRoot, fixedRule, '/').length, 1, 'matches-css literal selects fixed node');
+  assert.strictEqual(WildFireProcedural.select(cssRoot, fixedRule, '/')[0], fixedNode, 'matches-css hides the matching node');
+  assert.strictEqual(WildFireProcedural.select(cssRoot, colorRule, '/').length, 1, 'matches-css regex selects red node');
+  const cssClass = WildFireProcedural.classify(fixedRule, '/');
+  assert.strictEqual(cssClass.mode, 'js', 'matches-css stays JS (dynamic computed style)');
+  const beforeNode = styledNode('div', {}, { content: '"ad"' });
+  const beforeRoot = stubNode('body', '', [beforeNode]);
+  assert.strictEqual(WildFireProcedural.select(beforeRoot, beforeRule, '/').length, 1, 'matches-css-before reads pseudo style');
+  const cssBlob = cssEngine.toCompiled();
+  const cssReload = new FilterEngine();
+  assert.strictEqual(cssReload.loadCompiled(cssBlob), true, 'matches-css compiled round-trip');
+  assert.strictEqual(cssReload.getProcedural('example.com').length, 3, 'matches-css survives compiled load');
+
 const resolveCsp = alias => CspResources.resolve(alias);
 // Arrays built inside the vm realm have a different prototype than Node's.
 const cspFor = (instance, url, type, documentUrl) =>
