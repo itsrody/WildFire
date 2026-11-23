@@ -29,6 +29,7 @@
     "webRequest",
     "webRequestBlocking",
     "storage",
+    "webNavigation",
     "tabs",
     "<all_urls>"
   ],
@@ -37,6 +38,7 @@
     "scripts": [
       "lib/store.js",
       "lib/filter-engine.js",
+      "lib/document-scope.js",
       "background.js"
     ],
     "persistent": true

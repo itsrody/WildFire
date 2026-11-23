@@ -11,7 +11,10 @@ const context = vm.createContext({ console, URL });
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/filter-engine.js'), 'utf8'), context, {
   filename: 'filter-engine.js'
 });
-const { FilterEngine, mapResourceType } = context;
+vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/document-scope.js'), 'utf8'), context, {
+  filename: 'document-scope.js'
+});
+const { FilterEngine, mapResourceType, DocumentScope } = context;
 
 const engine = new FilterEngine();
 engine.load([
@@ -103,6 +106,47 @@ assert.strictEqual(fallbackBlocked('https://third.example/x.js', 'https://other.
   'resolver failure falls back to last-two-label scope');
 assert.strictEqual(fallbackBlocked('https://third.example/x.js', 'https://third.example/'), false,
   'fallback still treats the same host as first-party');
+
+// Firefox 153 documentId: request scope survives fast navigations and frames.
+const scope = new DocumentScope();
+scope.remember({ tabId: 7, frameId: 0, documentId: 'doc-old', url: 'https://old.example/' });
+assert.strictEqual(scope.documentUrl({ tabId: 7, frameId: 0, documentId: 'doc-old' }),
+  'https://old.example/', 'committed document URL is cached by documentId');
+
+scope.remember({ tabId: 7, frameId: 0, documentId: 'doc-new', url: 'https://new.example/' });
+assert.strictEqual(scope.documentUrl({ tabId: 7, frameId: 0, documentId: 'doc-new' }),
+  'https://new.example/', 'new document replaces the cached URL');
+assert.notStrictEqual(scope.documentUrl({ tabId: 7, frameId: 0, documentId: 'doc-old' }),
+  'https://old.example/', 'stale documentId no longer resolves to the old URL');
+
+scope.rememberFromRequest({ tabId: 7, frameId: 0, documentId: 'doc-old', documentUrl: 'https://old.example/' });
+assert.notStrictEqual(scope.documentUrl({ tabId: 7, frameId: 0, documentId: 'doc-old' }),
+  'https://old.example/', 'late request cannot resurrect a replaced document URL');
+
+scope.remember({ tabId: 7, frameId: 2, documentId: 'doc-frame', url: 'https://frame.example/' });
+assert.strictEqual(
+  scope.documentUrl({ tabId: 7, frameId: 2, documentId: 'doc-frame', parentDocumentId: 'doc-new' }),
+  'https://frame.example/', 'iframe keeps its own document scope');
+assert.strictEqual(scope.documentUrl({
+  tabId: 7,
+  frameId: 2,
+  documentId: 'doc-unknown',
+  originUrl: 'https://origin.example/',
+  documentUrl: '',
+  frameAncestors: [{ url: 'https://ancestor.example/' }]
+}), 'https://origin.example/', 'originUrl outranks tab URL and frame ancestors');
+assert.strictEqual(scope.documentUrl({ documentId: 'doc-new', documentUrl: 'https://direct.example/' }),
+  'https://direct.example/', 'request documentUrl outranks the cache');
+
+scope.rememberFromRequest({ tabId: 8, frameId: 0, documentId: 'doc-req', documentUrl: 'https://req.example/' });
+assert.strictEqual(scope.documentUrl({ tabId: 8, frameId: 0, documentId: 'doc-req' }),
+  'https://req.example/', 'request details seed the document cache');
+
+scope.forgetTab(7);
+assert.strictEqual(scope.documentUrl({ tabId: 7, frameId: 0, documentId: 'doc-new' }), '',
+  'tab removal clears document and tab caches');
+assert.strictEqual(scope.documentUrl({ tabId: 8, frameId: 0, documentId: 'doc-req' }),
+  'https://req.example/', 'other tabs are untouched');
 
 engine.load(fs.readFileSync(path.join(ROOT, 'filters/default.txt'), 'utf8'));
 assert.ok(engine.counts.network > 50, 'bundled list should contain network rules');

@@ -43,9 +43,11 @@ if (!gecko || !gecko.id) errors.push('browser_specific_settings.gecko.id is requ
 if (!gecko || !gecko.data_collection_permissions) {
   errors.push('browser_specific_settings.gecko.data_collection_permissions is required');
 }
-if (!Array.isArray(manifest.permissions) || !manifest.permissions.includes('publicSuffix')) {
-  errors.push('permissions must include "publicSuffix"');
-}
+['publicSuffix', 'webNavigation'].forEach(permission => {
+  if (!Array.isArray(manifest.permissions) || !manifest.permissions.includes(permission)) {
+    errors.push('permissions must include "' + permission + '"');
+  }
+});
 
 const referenced = new Set();
 if (manifest.icons) Object.values(manifest.icons).forEach(value => referenced.add(value));

@@ -21,7 +21,7 @@
   }
 
   const engine = new FilterEngine(registrableDomain);
-  const tabUrls = new Map();
+  const documentScope = new DocumentScope();
   let state = Object.assign({}, WildFireStore.defaults);
   let flushTimer = null;
   let ready = false;
@@ -108,13 +108,10 @@
   }
 
   function onBeforeRequest(details) {
+    documentScope.rememberFromRequest(details);
     if (!state.enabled || details.type === 'main_frame') return undefined;
 
-    const documentUrl = details.documentUrl || details.originUrl ||
-      (details.tabId >= 0 ? tabUrls.get(details.tabId) : '') ||
-      (details.frameAncestors && details.frameAncestors.length
-        ? details.frameAncestors[details.frameAncestors.length - 1].url
-        : '');
+    const documentUrl = documentScope.documentUrl(details);
 
     const host = safeHost(documentUrl);
     if (siteDisabled(host)) return undefined;
@@ -198,11 +195,16 @@
 
       browser.runtime.onMessage.addListener(onMessage);
 
+      browser.webNavigation.onCommitted.addListener(details => documentScope.remember(details));
+      [browser.webNavigation.onReferenceFragmentUpdated,
+        browser.webNavigation.onHistoryStateUpdated]
+        .forEach(event => event.addListener(details => documentScope.remember(details)));
+
       browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-        if (changeInfo.url && tab.url) tabUrls.set(tabId, tab.url);
+        if (changeInfo.url) documentScope.remember({ tabId, frameId: 0, url: changeInfo.url });
         if (changeInfo.status === 'complete' && tab.url) sendCosmetic(tabId, tab.url);
       });
-      browser.tabs.onRemoved.addListener(tabId => tabUrls.delete(tabId));
+      browser.tabs.onRemoved.addListener(tabId => documentScope.forgetTab(tabId));
 
       updateBadge();
       ready = true;

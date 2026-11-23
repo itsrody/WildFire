@@ -48,6 +48,7 @@ in the WildFire style; never close a gap by importing upstream code.
 manifest.json          MV2 manifest; gecko floor 153.0; all permissions
 background.js          blocking listener, counters/badge, message API
 lib/filter-engine.js   filter parser + matcher (self-contained, no deps)
+lib/document-scope.js  documentId -> document URL cache for request scope
 lib/store.js           browser.storage.local wrapper, key wildfire.state.v1
 content/cosmetic.js    injects hidden-element CSS in every frame
 filters/default.txt    bundled starter rules (~85 network rules)
@@ -71,7 +72,8 @@ used **only** by `tools/`.
 
 1. `lib/store.js` → `window.WildFireStore`
 2. `lib/filter-engine.js` → `window.FilterEngine`, `window.mapResourceType`
-3. `background.js` → the engine instance and all listeners
+3. `lib/document-scope.js` → `window.DocumentScope`
+4. `background.js` → the engine instance and all listeners
 
 Libraries export by attaching to `this` (the window/global in a classic
 script). Keep that pattern; do not introduce imports, `export`, or a module
@@ -83,8 +85,9 @@ graph without a deliberate redesign.
 `['blocking']`, so **the listener must be synchronous**:
 
 - Skip when `state.enabled` is false, or when the request is `main_frame`.
-- Resolve the document URL from `details.documentUrl`, then `details.originUrl`,
-  then the tab URL cached by `tabs.onUpdated`, then the last frame ancestor.
+- Resolve the document URL through `DocumentScope`: `details.documentUrl`,
+  then `details.originUrl`, then the URL cached by `documentId` from
+  `webNavigation`/`webRequest`, then the tab URL, then the last frame ancestor.
 - Skip if the document host is in `state.disabledSites` (exact or subdomain).
 - Map `details.type` through `mapResourceType`, then call
   `engine.matchRequest(url, type, documentUrl)`.
@@ -215,9 +218,9 @@ web-ext lint --source-dir . --output text
 
 The bar is: tests pass, build succeeds, `web-ext lint` reports **0 errors and
 0 warnings**. `tools/check.js` asserts MV2, the 153.0 floor, the gecko id,
-data-collection disclosure, the `publicSuffix` permission, every
-manifest-referenced file, `node --check` on all scripts, and the loop-free rule
-across every `.js` file (including tools).
+data-collection disclosure, the `publicSuffix` and `webNavigation` permissions,
+every manifest-referenced file, `node --check` on all scripts, and the loop-free
+rule across every `.js` file (including tools).
 If any of those change, update the check in the same commit.
 
 For manual testing: `npm run dev` (or load `manifest.json` through
