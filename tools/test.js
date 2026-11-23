@@ -47,7 +47,8 @@ const WAPI_FILES = [
   'lib/wapi/wapi-background.js',
   'lib/wapi/wapi-router.js',
   'lib/wapi/wapi-tabs.js',
-  'lib/wapi/wapi-webrequest.js'
+  'lib/wapi/wapi-webrequest.js',
+  'lib/wapi/wapi-action.js'
 ];
 const BACKGROUND_FILES = [
   'lib/background/helpers.js',
@@ -99,7 +100,8 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/compile/compiler.js'), 'utf
 loadFiles(context, [...WAPI_FILES, ...BACKGROUND_FILES]);
 const { FilterEngine, mapResourceType, WildFirePageStore, RedirectResources, WildFireProcedural, RemoteLists, WildFireSuggestedLists, CspResources, WildFireScriptlets, RewriteResources, WildFireCompileCache, WildFireCompiler, WildFireStore, WildFireBackground, WildFireWapi, wapi, WildFireWapiContexts, wapiContexts,
   WildFireWapiBackground, wapiBackground, WildFireWapiRouter, wapiRouter,
-  WildFireWapiTabs, wapiTabs, WildFireWapiWebRequest, wapiWebRequest } = context;
+  WildFireWapiTabs, wapiTabs, WildFireWapiWebRequest, wapiWebRequest,
+  WildFireWapiAction, wapiAction } = context;
 
 const engine = new FilterEngine();
 engine.load([
@@ -3889,6 +3891,42 @@ async function testWapiWebRequest() {
     'required webRequest events are validated at registration');
 }
 
+async function testWapiAction() {
+  assert.strictEqual(wapiAction, WildFireWapiAction,
+    'wapi-action is exposed as a canonical backbone module');
+  const calls = [];
+  const browserAction = {
+    setBadgeText(options) {
+      calls.push(['text', options]);
+      return Promise.reject(new Error('native call failed'));
+    },
+    setBadgeBackgroundColor(options) {
+      calls.push(['color', options]);
+      return undefined;
+    }
+  };
+  const wapiStub = WildFireWapi.create({ browserApi: { browserAction } });
+  const action = WildFireWapiAction.create({ wapi: wapiStub });
+  assert.strictEqual(action.supported, true);
+  assert.strictEqual(action.setBadgeText({ text: '7', tabId: 3 }), true);
+  assert.strictEqual(action.setBadgeBackgroundColor({ color: '#e2511d' }), true);
+  assert.strictEqual(calls.length, 2);
+  assert.strictEqual(calls[0][0], 'text');
+  assert.strictEqual(calls[0][1].text, '7');
+  assert.strictEqual(calls[0][1].tabId, 3);
+  assert.strictEqual(calls[1][0], 'color');
+  assert.strictEqual(calls[1][1].color, '#e2511d');
+  await Promise.resolve();
+
+  browserAction.setBadgeText = () => { throw new Error('native call threw'); };
+  assert.strictEqual(action.setBadgeText({}), false, 'native throws are contained');
+
+  const missing = WildFireWapiAction.create({ browserApi: {} });
+  assert.strictEqual(missing.supported, false);
+  assert.strictEqual(missing.setBadgeText({}), false);
+  assert.strictEqual(missing.setBadgeBackgroundColor({}), false);
+}
+
 async function testWapiContexts() {
   const sent = [];
   const wapiStub = {
@@ -4065,6 +4103,8 @@ async function testBackgroundControllerRobustness() {
       'startup registers the native tab adapter');
     assert.strictEqual(healthy.debug().wapiWebRequest.registered, true,
       'startup registers the native webRequest adapter');
+    assert.strictEqual(healthy.debug().wapiAction.supported, true,
+      'startup exposes the native action adapter');
 
     let unregistered = 0;
     const previous = { unregister: async () => { unregistered += 1; } };
@@ -4122,6 +4162,7 @@ Promise.resolve()
   .then(() => testWapiRouter())
   .then(() => testWapiTabs())
   .then(() => testWapiWebRequest())
+  .then(() => testWapiAction())
   .then(() => testWapiContexts())
   .then(() => testBackgroundControllerRobustness())
   .then(() => testPopupPerSiteDisplay())

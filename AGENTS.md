@@ -55,6 +55,7 @@ lib/
     wapi-router.js     named action registry for wildfire:* messages
     wapi-tabs.js       native tab/navigation event adapter for PageStore
     wapi-webrequest.js native webRequest listener, stream and header plumbing
+    wapi-action.js     native browserAction/badge plumbing
     wapi-client.js     client-side message API for extension pages and content scripts
   background/          background classic-script chain, load in order:
     helpers.js         counters/badge, snapshots, diagnostics and host helpers
@@ -145,9 +146,10 @@ used **only** by `tools/`.
 15. `lib/wapi/wapi-router.js` → `window.WildFireWapiRouter` (aliased as `window.wapiRouter`)
 16. `lib/wapi/wapi-tabs.js` → `window.WildFireWapiTabs` (aliased as `window.wapiTabs`)
 17. `lib/wapi/wapi-webrequest.js` → `window.WildFireWapiWebRequest` (aliased as `window.wapiWebRequest`)
-18. `lib/background/` chain, in order: `helpers.js`, `engine-host.js`,
+18. `lib/wapi/wapi-action.js` → `window.WildFireWapiAction` (aliased as `window.wapiAction`)
+19. `lib/background/` chain, in order: `helpers.js`, `engine-host.js`,
     `requests.js`, `messages.js`, `background.js` → `window.WildFireBackground`
-19. `background.js` → calls `WildFireBackground.create(...).start()`
+20. `background.js` → calls `WildFireBackground.create(...).start()`
 
 `wapi.js` is WildFire's Firefox-native API backbone: named idempotent listener
 registration, one prefix-filtered message listener, and thin promise wrappers for
@@ -160,9 +162,10 @@ registers each `wildfire:*` handler there, and `wapi.messages()` remains the onl
 listener. `wapi-tabs.js` owns native `tabs`/`webNavigation` event registration and
 feeds `WildFirePageStore`. `wapi-webrequest.js` owns native `webRequest`
 listener, stream-filter and header-listener plumbing; all blocking, rewrite,
-CSP and remove-header policy stays in `lib/background/requests.js`. The
-background chain owns these modules; do not add a Chromium shim or callback
-bridge there.
+CSP and remove-header policy stays in `lib/background/requests.js`.
+`wapi-action.js` wraps native badge calls while `helpers.js` owns counter
+formatting and tooltip policy. The background chain owns these modules; do not
+add a Chromium shim or callback bridge there.
 
 `wapi-client.js` is the matching client-side backbone: popup, options and content
 scripts use one prefix-filtered message API, one runtime listener, and native
