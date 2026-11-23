@@ -677,8 +677,9 @@
     if (siteDisabled(safeHost(documentUrl))) return;
     const result = engine.matchRemoveheader(details.url, type, documentUrl);
     if (!result.headers.length) return;
-    const requestHeaders = removeHeaders(details.requestHeaders || [], result.headers, 'request');
-    return requestHeaders === (details.requestHeaders || []) ? undefined : { requestHeaders };
+    const reqHeaders = details.requestHeaders || [];
+    const requestHeaders = removeHeaders(reqHeaders, result.headers, 'request');
+    return requestHeaders === reqHeaders ? undefined : { requestHeaders };
   }
 
   function onHeadersReceived(details) {
@@ -855,8 +856,7 @@
       // Core blocking/CSP listeners remain always-on for current supported features;
       // future removeparam/removeheader listeners should be registered only when
       // engine capabilities require them.
-      const cap = engine.getCapabilities ? engine.getCapabilities() : 0;
-      compilerStatus.capabilities = cap;
+      compilerStatus.capabilities = engine.getCapabilities ? engine.getCapabilities() : 0;
 
       browser.webRequest.onBeforeRequest.addListener(
         onBeforeRequest,

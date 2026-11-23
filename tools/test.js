@@ -1748,6 +1748,21 @@ async function testRemoveRuntimeIntegration() {
 
   const hr = apiHooks.onHeadersReceived({ url:'https://api.example/data', type:'xmlhttprequest', tabId:1, frameId:0, documentUrl:'https://site.test/', responseHeaders:[{name:'X-Track',value:'1'},{name:'Content-Type',value:'text/plain'}] });
   assert.ok(hr && hr.responseHeaders && !hr.responseHeaders.some(h=>h.name.toLowerCase()==='x-track'), 'removeheader strips response header');
+
+  // request header removal + exception/precedence
+  api.setState({ enabled: true, customFilters: [
+    '||x.example^$removeheader=request:cookie',
+    '@@||x.example/allow.js$removeheader=request:cookie',
+    '||x.example^$removeparam=fbclid',
+    '||x.example^$script'
+  ].join('\n'), disabledSites: [] });
+  await api.loadFilters(true); await new Promise(r=>setTimeout(r,30));
+  const req = apiHooks.onBeforeSendHeaders({ url:'https://x.example/api', type:'xmlhttprequest', tabId:1, frameId:0, documentUrl:'https://site.test/', requestHeaders:[{name:'Cookie',value:'a=1'},{name:'Accept',value:'*/*'}] });
+  assert.ok(req && !req.requestHeaders.some(h=>h.name.toLowerCase()==='cookie'), 'request header removed');
+  const reqEx = apiHooks.onBeforeSendHeaders({ url:'https://x.example/allow.js', type:'xmlhttprequest', tabId:1, frameId:0, documentUrl:'https://site.test/', requestHeaders:[{name:'Cookie',value:'a=1'}] });
+  assert.strictEqual(reqEx, undefined, 'removeheader exception wins');
+  const rpBlock = apiHooks.onBeforeRequest({ url:'https://x.example/app.js?fbclid=1', type:'script', tabId:1, frameId:0, documentUrl:'https://site.test/' });
+  assert.ok(rpBlock && (rpBlock.redirectUrl || rpBlock.cancel), 'removeparam or block applies');
 }
 
 async function testIncrementalRemoteCompileSemantics() {
