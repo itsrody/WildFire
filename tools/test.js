@@ -2010,6 +2010,41 @@ async function testPhase1AAliases() {
   assert.ok(e2.getCapabilities() & FilterEngine.CAP.GENERICHIDE, 'compiled ghide capability');
 }
 
+async function testPhase1BBadfilter() {
+  const e = new FilterEngine();
+  e.load([
+    '||ads.example^$script',
+    '||ads.example^$script,badfilter',
+    '||keep.example^$script',
+    '@@||except.example^$script',
+    '@@||except.example^$script,badfilter',
+    '||imp.example^$script,important',
+    '||imp.example^$script,important,badfilter'
+  ].join('\n'));
+
+  assert.strictEqual(e.matchRequest('https://ads.example/a.js', 'script', 'https://site.test/').blocked, false, 'badfilter removes blocker');
+  assert.strictEqual(e.matchRequest('https://keep.example/a.js', 'script', 'https://site.test/').blocked, true, 'unrelated rule remains');
+  assert.strictEqual(e.matchRequest('https://except.example/a.js', 'script', 'https://site.test/').blocked, false, 'exception removed by badfilter does not block');
+  assert.strictEqual(e.matchRequest('https://imp.example/a.js', 'script', 'https://site.test/').blocked, false, 'important rule removed by badfilter');
+  assert.ok(e.getCapabilities() & FilterEngine.CAP.BADFILTER, 'badfilter capability set');
+  assert.ok(e.getDiagnostics().some(d => d.type === 'neutralized' && d.reason.includes('badfilter')), 'neutralized diagnostic');
+  assert.strictEqual(e.counts.network, 1, 'only remaining network rule counted');
+
+  // badfilter does not match different modifiers
+  const e2 = new FilterEngine();
+  e2.load([
+    '||x.example^$script,third-party',
+    '||x.example^$script,badfilter'
+  ].join('\n'));
+  assert.strictEqual(e2.matchRequest('https://x.example/a.js', 'script', 'https://other.test/').blocked, true, 'badfilter requires same modifiers');
+  assert.ok(e2.getDiagnostics().some(d => d.type === 'orphan'), 'orphan badfilter diagnostic');
+
+  const blob = e.toCompiled();
+  const e3 = new FilterEngine();
+  assert.strictEqual(e3.loadCompiled(blob), true, 'compiled load after badfilter');
+  assert.strictEqual(e3.matchRequest('https://ads.example/a.js', 'script', 'https://site.test/').blocked, false, 'compiled badfilter result');
+}
+
 async function testRemoteLists() {
   assert.strictEqual(RemoteLists.normalizeUrl('javascript:alert(1)'), '',
     'javascript URLs are rejected');
@@ -2154,6 +2189,7 @@ async function testRemoteLists() {
 Promise.resolve()
   .then(() => testPhase0Foundation())
   .then(() => testPhase1AAliases())
+  .then(() => testPhase1BBadfilter())
   .then(() => testCompileCacheAndCompiler())
   .then(() => testIncrementalRemoteCompileSemantics())
   .then(() => testBackgroundLoadFiltersIntegration())

@@ -9,12 +9,26 @@
         "@@||ads.example/allow.js$script"
       ],
       "expect": {
-        "capabilities": ["NETWORK", "EXCEPTION", "THIRD_PARTY"],
+        "capabilities": [
+          "NETWORK",
+          "EXCEPTION",
+          "THIRD_PARTY"
+        ],
         "diagnostics": []
       },
       "matches": [
-        {"url": "https://ads.example/app.js", "type": "script", "documentUrl": "https://site.test/", "blocked": true},
-        {"url": "https://ads.example/allow.js", "type": "script", "documentUrl": "https://site.test/", "blocked": false}
+        {
+          "url": "https://ads.example/app.js",
+          "type": "script",
+          "documentUrl": "https://site.test/",
+          "blocked": true
+        },
+        {
+          "url": "https://ads.example/allow.js",
+          "type": "script",
+          "documentUrl": "https://site.test/",
+          "blocked": false
+        }
       ]
     },
     {
@@ -25,7 +39,13 @@
         "||ads.example^$script,important"
       ],
       "matches": [
-        {"url": "https://ads.example/app.js", "type": "script", "documentUrl": "https://site.test/", "blocked": true, "important": true}
+        {
+          "url": "https://ads.example/app.js",
+          "type": "script",
+          "documentUrl": "https://site.test/",
+          "blocked": true,
+          "important": true
+        }
       ]
     },
     {
@@ -37,7 +57,9 @@
         "example.com#@%#//scriptlet('set-constant', 'foo', '1')"
       ],
       "expect": {
-        "capabilities": ["SCRIPTLET"],
+        "capabilities": [
+          "SCRIPTLET"
+        ],
         "scriptletCount": 2
       }
     },
@@ -49,10 +71,48 @@
         "example.com#?#div:-abp-has(.ad)"
       ],
       "expect": {
-        "capabilities": ["COSMETIC"]
+        "capabilities": [
+          "COSMETIC"
+        ]
       },
       "cosmetic": [
-        {"host": "example.com", "includes": [".ad-banner"]}
+        {
+          "host": "example.com",
+          "includes": [
+            ".ad-banner"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "badfilter compile-time negation",
+      "rules": [
+        "||ads.example^$script",
+        "||ads.example^$script,badfilter",
+        "||keep.example^$script"
+      ],
+      "expect": {
+        "capabilities": [
+          "NETWORK",
+          "BADFILTER"
+        ],
+        "diagnosticCategories": [
+          "network"
+        ]
+      },
+      "matches": [
+        {
+          "url": "https://ads.example/a.js",
+          "type": "script",
+          "documentUrl": "https://site.test/",
+          "blocked": false
+        },
+        {
+          "url": "https://keep.example/a.js",
+          "type": "script",
+          "documentUrl": "https://site.test/",
+          "blocked": true
+        }
       ]
     },
     {
@@ -65,15 +125,56 @@
         "||e.example^$frame",
         "||f.example^$doc"
       ],
-      "expect": { "capabilities": ["NETWORK", "THIRD_PARTY", "DOCUMENT"] },
+      "expect": {
+        "capabilities": [
+          "NETWORK",
+          "THIRD_PARTY",
+          "DOCUMENT"
+        ]
+      },
       "matches": [
-        {"url":"https://a.example/x.js","type":"script","documentUrl":"https://a.example/","blocked":true},
-        {"url":"https://a.example/x.js","type":"script","documentUrl":"https://other.test/","blocked":false},
-        {"url":"https://b.example/x.js","type":"script","documentUrl":"https://other.test/","blocked":true},
-        {"url":"https://c.example/x","type":"xmlhttprequest","documentUrl":"https://site.test/","blocked":true},
-        {"url":"https://d.example/x","type":"stylesheet","documentUrl":"https://site.test/","blocked":true},
-        {"url":"https://e.example/x","type":"subdocument","documentUrl":"https://site.test/","blocked":true},
-        {"url":"https://f.example/x","type":"document","documentUrl":"https://site.test/","blocked":true}
+        {
+          "url": "https://a.example/x.js",
+          "type": "script",
+          "documentUrl": "https://a.example/",
+          "blocked": true
+        },
+        {
+          "url": "https://a.example/x.js",
+          "type": "script",
+          "documentUrl": "https://other.test/",
+          "blocked": false
+        },
+        {
+          "url": "https://b.example/x.js",
+          "type": "script",
+          "documentUrl": "https://other.test/",
+          "blocked": true
+        },
+        {
+          "url": "https://c.example/x",
+          "type": "xmlhttprequest",
+          "documentUrl": "https://site.test/",
+          "blocked": true
+        },
+        {
+          "url": "https://d.example/x",
+          "type": "stylesheet",
+          "documentUrl": "https://site.test/",
+          "blocked": true
+        },
+        {
+          "url": "https://e.example/x",
+          "type": "subdocument",
+          "documentUrl": "https://site.test/",
+          "blocked": true
+        },
+        {
+          "url": "https://f.example/x",
+          "type": "document",
+          "documentUrl": "https://site.test/",
+          "blocked": true
+        }
       ]
     },
     {
@@ -85,10 +186,19 @@
         "||bad.example^$rewrite=unknown-alias"
       ],
       "expect": {
-        "diagnosticCategories": ["network", "csp", "rewrite"]
+        "diagnosticCategories": [
+          "network",
+          "csp",
+          "rewrite"
+        ]
       },
       "matches": [
-        {"url": "https://ok.example/x.js", "type": "script", "documentUrl": "https://site.test/", "blocked": true}
+        {
+          "url": "https://ok.example/x.js",
+          "type": "script",
+          "documentUrl": "https://site.test/",
+          "blocked": true
+        }
       ]
     }
   ]
