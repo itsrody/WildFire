@@ -588,8 +588,33 @@
       popupSources.delete(details.tabId);
     }
 
-    // Capability-gated removeparam: redirect to cleaned URL before normal
-    // blocking/mutation decisions. No work when capability is absent.
+    const result = engine.matchRequest(details.url, type, documentUrl);
+    if (result.blocked) {
+      if (type === 'document') {
+        if (countPopupBlock(details.tabId)) return { cancel: true };
+        return undefined;
+      }
+
+      const rewrite = result.rewrite && typeof RewriteResources !== 'undefined'
+        ? RewriteResources.resolve(result.rewrite.alias)
+        : null;
+
+      // Only WildFire-owned data-URI resources can be served, and never for
+      // navigations. An unknown alias falls back to a plain cancel.
+      const redirectUrl = !rewrite && result.redirect && typeof RedirectResources !== 'undefined'
+        ? RedirectResources.resolve(result.redirect.alias, result.redirect.captures)
+        : '';
+
+      state.blocked = (state.blocked || 0) + 1;
+      updateBadge();
+      scheduleFlush();
+      if (rewrite) {
+        return startRewrite(details.requestId, rewrite) ? undefined : { cancel: true };
+      }
+      return redirectUrl ? { redirectUrl } : { cancel: true };
+    }
+
+    // Capability-gated removeparam: only when request is not blocked/redirected.
     if (engine.capabilities & FilterEngine.CAP.REMOVEPARAM) {
       const rp = engine.matchRemoveparam(details.url, type, documentUrl);
       if (rp.params && rp.params.length) {
@@ -602,29 +627,7 @@
         }
       }
     }
-
-    const result = engine.matchRequest(details.url, type, documentUrl);
-    if (!result.blocked) return undefined;
-
-    const rewrite = result.rewrite && type !== 'document' &&
-      typeof RewriteResources !== 'undefined'
-      ? RewriteResources.resolve(result.rewrite.alias)
-      : null;
-
-    // Only WildFire-owned data-URI resources can be served, and never for
-    // navigations. An unknown alias falls back to a plain cancel.
-    const redirectUrl = type !== 'document' && result.redirect &&
-      typeof RedirectResources !== 'undefined'
-      ? RedirectResources.resolve(result.redirect.alias, result.redirect.captures)
-      : '';
-
-    state.blocked = (state.blocked || 0) + 1;
-    updateBadge();
-    scheduleFlush();
-    if (rewrite) {
-      return startRewrite(details.requestId, rewrite) ? undefined : { cancel: true };
-    }
-    return redirectUrl ? { redirectUrl } : { cancel: true };
+    return undefined;
   }
 
   // Firefox applies every CSP header independently, so adding a curated

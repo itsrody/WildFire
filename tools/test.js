@@ -1809,9 +1809,7 @@ async function testRemoveRuntimeIntegration() {
   const hdrImp = apiHooks.onBeforeSendHeaders({ url:'https://hdr2.example/x', type:'xmlhttprequest', tabId:2, frameId:0, documentUrl:'https://site.test/', requestHeaders:[{name:'Cookie',value:'a=1'}] });
   assert.ok(hdrImp && !hdrImp.requestHeaders.some(h=>h.name.toLowerCase()==='cookie'), 'important removeheader overrides exception');
   const mix = apiHooks.onBeforeRequest({ url:'https://mix.example/app.js?ad=1', type:'script', tabId:2, frameId:0, documentUrl:'https://site.test/' });
-  assert.ok(mix && mix.redirectUrl && !mix.redirectUrl.includes('ad='), 'removeparam redirects before block evaluation');
-  const mix2 = apiHooks.onBeforeRequest({ url:'https://mix.example/app.js', type:'script', tabId:2, frameId:0, documentUrl:'https://site.test/' });
-  assert.ok(mix2 && mix2.cancel, 'cleaned URL is evaluated by normal blocking rules');
+  assert.ok(mix && mix.cancel, 'block takes precedence over removeparam');
 }
 
 async function testIncrementalRemoteCompileSemantics() {

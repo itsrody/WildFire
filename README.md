@@ -138,15 +138,16 @@ capability-gated modifiers. No filter-supplied code or arbitrary header/body
 template is executed.
 
 - `$removeparam` / `$removeparam=name` / `$removeparam=/re/`: removes matching
-  query params by redirecting the request to a cleaned URL. Applies to requests
-  where the rule matches (including navigations) and respects `@@` exceptions,
-  `$important`, domain/type options, and `$badfilter`.
+  query params by redirecting the request to a cleaned URL when the request is
+  not blocked/redirected by a normal network rule. Applies to matching requests
+  (including navigations) and respects `@@` exceptions, `$important`,
+  domain/type options, and `$badfilter`.
 - `$removeheader=request:header-name` / `$removeheader=response:header-name`:
   removes matching request headers in `onBeforeSendHeaders` and response headers
   in `onHeadersReceived`. Header names are validated; invalid rules are rejected
-  at load time.
+  at load time. `$important` remove exceptions can disable remove rules.
 
-These listeners are registered only when compiled capabilities require them.
+Listeners are registered only when compiled capabilities require them.
 
 ## Curated scriptlets
 
