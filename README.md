@@ -73,6 +73,7 @@ options page (one per line):
 | `||popup.example^$popup` | Close a new tab/window opened as a popup |
 | `||tracker.net^$script,redirect=noopjs` | Serve WildFire's empty script instead of cancelling |
 | `/ads\.example/([^/]+)\.js/$script,redirect-rule=tagged.svg` | Fill a redirect resource from regex captures |
+| `||tracker.net^$script,csp=no-script` | Add WildFire's `script-src 'none'` CSP header to matching script responses |
 | `example.com##.promo` | Hide `.promo` on example.com |
 | `example.com#@#.promo` | Keep `.promo` on example.com |
 | `##.ad-container` | Hide everywhere (generic cosmetic rule) |
@@ -96,13 +97,26 @@ Fetches bypass the HTTP cache, are size-capped and time-limited, and support
 `ETag`/`Last-Modified` revalidation. A `304` reuses the stored rules. The exact
 text is stored under `wildfire.remote.v1`, so the applied rules are reproducible.
 
+## Curated CSP rules
+
+`$csp=alias` adds an extra enforcing `Content-Security-Policy` header to a
+matching response. Firefox enforces each CSP header independently, so WildFire
+only **appends** directives — your site's own headers are left untouched and
+the effective policy can only get stricter. Rules can use the usual resource
+type, domain and third-party options; an `@@` exception prevents injection.
+
+Filter text can never supply a header value. Only these WildFire-owned aliases
+are accepted: `no-script`, `no-inline-script`, `no-frame`, `no-worker`,
+`no-object`, `no-font`, `no-media`, `no-connect`. Unknown aliases are rejected
+when the list loads and never turn into request blockers.
+
 ## Design notes / limits
 
 This is deliberately a *minimal* engine, not a full uBO port:
 
 - Regex filters use a safe subset: backreferences, nested/alternated quantifiers,
   long patterns and stateful flags are rejected when the list loads.
-- `$csp`, `$rewrite`, and `elemhide` are not supported.
+- `$rewrite` and `elemhide` are not supported.
 - Rules are indexed by their `||host^` key and 4-character tokens; patterns with
   no usable token (including regex filters) are scanned per request.
 - Remote lists are opt-in: no URL is bundled, nothing is fetched until you add a

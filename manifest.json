@@ -42,6 +42,7 @@
       "lib/document-scope.js",
       "lib/redirect-resources.js",
       "lib/remote-lists.js",
+      "lib/csp-resources.js",
       "background.js"
     ],
     "persistent": true

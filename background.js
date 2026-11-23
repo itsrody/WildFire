@@ -20,7 +20,10 @@
     }
   }
 
-  const engine = new FilterEngine(registrableDomain);
+  const engine = new FilterEngine(
+    registrableDomain,
+    alias => typeof CspResources !== 'undefined' ? CspResources.resolve(alias) : ''
+  );
   const documentScope = new DocumentScope();
   const remoteLists = RemoteLists.create({
     storage: browser.storage.local,
@@ -175,6 +178,25 @@
     return redirectUrl ? { redirectUrl } : { cancel: true };
   }
 
+  // Firefox applies every CSP header independently, so adding a curated
+  // WildFire header tightens a response without rewriting the site's headers.
+  // This listener is synchronous, like onBeforeRequest.
+  function onHeadersReceived(details) {
+    if (!state.enabled || details.type === 'csp_report') return undefined;
+
+    const type = mapResourceType(details.type);
+    // For a main document the response itself is the scope; for subresources
+    // the embedding page is.
+    const documentUrl = type === 'document' ? details.url : documentScope.documentUrl(details);
+    if (siteDisabled(safeHost(documentUrl))) return undefined;
+
+    const result = engine.matchCsp(details.url, type, documentUrl);
+    if (!result.directives.length) return undefined;
+    return {
+      responseHeaders: CspResources.withDirective(details.responseHeaders, result.directives)
+    };
+  }
+
   function onPopupNavigation(details) {
     if (!state.enabled) return;
     const sourceUrl = documentScope.urlForFrame(details.sourceTabId, details.sourceFrameId);
@@ -284,6 +306,12 @@
         onBeforeRequest,
         { urls: ['<all_urls>'] },
         ['blocking']
+      );
+
+      browser.webRequest.onHeadersReceived.addListener(
+        onHeadersReceived,
+        { urls: ['<all_urls>'] },
+        ['blocking', 'responseHeaders']
       );
 
       browser.runtime.onMessage.addListener(onMessage);

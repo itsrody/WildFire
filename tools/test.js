@@ -23,7 +23,10 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/procedural.js'), 'utf8'), c
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/remote-lists.js'), 'utf8'), context, {
   filename: 'remote-lists.js'
 });
-const { FilterEngine, mapResourceType, DocumentScope, RedirectResources, WildFireProcedural, RemoteLists } = context;
+vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/csp-resources.js'), 'utf8'), context, {
+  filename: 'csp-resources.js'
+});
+const { FilterEngine, mapResourceType, DocumentScope, RedirectResources, WildFireProcedural, RemoteLists, CspResources } = context;
 
 const engine = new FilterEngine();
 engine.load([
@@ -555,6 +558,89 @@ assert.strictEqual(treeSelected(nestedNthRule)[0], targetNode,
   ':nth-ancestor works inside :has');
 assert.strictEqual(classify(containsRule, '/').mode, 'js', ':contains stays in the JS path');
 assert.strictEqual(classify(nthRule, '/').mode, 'js', ':nth-ancestor stays in the JS path');
+
+const resolveCsp = alias => CspResources.resolve(alias);
+// Arrays built inside the vm realm have a different prototype than Node's.
+const cspFor = (instance, url, type, documentUrl) =>
+  Array.from(instance.matchCsp(url, type, documentUrl).directives);
+const cspEngine = new FilterEngine(null, resolveCsp);
+cspEngine.load([
+  '||tracker.example^$csp=no-script',
+  '||cdn.example^$script,csp=no-inline-script',
+  '||frame.example^$csp=no-frame,domain=page.example',
+  '||tracker.example^$csp=default-src https://evil.example',
+  '||evil.example^$script,csp=report-uri https://collect.example'
+].join('\n'));
+assert.strictEqual(cspEngine.counts.csp, 3, 'valid $csp rules are counted');
+assert.strictEqual(cspEngine.rejectedCsp.length, 2,
+  'aliases that are not curated are rejected');
+assert.ok(cspEngine.rejectedCsp.every(entry => /^unknown CSP alias/.test(entry.reason)),
+  'rejected aliases record a clear reason');
+assert.deepStrictEqual(
+  cspFor(cspEngine, 'https://tracker.example/lib.js', 'script', 'https://page.example/'),
+  ["script-src 'none'"], 'a curated alias resolves to its directive');
+assert.strictEqual(
+  cspEngine.matchRequest('https://tracker.example/lib.js', 'script', 'https://page.example/').blocked,
+  false, '$csp rules never cancel requests');
+assert.deepStrictEqual(
+  cspFor(cspEngine, 'https://cdn.example/lib.js', 'script', 'https://page.example/'),
+  ['script-src http: https:'], '$csp accepts resource type options');
+assert.deepStrictEqual(
+  cspFor(cspEngine, 'https://cdn.example/pic.png', 'image', 'https://page.example/'),
+  [], 'a $csp type option limits which responses are tightened');
+assert.deepStrictEqual(
+  cspFor(cspEngine, 'https://frame.example/embed', 'document', 'https://page.example/'),
+  ["frame-src 'none'"], '$csp applies to main documents without $document');
+assert.deepStrictEqual(
+  cspFor(cspEngine, 'https://frame.example/embed', 'document', 'https://other.example/'),
+  [], '$csp respects $domain scoping');
+
+const cspExceptionEngine = new FilterEngine(null, resolveCsp);
+cspExceptionEngine.load([
+  '||ads.example^$csp=no-script',
+  '@@||ads.example^$script',
+  '||promo.example^$csp=no-frame',
+  '@@||promo.example^$csp=no-frame'
+].join('\n'));
+const plainException = cspExceptionEngine.matchCsp(
+  'https://ads.example/a.js', 'script', 'https://page.example/');
+assert.strictEqual(plainException.exception, true, 'a plain exception covers CSP rules');
+assert.deepStrictEqual(Array.from(plainException.directives), [], 'an exception stops CSP injection');
+assert.deepStrictEqual(
+  cspFor(cspExceptionEngine, 'https://promo.example/', 'document', 'https://page.example/'),
+  [], 'a $csp exception also stops CSP injection');
+
+const cspMultiEngine = new FilterEngine(null, resolveCsp);
+cspMultiEngine.load([
+  '||stack.example^$csp=no-script',
+  '||stack.example^$csp=no-script',
+  '||stack.example^$csp=no-frame'
+].join('\n'));
+assert.deepStrictEqual(
+  cspFor(cspMultiEngine, 'https://stack.example/', 'document', 'https://page.example/'),
+  ["script-src 'none'", "frame-src 'none'"],
+  'all matching directives are applied once each');
+
+const noCspEngine = new FilterEngine();
+noCspEngine.load('||unavailable.example^$csp=no-script');
+assert.strictEqual(noCspEngine.rejectedCsp.length, 1,
+  'CSP rules are rejected when no curated registry is injected');
+
+assert.strictEqual(CspResources.resolve('NO-SCRIPT'), "script-src 'none'",
+  'aliases are normalized without trusting filter-supplied casing');
+assert.strictEqual(CspResources.resolve('script-src *'), '',
+  'filter text cannot supply its own header value');
+const originalHeaders = [{ name: 'X-Page', value: 'kept' }];
+const injectedHeaders = CspResources.withDirective(originalHeaders,
+  ["script-src 'none'", "frame-src 'none'"]);
+assert.strictEqual(originalHeaders.length, 1, 'response headers are not mutated');
+assert.deepStrictEqual(Array.from(injectedHeaders, header => ({
+  name: header.name, value: header.value
+})), [
+  { name: 'X-Page', value: 'kept' },
+  { name: 'Content-Security-Policy', value: "script-src 'none'" },
+  { name: 'Content-Security-Policy', value: "frame-src 'none'" }
+], 'WildFire appends separate enforcing CSP headers');
 
 engine.load(fs.readFileSync(path.join(ROOT, 'filters/default.txt'), 'utf8'));
 assert.ok(engine.counts.network > 50, 'bundled list should contain network rules');
