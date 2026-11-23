@@ -8,7 +8,7 @@
 </head>
 <body>
   <header class="header">
-    <img src="../assets/icon-48.png" alt="">
+    <img src="../../assets/icon-48.png" alt="">
     <div>
       <h1>WildFire options</h1>
       <p>Minimal uBO-style blocking for Firefox 153+ (ESR).</p>
@@ -48,40 +48,6 @@
   </section>
 
   <section class="card">
-    <h2>WildFire Inspector</h2>
-    <p class="hint">Local-only request decisions. Nothing is persisted or sent anywhere. Recording is off until you enable it.</p>
-    <label class="toggle"><input id="inspector-enabled" type="checkbox"> Record request decisions</label>
-    <div class="actions inspector-filters">
-      <label>Decision
-        <select id="inspector-decision-filter">
-          <option value="all">All</option>
-          <option value="blocked">Blocked</option>
-          <option value="redirected">Redirected</option>
-          <option value="rewritten">Rewritten</option>
-          <option value="exception">Exception</option>
-          <option value="allowed">Allowed</option>
-          <option value="csp">CSP</option>
-          <option value="csp-report">CSP report</option>
-          <option value="skipped">Skipped</option>
-        </select>
-      </label>
-      <label>Site <input id="inspector-site-filter" type="search" placeholder="example.com" spellcheck="false"></label>
-      <button id="inspector-refresh" class="button" type="button">Refresh</button>
-      <button id="inspector-clear" class="button" type="button">Clear</button>
-      <span id="inspector-status" class="status" role="status"></span>
-    </div>
-    <p id="inspector-summary" class="hint">Loading…</p>
-    <div class="inspector-table-wrap">
-      <table class="inspector-table">
-        <thead>
-          <tr><th>Decision</th><th>Request</th><th>Rule</th><th>Detail</th><th>Time</th></tr>
-        </thead>
-        <tbody id="inspector-rows"></tbody>
-      </table>
-    </div>
-  </section>
-
-  <section class="card">
     <h2>Suggested lists</h2>
     <p class="hint">Shortcuts to well-known community lists. Adding one only registers its URL — nothing is downloaded or enabled until you choose Fetch, then Enable.</p>
     <ul id="suggested-lists" class="sites"></ul>
@@ -104,7 +70,7 @@
     <button id="reset" class="button" type="button">Reset blocked counter</button>
   </section>
 
-  <script src="../lib/wapi/wapi-client.js"></script>
+  <script src="../../lib/wapi/wapi-client.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

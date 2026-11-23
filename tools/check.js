@@ -114,9 +114,10 @@ if (manifest.content_scripts) {
     }
   });
 }
-const clientTag = '<script src="../lib/wapi/wapi-client.js"></script>';
-[['popup/popup.html', '<script src="popup.js"></script>'],
-  ['options/options.html', '<script src="options.js"></script>']].forEach(([page, localTag]) => {
+const clientTag = '<script src="../../lib/wapi/wapi-client.js"></script>';
+[['ui/popup/popup.html', '<script src="popup.js"></script>'],
+  ['ui/options/options.html', '<script src="options.js"></script>'],
+  ['ui/inspector/inspector.html', '<script src="inspector.js"></script>']].forEach(([page, localTag]) => {
   const source = fs.readFileSync(path.join(ROOT, page), 'utf8');
   if (!source.includes(clientTag) || source.indexOf(localTag) < source.indexOf(clientTag)) {
     errors.push(page + ' must load wapi-client.js before its own script');
@@ -156,6 +157,7 @@ if (!testChain) {
   });
 }
 if (manifest.options_ui && manifest.options_ui.page) referenced.add(manifest.options_ui.page);
+referenced.add('ui/inspector/inspector.html');
 referenced.add('filters/default.txt');
 // Injected dynamically at document_start via browser.contentScripts.register.
 ['core', 'runtime', 'transforms', 'adguard-helpers', 'definitions',

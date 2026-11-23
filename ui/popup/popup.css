@@ -51,5 +51,6 @@ h1 { margin: 0; font-size: 17px; letter-spacing: 0.2px; }
 .button.primary { border-color: #e2511d; background: #e2511d; color: #fff; font-weight: 600; }
 .button.primary:hover { background: #f0602b; }
 .button.small { padding: 7px 8px; font-size: 12px; }
+.button.active { border-color: #ff8a4c; color: #ff8a4c; font-weight: 600; }
 
 .footer { margin-top: 14px; color: #6d7482; font-size: 10px; text-align: center; }

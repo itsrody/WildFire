@@ -85,18 +85,3 @@ input { max-width: 260px; }
 .sites .list-meta { color: #6d7482; font-size: 11px; white-space: nowrap; }
 .sites .list-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .sites button:disabled { color: #6d7482; cursor: default; }
-
-.inspector-filters { flex-wrap: wrap; }
-.inspector-filters label { display: flex; align-items: center; gap: 6px; color: #9aa2b1; font-size: 12px; }
-.inspector-filters select { width: auto; max-width: 150px; }
-.inspector-filters input[type="search"] { max-width: 180px; }
-.inspector-table-wrap { max-height: 320px; overflow: auto; border: 1px solid #2c3038; border-radius: 8px; }
-.inspector-table { width: 100%; border-collapse: collapse; font-size: 11px; }
-.inspector-table th, .inspector-table td { padding: 6px 8px; text-align: left; vertical-align: top; border-bottom: 1px solid #272b33; }
-.inspector-table th { position: sticky; top: 0; background: #242831; color: #9aa2b1; font-weight: 600; }
-.inspector-table td { overflow-wrap: anywhere; }
-.inspector-table .decision { color: #ff8a4c; font-weight: 600; }
-.inspector-table .decision.allowed, .inspector-table .decision.exception { color: #8bd48a; }
-.inspector-table .decision.skipped { color: #9aa2b1; }
-.inspector-table .rule { color: #ffb084; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.inspector-table .empty { color: #6d7482; }

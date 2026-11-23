@@ -3109,6 +3109,7 @@ async function testPopupPerSiteDisplay() {
       title: '',
       disabled: false,
       listeners: {},
+      classList: { toggle() {} },
       set textContent(value) { text = String(value); },
       get textContent() { return text; },
       addEventListener(type, handler) { this.listeners[type] = handler; }
@@ -3117,10 +3118,12 @@ async function testPopupPerSiteDisplay() {
   const elements = {};
   [
     'status', 'count', 'count-label', 'network-count', 'cosmetic-count',
-    'exception-count', 'toggle', 'site', 'reload', 'options'
+    'exception-count', 'toggle', 'site', 'reload', 'options',
+    'inspector', 'inspect-toggle'
   ].forEach(id => { elements[id] = element(); });
 
   const sent = [];
+  const openedWindows = [];
   const portListeners = [];
   const nativePort = {
     name: 'wildfire:state',
@@ -3148,10 +3151,23 @@ async function testPopupPerSiteDisplay() {
     document: { getElementById: id => elements[id] },
     browser: {
       tabs: { query: async () => [{ url: 'https://www.example.com/' }] },
+      windows: {
+        create: async info => {
+          openedWindows.push(info);
+          return { id: 9 };
+        }
+      },
       runtime: {
         connect: () => nativePort,
+        getURL: path => 'moz-extension://wildfire/' + path,
         sendMessage: async message => {
           sent.push(message.type);
+          if (message.type === 'wildfire:inspect') {
+            return {
+              ok: true,
+              inspect: { enabled: Boolean(message.value), limit: 256, entries: [] }
+            };
+          }
           return message.type === 'wildfire:toggle'
             ? Object.assign({}, stateResult, { state: { enabled: false, blocked: 12 } })
             : stateResult;
@@ -3161,7 +3177,7 @@ async function testPopupPerSiteDisplay() {
     }
   });
   loadClient(ctx);
-  vm.runInContext(fs.readFileSync(path.join(ROOT, 'popup/popup.js'), 'utf8'), ctx, {
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'ui/popup/popup.js'), 'utf8'), ctx, {
     filename: 'popup.js'
   });
   await new Promise(resolve => setImmediate(resolve));
@@ -3172,6 +3188,8 @@ async function testPopupPerSiteDisplay() {
     'popup exposes the lifetime total as a tooltip');
   assert.strictEqual(elements['count-label'].textContent,
     'requests blocked on www.example.com', 'popup labels the site being counted');
+  assert.strictEqual(elements['inspect-toggle'].textContent, 'Recording: off',
+    'popup reflects the initial inspector state');
 
   portListeners[0]({
     type: 'wildfire:state',
@@ -3195,6 +3213,20 @@ async function testPopupPerSiteDisplay() {
   assert.strictEqual(elements.count.textContent, '4',
     'later popup actions preserve the active site counter');
   assert.ok(sent.includes('wildfire:toggle'), 'popup toggle uses the message API');
+
+  elements.inspector.listeners.click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(openedWindows.length, 1, 'popup opens the inspector window');
+  assert.strictEqual(openedWindows[0].url,
+    'moz-extension://wildfire/ui/inspector/inspector.html',
+    'inspector window uses the packaged extension page');
+  assert.strictEqual(openedWindows[0].type, 'popup');
+
+  elements['inspect-toggle'].listeners.click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(elements['inspect-toggle'].textContent, 'Recording: on',
+    'popup recording button toggles the local inspector');
+  assert.ok(sent.includes('wildfire:inspect'), 'recording toggle uses the message API');
 }
 
 async function testRemoteLists() {
@@ -3589,6 +3621,91 @@ async function testInspector() {
   assert.strictEqual(ctx.recordInspection({ url: 'https://ads.test/' }), null);
 }
 
+async function testInspectorPage() {
+  function element(tag) {
+    let text = '';
+    return {
+      tag,
+      title: '',
+      checked: false,
+      value: '',
+      colSpan: 0,
+      className: '',
+      children: [],
+      listeners: {},
+      set textContent(value) {
+        text = String(value);
+        this.children.length = 0;
+      },
+      get textContent() { return text; },
+      addEventListener(type, handler) { this.listeners[type] = handler; },
+      appendChild(child) { this.children.push(child); return child; },
+      append(...items) { items.forEach(item => this.children.push(item)); }
+    };
+  }
+  const ids = [
+    'inspector-enabled', 'inspector-decision-filter', 'inspector-site-filter',
+    'inspector-refresh', 'inspector-clear', 'inspector-status',
+    'inspector-summary', 'inspector-rows'
+  ];
+  const elements = {};
+  ids.forEach(id => { elements[id] = element(id); });
+  const sent = [];
+  let snapshot = {
+    enabled: true,
+    limit: 256,
+    entries: [
+      { id: 1, at: 1700000000000, decision: 'blocked', host: 'ads.test', url: 'https://ads.test/a.js', rule: { text: '||ads.test^' }, detail: '', ms: 1.2 },
+      { id: 2, at: 1700000001000, decision: 'allowed', host: 'page.test', url: 'https://page.test/', rule: null, detail: '', ms: 0.4 }
+    ]
+  };
+  const ctx = vm.createContext({
+    console, setTimeout, Date,
+    document: {
+      getElementById: id => elements[id],
+      createElement: tag => element(tag)
+    },
+    browser: {
+      runtime: {
+        sendMessage: async message => {
+          sent.push(message.type);
+          if (typeof message.value === 'boolean') snapshot.enabled = message.value;
+          if (message.reset === true) snapshot.entries = [];
+          return { ok: true, inspect: snapshot };
+        }
+      }
+    }
+  });
+  loadClient(ctx);
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'ui/inspector/inspector.js'), 'utf8'), ctx, {
+    filename: 'inspector.js'
+  });
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.strictEqual(sent[0], 'wildfire:inspect', 'inspector window loads its local log');
+  assert.strictEqual(elements['inspector-enabled'].checked, true);
+  assert.strictEqual(elements['inspector-rows'].children.length, 2);
+  assert.strictEqual(elements['inspector-summary'].textContent,
+    '2 shown · 2 of 256 decisions recorded locally in memory.');
+
+  elements['inspector-decision-filter'].value = 'blocked';
+  elements['inspector-decision-filter'].listeners.change();
+  assert.strictEqual(elements['inspector-rows'].children.length, 1,
+    'decision filter narrows the visible log');
+
+  elements['inspector-site-filter'].value = 'nomatch';
+  elements['inspector-site-filter'].listeners.input();
+  assert.strictEqual(elements['inspector-rows'].children.length, 1);
+  assert.strictEqual(elements['inspector-rows'].children[0].children[0].textContent,
+    'No decisions match these filters.');
+
+  elements['inspector-clear'].listeners.click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(snapshot.entries.length, 0, 'clear resets the local log');
+  assert.strictEqual(elements['inspector-summary'].textContent,
+    '0 shown · 0 of 256 decisions recorded locally in memory.');
+}
+
 async function testWapiStorage() {
   const data = {};
   const storageCalls = [];
@@ -3630,6 +3747,7 @@ async function testWapiStorage() {
 async function testWapiClient() {
   const sent = [];
   const queried = [];
+  const openedWindows = [];
   let opened = 0;
   const hub = () => {
     const listeners = [];
@@ -3658,6 +3776,12 @@ async function testWapiClient() {
   const ctx = vm.createContext({
     console,
     browser: {
+      windows: {
+        create: async info => {
+          openedWindows.push(info);
+          return { id: 4 };
+        }
+      },
       tabs: {
         query: async info => {
           queried.push(info);
@@ -3666,6 +3790,7 @@ async function testWapiClient() {
       },
       runtime: {
         onMessage: messages,
+        getURL: path => 'moz-extension://wildfire/' + path,
         connect: options => {
           connectedName = options.name;
           return nativePort;
@@ -3693,6 +3818,13 @@ async function testWapiClient() {
   assert.strictEqual(sent[1].type, 'wildfire:reload', 'full types are not double-prefixed');
   await client.openOptions();
   assert.strictEqual(opened, 1, 'client wraps the native options opener');
+  await client.openWindow('ui/inspector/inspector.html', { width: 900 });
+  assert.strictEqual(openedWindows.length, 1, 'client wraps the native window opener');
+  assert.strictEqual(openedWindows[0].url,
+    'moz-extension://wildfire/ui/inspector/inspector.html',
+    'window URLs are resolved against the extension');
+  assert.strictEqual(openedWindows[0].type, 'popup', 'window defaults to the popup type');
+  assert.strictEqual(openedWindows[0].width, 900, 'window options are forwarded');
   const activeTabs = await client.tabs.query({ active: true, currentWindow: true });
   assert.strictEqual(activeTabs[0].id, 7, 'client wraps the native tab query');
   assert.strictEqual(queried[0].active, true, 'tab query options are forwarded');
@@ -3700,6 +3832,10 @@ async function testWapiClient() {
     () => WildFireWapiClient.create({ browserApi: {} }).tabs.query({}),
     /tabs\.query/,
     'missing tabs.query fails loudly');
+  await assert.rejects(
+    () => WildFireWapiClient.create({ browserApi: {} }).openWindow('x.html'),
+    /windows\.create/,
+    'missing windows.create fails loudly');
 
   const pushed = [];
   const handle = client.connect('state', payload => pushed.push(payload));
@@ -4536,6 +4672,7 @@ Promise.resolve()
   .then(() => testWapiCapabilities())
   .then(() => testWapiScripting())
   .then(() => testInspector())
+  .then(() => testInspectorPage())
   .then(() => testWapiContexts())
   .then(() => testBackgroundControllerRobustness())
   .then(() => testPopupPerSiteDisplay())

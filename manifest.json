@@ -86,7 +86,7 @@
 
   "browser_action": {
     "default_title": "WildFire",
-    "default_popup": "popup/popup.html",
+    "default_popup": "ui/popup/popup.html",
     "default_icon": {
       "16": "assets/icon-16.png",
       "32": "assets/icon-32.png",
@@ -111,7 +111,7 @@
   ],
 
   "options_ui": {
-    "page": "options/options.html",
+    "page": "ui/options/options.html",
     "open_in_tab": true
   },
 

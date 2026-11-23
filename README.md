@@ -26,8 +26,9 @@ lib/resources/         curated scriptlet / CSP / redirect / rewrite registries
 lib/state/             storage wrapper, remote lists, per-tab/frame page state
 content/cosmetic.js    injects hidden-element CSS, re-applies on demand
 filters/default.txt    bundled starter rules
-popup/                 toolbar popup
-options/               custom filters + paused sites
+ui/popup/              toolbar popup with inspector buttons
+ui/options/            custom filters + paused sites
+ui/inspector/          local-only request decision window
 assets/                generated PNG icons
 tools/                 icon generator, validator, XPI packager
 dist/                  build output (generated)
@@ -162,8 +163,9 @@ WildFire does not change Firefox's ETP settings or native CSP preferences.
 
 ## Inspect request decisions
 
-Options → **WildFire Inspector** is a local-only decision log. Turn on recording,
-then refresh to see bounded, in-memory entries for blocked requests, exceptions,
+The popup's **Open Inspector** button opens the standalone WildFire Inspector
+window; **Recording: off/on** toggles local recording without leaving the popup.
+The window shows bounded, in-memory entries for blocked requests, exceptions,
 redirects, rewrites, CSP headers, and CSP-report cancellations. Each row shows
 the decision, request host, matching WildFire rule, detail, and duration; the
 table can be filtered by decision or site.

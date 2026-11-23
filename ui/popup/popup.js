@@ -12,11 +12,14 @@
     toggle: document.getElementById('toggle'),
     site: document.getElementById('site'),
     reload: document.getElementById('reload'),
-    options: document.getElementById('options')
+    options: document.getElementById('options'),
+    inspector: document.getElementById('inspector'),
+    inspectToggle: document.getElementById('inspect-toggle')
   };
 
   let current = null;
   let site = { url: '', host: '', disabled: false };
+  let inspecting = false;
 
   function applyResult(result) {
     current = Object.assign({}, result, { site: result.site || site });
@@ -26,7 +29,11 @@
   async function refresh() {
     const tabs = await client.tabs.query({ active: true, currentWindow: true });
     const url = tabs.length && tabs[0].url ? tabs[0].url : '';
-    const result = await client.send('state', { url });
+    const [result, inspection] = await Promise.all([
+      client.send('state', { url }),
+      client.send('inspect').catch(() => null)
+    ]);
+    inspecting = Boolean(inspection && inspection.inspect && inspection.inspect.enabled);
     site = result.site || site;
     applyResult(result);
   }
@@ -54,6 +61,8 @@
     elements.toggle.textContent = state.enabled ? 'Pause blocking' : 'Resume blocking';
     elements.site.textContent = pausedHere ? 'Resume on this site' : 'Pause on this site';
     elements.site.disabled = !state.enabled || !site.host;
+    elements.inspectToggle.textContent = inspecting ? 'Recording: on' : 'Recording: off';
+    elements.inspectToggle.classList.toggle('active', inspecting);
 
     if (!state.enabled) elements.status.textContent = 'Paused globally';
     else if (pausedHere) elements.status.textContent = 'Paused on ' + site.host;
@@ -77,6 +86,19 @@
   });
 
   elements.options.addEventListener('click', () => client.openOptions());
+
+  elements.inspector.addEventListener('click', () => {
+    client.openWindow('ui/inspector/inspector.html').catch(error => {
+      elements.status.textContent = 'Could not open WildFire Inspector';
+      console.error('WildFire inspector:', error);
+    });
+  });
+
+  elements.inspectToggle.addEventListener('click', async () => {
+    const result = await client.send('inspect', { value: !inspecting });
+    inspecting = Boolean(result && result.inspect && result.inspect.enabled);
+    render();
+  });
 
   refresh().catch(error => {
     elements.status.textContent = 'Could not load WildFire state';

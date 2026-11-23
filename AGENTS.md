@@ -120,8 +120,10 @@ lib/
     page-store.js      per-tab/frame document, site, popup and page cache state
 content/cosmetic.js    injects hidden-element CSS in every frame
 filters/default.txt    bundled starter rules (~85 network rules)
-popup/                 toolbar popup (status, counter, pause controls)
-options/               custom filters, paused sites, remote lists, stats reset
+ui/
+  popup/               toolbar popup (status, counter, pause controls, inspector buttons)
+  options/             custom filters, paused sites, remote lists, stats reset
+  inspector/           local-only request decision window
 assets/                generated PNG icons (16/32/48/96/128)
 tools/                 icon generator, validator, tests, XPI packager
 dist/                  generated XPI — ignored, never reviewed or committed
@@ -191,10 +193,11 @@ registration, and lifecycle cleanup goes through Firefox's registration handle.
 The background chain owns these modules; do not add a Chromium shim or
 callback bridge there.
 
-`wapi-client.js` is the matching client-side backbone: popup, options and content
-scripts use one prefix-filtered message API, one runtime listener, native port
-handles and a wrapped `tabs.query()` instead of scattering raw Firefox API calls.
-It does not replace the background router.
+`wapi-client.js` is the matching client-side backbone: popup, options, inspector
+and content scripts use one prefix-filtered message API, one runtime listener,
+native port handles, a wrapped `tabs.query()` and a wrapped native window opener
+instead of scattering raw Firefox API calls. It does not replace the background
+router.
 
 Content scripts load in this order: `lib/wapi/wapi-client.js` → `lib/engine/procedural/` chain (`text.js`,
 `nodes.js`, `native.js`, `select.js`) → `content/cosmetic.js`, so the DOM
@@ -472,8 +475,9 @@ and fetching still requires a separate explicit step.
   background **only** through `wapi-client.js` — never read `browser.storage`
   or the engine directly.
 - Keep user-facing strings branded WildFire, and keep the Firefox 153 / ESR
-  note where it currently appears. The Inspector table is WildFire-branded and
-  uses the existing dark palette; it never exposes upstream branding.
+  note where it currently appears. The Inspector table has its own
+  `ui/inspector/` window, opens from the popup, and uses the existing dark
+  palette; it never exposes upstream branding.
 
 ---
 

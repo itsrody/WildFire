@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WildFire Inspector</title>
+  <link rel="stylesheet" href="inspector.css">
+</head>
+<body>
+  <header class="header">
+    <img src="../../assets/icon-48.png" alt="">
+    <div>
+      <h1>WildFire Inspector</h1>
+      <p>Local-only request decisions for Firefox 153+ (ESR).</p>
+    </div>
+  </header>
+
+  <section class="card">
+    <p class="hint">Nothing is persisted or sent anywhere. Recording is off until you enable it.</p>
+    <label class="toggle"><input id="inspector-enabled" type="checkbox"> Record request decisions</label>
+    <div class="actions inspector-filters">
+      <label>Decision
+        <select id="inspector-decision-filter">
+          <option value="all">All</option>
+          <option value="blocked">Blocked</option>
+          <option value="redirected">Redirected</option>
+          <option value="rewritten">Rewritten</option>
+          <option value="exception">Exception</option>
+          <option value="allowed">Allowed</option>
+          <option value="csp">CSP</option>
+          <option value="csp-report">CSP report</option>
+          <option value="skipped">Skipped</option>
+        </select>
+      </label>
+      <label>Site <input id="inspector-site-filter" type="search" placeholder="example.com" spellcheck="false"></label>
+      <button id="inspector-refresh" class="button" type="button">Refresh</button>
+      <button id="inspector-clear" class="button" type="button">Clear</button>
+      <span id="inspector-status" class="status" role="status"></span>
+    </div>
+    <p id="inspector-summary" class="hint">Loading…</p>
+    <div class="inspector-table-wrap">
+      <table class="inspector-table">
+        <thead>
+          <tr><th>Decision</th><th>Request</th><th>Rule</th><th>Detail</th><th>Time</th></tr>
+        </thead>
+        <tbody id="inspector-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer class="footer">WildFire · local diagnostics only</footer>
+  <script src="../../lib/wapi/wapi-client.js"></script>
+  <script src="inspector.js"></script>
+</body>
+</html>

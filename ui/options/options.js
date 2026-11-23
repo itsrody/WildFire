@@ -17,20 +17,10 @@
   const cspReportAllow = document.getElementById('csp-report-allow');
   const cspReportForm = document.getElementById('csp-report-allow-form');
   const cspReportStatus = document.getElementById('csp-report-status');
-  const inspectorEnabled = document.getElementById('inspector-enabled');
-  const inspectorDecisionFilter = document.getElementById('inspector-decision-filter');
-  const inspectorSiteFilter = document.getElementById('inspector-site-filter');
-  const inspectorRefresh = document.getElementById('inspector-refresh');
-  const inspectorClear = document.getElementById('inspector-clear');
-  const inspectorStatus = document.getElementById('inspector-status');
-  const inspectorSummary = document.getElementById('inspector-summary');
-  const inspectorRows = document.getElementById('inspector-rows');
 
   let state = null;
   let lists = [];
   let suggested = [];
-  let inspection = null;
-  const inspectorFilters = { decision: 'all', site: '' };
 
   function setListStatus(message) {
     listStatus.textContent = message || '';
@@ -176,76 +166,6 @@
     }, 4000);
   }
 
-  function setInspectorStatus(message) {
-    inspectorStatus.textContent = message;
-    if (message) {
-      setTimeout(() => {
-        if (inspectorStatus.textContent === message) inspectorStatus.textContent = '';
-      }, 4000);
-    }
-  }
-
-  function inspectorCell(className, value) {
-    const cell = document.createElement('td');
-    cell.className = className;
-    cell.textContent = value;
-    return cell;
-  }
-
-  function renderInspector(snapshot) {
-    inspection = snapshot || { enabled: false, limit: 0, entries: [] };
-    inspectorEnabled.checked = Boolean(inspection.enabled);
-    const recorded = Array.isArray(inspection.entries) ? inspection.entries : [];
-    const site = inspectorFilters.site.trim().toLowerCase();
-    const entries = recorded.filter(entry =>
-      (inspectorFilters.decision === 'all' ||
-        entry.decision === inspectorFilters.decision) &&
-      (!site || String(entry.site || entry.host || entry.url || '')
-        .toLowerCase().includes(site)));
-    inspectorSummary.textContent = entries.length + ' shown · ' + recorded.length +
-      ' of ' + Number(inspection.limit || 0) + ' decisions recorded locally in memory.';
-    inspectorRows.textContent = '';
-
-    if (!entries.length) {
-      const row = document.createElement('tr');
-      const cell = document.createElement('td');
-      cell.colSpan = 5;
-      cell.className = 'empty';
-      cell.textContent = !recorded.length
-        ? (inspection.enabled ? 'Waiting for request decisions.' : 'Recording is off.')
-        : 'No decisions match these filters.';
-      row.appendChild(cell);
-      inspectorRows.appendChild(row);
-      return;
-    }
-
-    entries.slice().reverse().map(entry => {
-      const row = document.createElement('tr');
-      const decision = inspectorCell('decision ' + String(entry.decision || ''),
-        String(entry.decision || 'allowed'));
-      const request = inspectorCell('',
-        (entry.phase ? entry.phase + ': ' : '') + (entry.host || entry.url || '—'));
-      request.title = String(entry.url || '');
-      const rule = inspectorCell('rule', entry.rule ? (entry.rule.text || '—') : '—');
-      if (entry.rule && (entry.rule.source || entry.rule.hash)) {
-        rule.title = String(entry.rule.source || 'wildfire') +
-          (entry.rule.hash ? ' · ' + entry.rule.hash : '');
-      }
-      const detail = inspectorCell('', String(entry.detail || entry.type || '—'));
-      const time = inspectorCell('', new Date(entry.at).toLocaleTimeString() +
-        (entry.ms ? ' · ' + entry.ms + ' ms' : ''));
-      row.append(decision, request, rule, detail, time);
-      return row;
-    }).forEach(row => inspectorRows.appendChild(row));
-  }
-
-  async function inspectorAction(payload, message) {
-    const result = await client.send('inspect', payload || {});
-    renderInspector(result.inspect);
-    setInspectorStatus(message || '');
-    return result;
-  }
-
   function render() {
     filters.value = state.customFilters || '';
     statsText.textContent = Number(state.blocked || 0).toLocaleString() +
@@ -254,7 +174,6 @@
     renderLists();
     renderSuggested();
     renderCspReports();
-    if (inspection) renderInspector(inspection);
   }
 
   document.getElementById('save').addEventListener('click', async () => {
@@ -288,20 +207,6 @@
     setCspReportStatus('Allowed endpoints saved.');
   });
 
-  inspectorEnabled.addEventListener('change', () => inspectorAction(
-    { value: inspectorEnabled.checked },
-    inspectorEnabled.checked ? 'Recording on.' : 'Recording off.'));
-  inspectorDecisionFilter.addEventListener('change', () => {
-    inspectorFilters.decision = inspectorDecisionFilter.value;
-    if (inspection) renderInspector(inspection);
-  });
-  inspectorSiteFilter.addEventListener('input', () => {
-    inspectorFilters.site = inspectorSiteFilter.value;
-    if (inspection) renderInspector(inspection);
-  });
-  inspectorRefresh.addEventListener('click', () => inspectorAction({}, 'Refreshed.'));
-  inspectorClear.addEventListener('click', () => inspectorAction({ reset: true }, 'Cleared.'));
-
   listForm.addEventListener('submit', async event => {
     event.preventDefault();
     const url = listInput.value.trim();
@@ -318,14 +223,12 @@
   Promise.all([
     client.send('state'),
     client.send('list-state'),
-    client.send('suggested-lists'),
-    client.send('inspect')
+    client.send('suggested-lists')
   ])
     .then(results => {
       state = results[0].state;
       lists = Array.isArray(results[1].lists) ? results[1].lists : [];
       suggested = Array.isArray(results[2].suggested) ? results[2].suggested : [];
-      inspection = results[3].inspect;
       render();
     })
     .catch(error => {
