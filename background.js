@@ -816,11 +816,14 @@
         return applyRemoteResult(await remoteLists.setAutoUpdate(message.url, Boolean(message.value)));
 
       case 'cosmetic': {
-        const host = safeHost(message.url || (sender.tab && sender.tab.url) || '');
+        const url = message.url || (sender.tab && sender.tab.url) || '';
+        const host = safeHost(url);
+        const hidePolicy = engine.getHidePolicy ? engine.getHidePolicy(url, 'document', url) : {};
         return {
           ok: true,
-          selectors: engine.getCosmetic(host),
-          procedural: engine.getProcedural(host)
+          selectors: engine.getCosmetic(host, hidePolicy),
+          procedural: engine.getProcedural(host, hidePolicy),
+          hidePolicy
         };
       }
 

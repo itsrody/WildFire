@@ -2124,6 +2124,31 @@ async function testPhase1AAliases() {
   assert.ok(e2.getCapabilities() & FilterEngine.CAP.GENERICHIDE, 'compiled ghide capability');
 }
 
+async function testHideExceptionModifiers() {
+  const e = new FilterEngine();
+  e.load([
+    '##.global-ad',
+    'example.com##.specific-ad',
+    '@@||example.com^$generichide',
+    '##.keep'
+  ].join('\n'));
+  const policy = e.getHidePolicy('https://example.com/page', 'document', 'https://example.com/page');
+  assert.strictEqual(policy.generichide, true, 'generichide policy');
+  const sels = e.getCosmetic('example.com', policy);
+  assert.strictEqual(JSON.stringify(sels.slice().sort()), JSON.stringify(['.specific-ad']), 'generichide hides generic only');
+
+  const e2 = new FilterEngine();
+  e2.load(['##.global-ad', 'example.com##.specific-ad', '@@||example.com^$elemhide'].join('\n'));
+  const p2 = e2.getHidePolicy('https://example.com/page', 'document', 'https://example.com/page');
+  assert.strictEqual(e2.getCosmetic('example.com', p2).length, 0, 'elemhide disables all cosmetic rules');
+  assert.strictEqual(e2.getProcedural('example.com', p2).length, 0, 'elemhide disables procedural');
+
+  const e3 = new FilterEngine();
+  e3.load(['##.global-ad', 'example.com##.specific-ad', '@@||example.com^$specifichide'].join('\n'));
+  const p3 = e3.getHidePolicy('https://example.com/page', 'document', 'https://example.com/page');
+  assert.strictEqual(JSON.stringify(e3.getCosmetic('example.com', p3).slice().sort()), JSON.stringify(['.global-ad']), 'specifichide hides domain-specific only');
+}
+
 async function testPhase1BBadfilter() {
   const e = new FilterEngine();
   e.load([
@@ -2337,6 +2362,7 @@ async function testRemoteLists() {
 Promise.resolve()
   .then(() => testPhase0Foundation())
   .then(() => testPhase1AAliases())
+  .then(() => testHideExceptionModifiers())
   .then(() => testPhase1BBadfilter())
   .then(() => testPhase1CRemoveModifiers())
   .then(() => testCompileCacheAndCompiler())
