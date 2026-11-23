@@ -181,6 +181,46 @@ assert.strictEqual(
   bigEngine.matchRequest('https://1999u.example/path', mapResourceType('script'), '').blocked,
   true, 'matching still works in a large list');
 
+// Regex filters compile with a safe flag set; catastrophic shapes are rejected at load.
+const regexEngine = new FilterEngine();
+regexEngine.load([
+  '/ads\\.example\\.com\\/track/$script',
+  '/banner\\d+\\.gif/i',
+  '/dollar\\.example\\/end$/',
+  '@@/keep\\.example\\/ad/$script',
+  '/(a+)+$/',
+  '/(foo|bar)+/',
+  '/(a)(b)\\1/',
+  '/(' + 'x'.repeat(600) + ')/',
+  '/foo/g'
+].join('\n'));
+assert.strictEqual(regexEngine.counts.network, 4, 'only safe regex rules are loaded');
+assert.strictEqual(regexEngine.rejectedRegex.length, 5, 'unsafe regex rules are rejected');
+assert.strictEqual(regexEngine.unindexedRules.length, 4, 'regex rules bypass the token index');
+assert.ok(regexEngine.rejectedRegex.some(entry => entry.reason === 'nested or alternated quantifier'),
+  'nested and alternated quantifiers are rejected');
+assert.ok(regexEngine.rejectedRegex.some(entry => entry.reason === 'backreferences are not allowed'),
+  'backreferences are rejected');
+assert.ok(regexEngine.rejectedRegex.some(entry => entry.reason === 'regex pattern too long'),
+  'oversized patterns are rejected');
+assert.ok(regexEngine.rejectedRegex.some(entry => entry.reason === 'unsupported regex flag'),
+  'stateful flags are rejected');
+assert.strictEqual(
+  regexEngine.matchRequest('https://ads.example.com/track.js', mapResourceType('script'), '').blocked,
+  true, 'regex rule with options matches');
+assert.strictEqual(
+  regexEngine.matchRequest('https://ads.example.com/track.js', mapResourceType('image'), '').blocked,
+  false, 'regex rule respects type options');
+assert.strictEqual(
+  regexEngine.matchRequest('https://cdn.example.com/BANNER42.GIF', mapResourceType('image'), '').blocked,
+  true, 'regex i flag is case-insensitive');
+assert.strictEqual(
+  regexEngine.matchRequest('https://dollar.example/end', mapResourceType('script'), '').blocked,
+  true, '$ inside a regex pattern is not parsed as an option separator');
+assert.strictEqual(
+  regexEngine.matchRequest('https://keep.example/ad.js', mapResourceType('script'), '').blocked,
+  false, 'regex exception wins');
+
 engine.load(fs.readFileSync(path.join(ROOT, 'filters/default.txt'), 'utf8'));
 assert.ok(engine.counts.network > 50, 'bundled list should contain network rules');
 assert.ok(engine.counts.cosmetic > 5, 'bundled list should contain cosmetic rules');

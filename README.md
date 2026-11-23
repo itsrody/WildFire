@@ -62,7 +62,9 @@ options page (one per line):
 | `||ads.example.com^` | Block that host and its subdomains |
 | `|https://example.com/ad|` | Match a URL from its start/end |
 | `example.org*banner.gif` | Wildcard match |
+| `/ads\.example\.com\/track$/` | Regular-expression match (safe subset) |
 | `@@||ads.example.com^` | Allow requests that would otherwise be blocked |
+| `@@/keep\.example\/ad/` | Regular-expression exception |
 | `||tracker.net^$script` | Only block scripts |
 | `||tracker.net^$~image` | Block everything except images |
 | `||tracker.net^$third-party` | Only block cross-site requests |
@@ -77,10 +79,12 @@ Lines starting with `!` are comments.
 
 This is deliberately a *minimal* engine, not a full uBO port:
 
-- No regular-expression filters (`/pattern/`), `$csp`, `$rewrite`, `elemhide`, or
-  procedural cosmetics such as `:has-text()`.
-- Rules are indexed by their `||host^` key; generic rules are scanned per request.
-  Importing a full EasyList-sized list will work but is not optimized for that scale.
+- Regex filters use a safe subset: backreferences, nested/alternated quantifiers,
+  long patterns and stateful flags are rejected when the list loads.
+- `$csp`, `$rewrite`, `elemhide`, and procedural cosmetics such as `:has-text()`
+  are not supported.
+- Rules are indexed by their `||host^` key and 4-character tokens; patterns with
+  no usable token (including regex filters) are scanned per request.
 - No remote list fetching or auto-updating — `filters/default.txt` plus your custom
   filters are the complete rule set.
 - No hand-written `for`/`while`/`do` loops; iteration uses native helpers

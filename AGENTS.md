@@ -168,14 +168,21 @@ that behavior when adding popup actions.
 
 | Supported | Not supported (yet) |
 | --- | --- |
-| `||host^` domain anchors, subdomains | `/regex/` filters |
-| `|url|` start/end anchors | `$csp`, `$rewrite`, `$redirect` |
-| `*` wildcards, `^` separator | `elemhide`, `generichide`, `ghide` |
-| `@@` exceptions | `:has-text()`, `:matches-path()`, other procedural cosmetics |
-| `$script`, `$image`, `$~type`, other resource types | remote list fetching / auto-update |
-| `$third-party`, `$~third-party` | `domain=` with wildcard `.*` patterns |
-| `$domain=a\|~b` (`from=` alias) | full EasyList-scale performance tuning |
+| `||host^` domain anchors, subdomains | `$csp`, `$rewrite`, `$redirect` |
+| `|url|` start/end anchors | `elemhide`, `generichide`, `ghide` |
+| `*` wildcards, `^` separator | `:has-text()`, `:matches-path()`, other procedural cosmetics |
+| `@@` exceptions | remote list fetching / auto-update |
+| `$script`, `$image`, `$~type`, other resource types | `domain=` with wildcard `.*` patterns |
+| `$third-party`, `$~third-party` | full EasyList-scale performance tuning |
+| `$domain=a\|~b` (`from=` alias) | |
+| `/regex/` filters (`i`, `m`, `s`, `u` flags only) | |
 | `##selector`, `#@#selector` | |
+
+Regex filters are checked at load time. Backreferences, nested or alternated
+quantifiers, excessive quantifier/group counts, long patterns and stateful
+flags (`g`, `y`, `d`) are rejected into `engine.rejectedRegex` and never reach
+the blocking listener. Regex rules bypass the token index and are evaluated on
+URLs up to 8192 characters.
 
 Add new syntax by extending `lib/filter-engine.js` **and** `tools/test.js` in
 the same change. `README.md` gets a syntax-table row when the feature is
