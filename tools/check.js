@@ -66,7 +66,7 @@ if (manifest.content_scripts) {
 if (manifest.options_ui && manifest.options_ui.page) referenced.add(manifest.options_ui.page);
 referenced.add('filters/default.txt');
 // Injected dynamically at document_start via browser.contentScripts.register.
-referenced.add('lib/scriptlets.js');
+referenced.add('lib/resources/scriptlets.js');
 
 referenced.forEach(relative => {
   if (!fs.existsSync(path.join(ROOT, relative))) errors.push('missing referenced file: ' + relative);

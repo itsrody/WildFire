@@ -47,15 +47,23 @@ in the WildFire style; never close a gap by importing upstream code.
 ```
 manifest.json          MV2 manifest; gecko floor 153.0; all permissions
 background.js          blocking listener, counters/badge, message API
-lib/filter-engine.js   filter parser + matcher (self-contained, no deps)
-lib/document-scope.js  documentId -> document URL cache for request scope
-lib/redirect-resources.js  WildFire-owned data-URI redirect resources
-lib/csp-resources.js   curated CSP directives for $csp response headers
-lib/scriptlets.js      WildFire-owned scriptlet aliases (no filter-supplied code)
-lib/rewrite-resources.js  WildFire-owned bodies for $rewrite responses
-lib/procedural.js      DOM-based procedural cosmetic evaluator (no browser APIs)
-lib/remote-lists.js    opt-in remote list store, key wildfire.remote.v1
-lib/store.js           browser.storage.local wrapper, key wildfire.state.v1
+lib/
+  engine/
+    filter-engine.js   filter parser + matcher (self-contained, no deps)
+    procedural.js      DOM-based procedural cosmetic evaluator (no browser APIs)
+  compile/
+    compiler.js        dynamic compile engine: worker with sync fallback
+    compile-cache.js   compiled-filter cache (memory LRU + IndexedDB/local)
+    compiler-worker.js worker entry; importScripts engine + resource registries
+  resources/
+    scriptlets.js      WildFire-owned scriptlet aliases (no filter-supplied code)
+    csp-resources.js   curated CSP directives for $csp response headers
+    redirect-resources.js  WildFire-owned data-URI redirect resources
+    rewrite-resources.js   WildFire-owned bodies for $rewrite responses
+  state/
+    store.js           browser.storage.local wrapper, key wildfire.state.v1
+    remote-lists.js    opt-in remote list store, key wildfire.remote.v1
+    document-scope.js  documentId -> document URL cache for request scope
 content/cosmetic.js    injects hidden-element CSS in every frame
 filters/default.txt    bundled starter rules (~85 network rules)
 popup/                 toolbar popup (status, counter, pause controls)
@@ -78,17 +86,19 @@ used **only** by `tools/`.
 
 ### Loading order (manifest `background.scripts`)
 
-1. `lib/store.js` → `window.WildFireStore`
-2. `lib/filter-engine.js` → `window.FilterEngine`, `window.mapResourceType`
-3. `lib/document-scope.js` → `window.DocumentScope`
-4. `lib/redirect-resources.js` → `window.RedirectResources`
-5. `lib/remote-lists.js` → `window.RemoteLists`
-6. `lib/csp-resources.js` → `window.CspResources`
-7. `lib/scriptlets.js` → `window.WildFireScriptlets`
-8. `lib/rewrite-resources.js` → `window.RewriteResources`
-9. `background.js` → the engine instance and all listeners
+1. `lib/state/store.js` → `window.WildFireStore`
+2. `lib/engine/filter-engine.js` → `window.FilterEngine`, `window.mapResourceType`
+3. `lib/state/document-scope.js` → `window.DocumentScope`
+4. `lib/resources/redirect-resources.js` → `window.RedirectResources`
+5. `lib/state/remote-lists.js` → `window.RemoteLists`
+6. `lib/resources/csp-resources.js` → `window.CspResources`
+7. `lib/resources/scriptlets.js` → `window.WildFireScriptlets`
+8. `lib/resources/rewrite-resources.js` → `window.RewriteResources`
+9. `lib/compile/compile-cache.js` → `window.WildFireCompileCache`
+10. `lib/compile/compiler.js` → `window.WildFireCompiler`
+11. `background.js` → the engine instance and all listeners
 
-Content scripts load in this order: `lib/procedural.js` → `content/cosmetic.js`,
+Content scripts load in this order: `lib/engine/procedural.js` → `content/cosmetic.js`,
 so the DOM evaluator exists before the content script runs.
 
 Libraries export by attaching to `this` (the window/global in a classic
@@ -152,7 +162,7 @@ plain-suffix and unknown-suffix lookups enabled), `CspResources.resolve()`,
 `WildFireScriptlets.validate()` and `RewriteResources.hasAlias()`. The engine
 falls back to a last-two-label scope when no domain resolver is given or a
 lookup fails, and rejects `$csp`, `##+js()` and `$rewrite` rules when their
-registry is unavailable. Never call `browser.*` from `lib/filter-engine.js`.
+registry is unavailable. Never call `browser.*` from `lib/engine/filter-engine.js`.
 
 `matchRequest()` returns `redirect: {alias, captures}` when the winning rule
 carries `$redirect` or `$redirect-rule`. `RedirectResources.resolve()` is the
@@ -185,7 +195,7 @@ headers without touching the site's own headers. CSP report requests are
 skipped. Filter text can never supply a header value itself.
 
 `getScriptletPayload()` returns plain `{alias, args, domains, isException}`
-data. Background registers `lib/scriptlets.js` through Firefox's
+data. Background registers `lib/resources/scriptlets.js` through Firefox's
 `browser.contentScripts.register()` at `document_start` with
 `['<all_urls>']`/all frames, and injects only a JSON payload through the
 registered `code` step. There is no `eval`, no `Function`, and no filter-sourced
@@ -203,7 +213,7 @@ it validates each selector with `CSS.supports('selector', …)` and
 Procedural selectors (`:has-text()`, `:contains()`, `:matches-path()`, `:has()`,
 `:nth-ancestor()`, `:upward()`, `:min-text-length()`, `:matches-attr()`,
 `:matches-css()`, `:xpath()`, `:not()`, `:matches-media()`) are parsed in
-`lib/filter-engine.js` into trees with `base` plus ordered `steps`; malformed or
+`lib/engine/filter-engine.js` into trees with `base` plus ordered `steps`; malformed or
 unsafe ones are recorded in `engine.rejectedCosmetic` and never sent to pages.
 `getProcedural(host)` merges generic and domain trees and subtracts `#@#`
 exceptions. Background sends them in the same `wildfire:apply` message as CSS.
@@ -250,7 +260,7 @@ disabledSites}`. `persist(patch)` merges into the in-memory copy and writes a
 **full snapshot** — do not write partial objects directly, or parallel message
 handlers will clobber unrelated fields. Storage key `wildfire.remote.v1` holds
 `{lists: [{url, enabled, autoUpdate, etag, lastModified, text, updatedAt, hash}]}`
-and is owned entirely by `lib/remote-lists.js`.
+and is owned entirely by `lib/state/remote-lists.js`.
 
 Background listens for `wildfire:*` messages:
 
@@ -276,7 +286,7 @@ that behavior when adding popup actions.
 
 Remote lists are strictly opt-in. No URL is bundled, `add-list` never fetches,
 and a list cannot be enabled until an explicit `update-list` has stored text.
-`lib/remote-lists.js` fetches with `cache: 'no-store'`, a size cap and an
+`lib/state/remote-lists.js` fetches with `cache: 'no-store'`, a size cap and an
 `AbortController` timeout; a 304 keeps the stored text but refreshes the check
 time. The exact text and its hash are persisted so the applied rules are
 reproducible. `loadFilters()` composes bundled → custom → enabled remote text,
@@ -330,7 +340,7 @@ flags (`g`, `y`, `d`) are rejected into `engine.rejectedRegex` and never reach
 the blocking listener. Regex rules bypass the token index and are evaluated on
 URLs up to 8192 characters.
 
-Redirect rules name an alias from `lib/redirect-resources.js`: `noopjs`,
+Redirect rules name an alias from `lib/resources/redirect-resources.js`: `noopjs`,
 `noopcss`, `nooptext`, `noopjson`, `noophtml`, `1x1.gif`, `1x1.png`,
 `tagged.svg`. `$redirect-rule` uses regex captures to fill that resource's
 `{{1}}`–`{{9}}` placeholders; captures are percent-encoded before insertion.
@@ -339,7 +349,7 @@ An unregistered alias cancels instead. No upstream resources are bundled.
 `$rewrite=alias` replaces a matching response body through Firefox's
 `webRequest.filterResponseData()` stream filter. The only aliases are
 `blank-js`, `blank-css`, `blank-text`, `blank-json`, `blank-html` and
-`blank-image` from `lib/rewrite-resources.js`; each maps to a fixed MIME type
+`blank-image` from `lib/resources/rewrite-resources.js`; each maps to a fixed MIME type
 and WildFire-authored bytes. Unknown aliases are rejected into
 `engine.rejectedRewrite` at load time instead of becoming blockers. Rewrites
 honor the usual type/domain/third-party options and `@@` exceptions, never
@@ -354,7 +364,7 @@ cleaned URL when a request is not blocked/redirected by a normal rule;
 domain/type scoping, and compile-time `$badfilter`. Filter text cannot supply
 code or arbitrary header/body values.
 
-`$csp` rules name an alias from `lib/csp-resources.js`: `no-script`,
+`$csp` rules name an alias from `lib/resources/csp-resources.js`: `no-script`,
 `no-inline-script`, `no-frame`, `no-worker`, `no-object`, `no-font`, `no-media`,
 `no-connect`. Each resolves to a fixed directive that can only tighten a
 response. Unknown aliases are rejected into `engine.rejectedCsp` instead of
@@ -363,7 +373,7 @@ weaker policy. `$csp` accepts the same type/domain/third-party options as
 network rules, and applies to main documents without `$document`.
 
 Scriptlet rules use `##+js(alias, args)` and may be scoped by comma-separated
-domains or negated with `#@#+js(...)`. The registry in `lib/scriptlets.js` owns
+domains or negated with `#@#+js(...)`. The registry in `lib/resources/scriptlets.js` owns
 one canonical alias per behavior plus uBO short aliases (`aopr`, `acs`, `set`,
 …); the engine canonicalizes names so an exception matches either spelling.
 Arguments are validated data: plain dotted property paths, fixed constant tokens
@@ -374,7 +384,7 @@ code, unterminated rules and every `trusted-*` alias go into
 `engine.rejectedScriptlets`. A `#@#` exception cancels the same alias/arguments
 on matching domains. The catalog covers the phases in §8. AdGuard
 `[domains]#%#//scriptlet('alias', 'arg', ...)` rules are parsed into the same
-payload with string-only arguments and validated in `lib/scriptlets.js`'s
+payload with string-only arguments and validated in `lib/resources/scriptlets.js`'s
 AdGuard registry; `#@%#//scriptlet()` cancels the same rule. No filter can
 supply script text.
 
@@ -403,10 +413,10 @@ native `matchMedia`; the query is bounded data (≤256 chars, no control chars) 
 Gecko validates its syntax at runtime, so an invalid query never matches. It is
 viewport-dependent, so `content/cosmetic.js` re-applies on `resize` while such a
 rule is live. Invalid rules land in `engine.rejectedCosmetic`. Evaluation
-lives entirely in `lib/procedural.js` and `content/cosmetic.js` — never in
+lives entirely in `lib/engine/procedural.js` and `content/cosmetic.js` — never in
 injected script.
 
-Add new syntax by extending `lib/filter-engine.js` **and** `tools/test.js` in
+Add new syntax by extending `lib/engine/filter-engine.js` **and** `tools/test.js` in
 the same change. `README.md` gets a syntax-table row when the feature is
 user-visible.
 
@@ -466,7 +476,7 @@ cosmetic hiding.
 
 The scriptlet catalog covers both uBO `##+js()` and AdGuard
 `#%#//scriptlet()` syntax. It grew as a phased expansion of the registry in
-`lib/scriptlets.js`; every alias lands with a validator, an original
+`lib/resources/scriptlets.js`; every alias lands with a validator, an original
 implementation, tests, and a README row. Keep these load-bearing rules:
 
 - **No upstream code.** Public syntax docs are fine; copying or adapting uBO or

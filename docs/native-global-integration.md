@@ -132,7 +132,7 @@ text, function source, or executable strings.
 
 The extension keeps its current responsibilities:
 
-1. Parse filter text in `lib/filter-engine.js`.
+1. Parse filter text in `lib/engine/filter-engine.js`.
 2. Canonicalize aliases and merge `#@#+js()` / `#@%#//scriptlet()` exceptions.
 3. Reject unknown, malformed, unsafe, and `trusted-*` aliases.
 4. Build `engine.getScriptletPayload()`.
@@ -379,7 +379,7 @@ Non-negotiable:
 2. No `eval`, `Function`, `Cu.evalInSandbox`, or string execution from payload
    data in the privileged component.
 3. No `trusted-*` alias until a source-trust model exists.
-4. Validate twice: once in `lib/scriptlets.js`, once in the privileged layer.
+4. Validate twice: once in `lib/resources/scriptlets.js`, once in the privileged layer.
 5. Cap payload size, rule count, regex length, property path length, and
    argument count.
 6. Filter by principal before applying any patch.

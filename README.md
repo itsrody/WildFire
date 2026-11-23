@@ -13,8 +13,10 @@ APIs and a small filter engine.
 ```
 manifest.json          Firefox MV2 manifest, gecko floor 153.0
 background.js          webRequest blocking, cosmetic injection, message API
-lib/filter-engine.js   filter parser + matcher (no dependencies)
-lib/store.js           browser.storage.local wrapper
+lib/engine/            filter parser + matcher, procedural DOM evaluator
+lib/compile/           filter compiler, worker, compiled-filter cache
+lib/resources/         curated scriptlet / CSP / redirect / rewrite registries
+lib/state/             storage wrapper, remote lists, request scope
 content/cosmetic.js    injects hidden-element CSS, re-applies on demand
 filters/default.txt    bundled starter rules
 popup/                 toolbar popup

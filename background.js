@@ -427,7 +427,7 @@
       scriptletRegistration = await browser.contentScripts.register({
         matches: ['<all_urls>'],
         js: [
-          { file: 'lib/scriptlets.js' },
+          { file: 'lib/resources/scriptlets.js' },
           { code: '(() => { const api = window.WildFireScriptlets; try { delete window.WildFireScriptlets; } catch (e) {} if (api && typeof api.apply === "function") api.apply(' + JSON.stringify(fallbackRules) + '); })();' }
         ],
         runAt: 'document_start',

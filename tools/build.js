@@ -95,7 +95,7 @@ execFileSync(process.execPath, [path.join(__dirname, 'check.js')], { stdio: 'inh
 
 function compiledDefault() {
   const vm = require('vm');
-  const src = fs.readFileSync(path.join(ROOT, 'lib/filter-engine.js'), 'utf8');
+  const src = fs.readFileSync(path.join(ROOT, 'lib/engine/filter-engine.js'), 'utf8');
   const ctx = { console, URL, Map, Set, Array, Object, String, RegExp, JSON, Math, Boolean, Number };
   ctx.window = ctx;
   vm.createContext(ctx);

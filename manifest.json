@@ -37,16 +37,16 @@
 
   "background": {
     "scripts": [
-      "lib/store.js",
-      "lib/filter-engine.js",
-      "lib/document-scope.js",
-      "lib/redirect-resources.js",
-      "lib/remote-lists.js",
-      "lib/csp-resources.js",
-      "lib/scriptlets.js",
-      "lib/rewrite-resources.js",
-      "lib/compile-cache.js",
-      "lib/compiler.js",
+      "lib/state/store.js",
+      "lib/engine/filter-engine.js",
+      "lib/state/document-scope.js",
+      "lib/resources/redirect-resources.js",
+      "lib/state/remote-lists.js",
+      "lib/resources/csp-resources.js",
+      "lib/resources/scriptlets.js",
+      "lib/resources/rewrite-resources.js",
+      "lib/compile/compile-cache.js",
+      "lib/compile/compiler.js",
       "background.js"
     ],
     "persistent": true
@@ -65,7 +65,7 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["lib/procedural.js", "content/cosmetic.js"],
+      "js": ["lib/engine/procedural.js", "content/cosmetic.js"],
       "run_at": "document_idle",
       "all_frames": true
     }
