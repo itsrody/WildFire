@@ -107,6 +107,13 @@ reads happen only in `init()` and message handlers.
   plus `genericCosmetic` / `genericCosmeticExceptions`.
 - `counts: {network, exceptions, cosmetic}` for the popup/options UI.
 
+`FilterEngine` accepts an injected registrable-domain resolver so the engine
+stays self-contained and unit-testable. Background supplies Firefox 153's
+synchronous `browser.publicSuffix.getDomain()` (with IP, plain-suffix and
+unknown-suffix lookups enabled); the engine falls back to a last-two-label
+scope when no resolver is given or a lookup fails. Never call `browser.*`
+from `lib/filter-engine.js`.
+
 `getCosmetic(host)` merges generic selectors with every parent-domain selector
 and subtracts applicable exceptions. `content/cosmetic.js` asks for them once
 on load via `wildfire:cosmetic` and re-applies on `wildfire:apply` broadcasts;
@@ -208,8 +215,9 @@ web-ext lint --source-dir . --output text
 
 The bar is: tests pass, build succeeds, `web-ext lint` reports **0 errors and
 0 warnings**. `tools/check.js` asserts MV2, the 153.0 floor, the gecko id,
-data-collection disclosure, every manifest-referenced file, `node --check` on
-all scripts, and the loop-free rule across every `.js` file (including tools).
+data-collection disclosure, the `publicSuffix` permission, every
+manifest-referenced file, `node --check` on all scripts, and the loop-free rule
+across every `.js` file (including tools).
 If any of those change, update the check in the same commit.
 
 For manual testing: `npm run dev` (or load `manifest.json` through

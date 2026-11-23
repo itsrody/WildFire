@@ -2,7 +2,25 @@
 (function () {
   'use strict';
 
-  const engine = new FilterEngine();
+  // Firefox 153 resolves registrable domains from its built-in Public Suffix
+  // List. The options keep IP addresses, plain suffixes and private/local
+  // domains resolvable instead of returning null. FilterEngine falls back to
+  // a last-two-label scope if a lookup fails.
+  const DOMAIN_OPTIONS = {
+    allowIPAddress: true,
+    allowPlainSuffix: true,
+    allowUnknownSuffix: true
+  };
+
+  function registrableDomain(host) {
+    try {
+      return browser.publicSuffix.getDomain(host, DOMAIN_OPTIONS) || '';
+    } catch (error) {
+      return '';
+    }
+  }
+
+  const engine = new FilterEngine(registrableDomain);
   const tabUrls = new Map();
   let state = Object.assign({}, WildFireStore.defaults);
   let flushTimer = null;

@@ -25,6 +25,7 @@
   },
 
   "permissions": [
+    "publicSuffix",
     "webRequest",
     "webRequestBlocking",
     "storage",

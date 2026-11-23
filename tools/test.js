@@ -62,6 +62,48 @@ assert.deepStrictEqual(Array.from(engine.getCosmetic('example.com')), ['.shared'
   'cosmetic rules plus generic, minus exception');
 assert.deepStrictEqual(Array.from(engine.getCosmetic('other.net')), ['.shared'], 'generic cosmetic only');
 
+// Firefox 153 Public Suffix List integration: the domain resolver is injected
+// so multi-part and private suffixes scope $third-party correctly.
+const pslDomains = new Map([
+  ['ads.a.co.uk', 'a.co.uk'],
+  ['www.b.co.uk', 'b.co.uk'],
+  ['ads.user1.github.io', 'user1.github.io'],
+  ['site.user2.github.io', 'user2.github.io'],
+  ['ads.xn--nxasmq6b.com', 'xn--nxasmq6b.com'],
+  ['site.xn--nxasmq6b.com', 'xn--nxasmq6b.com']
+]);
+const resolverCalls = [];
+const pslEngine = new FilterEngine(host => {
+  resolverCalls.push(host);
+  return pslDomains.get(host) || '';
+});
+pslEngine.load([
+  '||ads.a.co.uk^$third-party',
+  '||ads.user1.github.io^$third-party',
+  '||ads.xn--nxasmq6b.com^$third-party'
+].join('\n'));
+
+const pslBlocked = (url, documentUrl) =>
+  pslEngine.matchRequest(url, mapResourceType('script'), documentUrl).blocked;
+
+assert.strictEqual(pslBlocked('https://ads.a.co.uk/x.js', 'https://www.b.co.uk/'), true,
+  'distinct registrable domains under co.uk are third-party');
+assert.strictEqual(pslBlocked('https://ads.user1.github.io/x.js', 'https://site.user2.github.io/'), true,
+  'distinct private suffixes under github.io are third-party');
+assert.strictEqual(pslBlocked('https://ads.xn--nxasmq6b.com/x.js', 'https://site.xn--nxasmq6b.com/'), false,
+  'punycode IDN documents share a registrable domain');
+assert.ok(resolverCalls.includes('ads.a.co.uk') && resolverCalls.includes('site.xn--nxasmq6b.com'),
+  'resolver receives punycode hostnames from the engine');
+
+const fallbackEngine = new FilterEngine(() => { throw new Error('PSL unavailable'); });
+fallbackEngine.load('||third.example^$third-party');
+const fallbackBlocked = (url, documentUrl) =>
+  fallbackEngine.matchRequest(url, mapResourceType('script'), documentUrl).blocked;
+assert.strictEqual(fallbackBlocked('https://third.example/x.js', 'https://other.net/'), true,
+  'resolver failure falls back to last-two-label scope');
+assert.strictEqual(fallbackBlocked('https://third.example/x.js', 'https://third.example/'), false,
+  'fallback still treats the same host as first-party');
+
 engine.load(fs.readFileSync(path.join(ROOT, 'filters/default.txt'), 'utf8'));
 assert.ok(engine.counts.network > 50, 'bundled list should contain network rules');
 assert.ok(engine.counts.cosmetic > 5, 'bundled list should contain cosmetic rules');
