@@ -381,6 +381,7 @@
       lastCustomHash = customHash;
       lastRemoteSignature = remoteSig;
       compilerStatus.capabilities = engine.capabilities || 0;
+      ensureRemoveHeaderListener();
       await refreshAllCosmetic();
       await syncScriptlets();
     });
@@ -824,6 +825,19 @@
     }
   }
 
+  let removeHeaderListenerRegistered = false;
+
+  function ensureRemoveHeaderListener() {
+    if (removeHeaderListenerRegistered) return;
+    if (!(engine.capabilities & FilterEngine.CAP.REMOVEHEADER)) return;
+    browser.webRequest.onBeforeSendHeaders.addListener(
+      onBeforeSendHeaders,
+      { urls: ['<all_urls>'] },
+      ['blocking', 'requestHeaders']
+    );
+    removeHeaderListenerRegistered = true;
+  }
+
   let resolveReady;
   const readyPromise = new Promise(resolve => { resolveReady = resolve; });
 
@@ -859,13 +873,7 @@
         );
       }
 
-      if (cap & FilterEngine.CAP.REMOVEHEADER) {
-        browser.webRequest.onBeforeSendHeaders.addListener(
-          onBeforeSendHeaders,
-          { urls: ['<all_urls>'] },
-          ['blocking', 'requestHeaders']
-        );
-      }
+      ensureRemoveHeaderListener();
 
       [browser.webRequest.onCompleted,
         browser.webRequest.onErrorOccurred,
