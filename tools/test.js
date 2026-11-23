@@ -2045,6 +2045,31 @@ async function testPhase1BBadfilter() {
   assert.strictEqual(e3.matchRequest('https://ads.example/a.js', 'script', 'https://site.test/').blocked, false, 'compiled badfilter result');
 }
 
+async function testPhase1CRemoveModifiers() {
+  const e = new FilterEngine();
+  e.load([
+    '||track.example^$removeparam=utm_source',
+    '||track.example^$removeparam=/^utm_/',
+    '@@||track.example^$removeparam=utm_source',
+    '||api.example^$removeheader=request:cookie',
+    '||bad.example^$removeheader=bad header',
+    '||bad2.example^$removeparam=/(/'
+  ].join('\n'));
+
+  assert.ok(e.getCapabilities() & FilterEngine.CAP.REMOVEPARAM, 'removeparam capability');
+  assert.ok(e.getCapabilities() & FilterEngine.CAP.REMOVEHEADER, 'removeheader capability');
+  // Runtime mutation is not wired yet: rules are parsed/indexed safely, not applied.
+  assert.strictEqual(e.matchRequest('https://track.example/pixel?utm_source=x', 'image', 'https://site.test/').blocked, false, 'removeparam does not block');
+  assert.ok(e.getDiagnostics().some(d => /invalid removeheader/.test(d.reason)), 'invalid removeheader diagnostic');
+  assert.ok(e.getDiagnostics().some(d => /invalid removeparam/.test(d.reason)), 'invalid removeparam diagnostic');
+
+  const blob = e.toCompiled();
+  const e2 = new FilterEngine();
+  assert.strictEqual(e2.loadCompiled(blob), true, 'compiled remove modifiers load');
+  assert.ok(e2.getCapabilities() & FilterEngine.CAP.REMOVEPARAM, 'compiled removeparam capability');
+  assert.ok(e2.getCapabilities() & FilterEngine.CAP.REMOVEHEADER, 'compiled removeheader capability');
+}
+
 async function testRemoteLists() {
   assert.strictEqual(RemoteLists.normalizeUrl('javascript:alert(1)'), '',
     'javascript URLs are rejected');
@@ -2190,6 +2215,7 @@ Promise.resolve()
   .then(() => testPhase0Foundation())
   .then(() => testPhase1AAliases())
   .then(() => testPhase1BBadfilter())
+  .then(() => testPhase1CRemoveModifiers())
   .then(() => testCompileCacheAndCompiler())
   .then(() => testIncrementalRemoteCompileSemantics())
   .then(() => testBackgroundLoadFiltersIntegration())

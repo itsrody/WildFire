@@ -200,6 +200,30 @@
           "blocked": true
         }
       ]
+    },
+    {
+      "name": "removeparam/removeheader parsed capability-gated",
+      "rules": [
+        "||track.example^$removeparam=utm_source",
+        "||api.example^$removeheader=request:cookie",
+        "@@||track.example^$removeparam=utm_source"
+      ],
+      "expect": {
+        "capabilities": [
+          "NETWORK",
+          "REMOVEPARAM",
+          "REMOVEHEADER",
+          "EXCEPTION"
+        ]
+      },
+      "matches": [
+        {
+          "url": "https://track.example/pixel?utm_source=x",
+          "type": "image",
+          "documentUrl": "https://site.test/",
+          "blocked": false
+        }
+      ]
     }
   ]
 }
