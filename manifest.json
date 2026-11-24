@@ -26,6 +26,7 @@
 
   "permissions": [
     "alarms",
+    "dns",
     "publicSuffix",
     "webRequest",
     "webRequestBlocking",
@@ -73,6 +74,8 @@
       "lib/wapi/wapi-action.js",
       "lib/wapi/wapi-capabilities.js",
       "lib/wapi/wapi-scripting.js",
+      "lib/wapi/wapi-dns.js",
+      "lib/background/cname.js",
       "lib/background/helpers.js",
       "lib/background/url-skip.js",
       "lib/background/engine-host.js",

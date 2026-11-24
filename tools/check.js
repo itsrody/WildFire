@@ -41,9 +41,11 @@ const WAPI_FILES = [
   'lib/wapi/wapi-webrequest.js',
   'lib/wapi/wapi-action.js',
   'lib/wapi/wapi-capabilities.js',
-  'lib/wapi/wapi-scripting.js'
+  'lib/wapi/wapi-scripting.js',
+  'lib/wapi/wapi-dns.js'
 ];
 const BACKGROUND_CHAIN = [
+  'lib/background/cname.js',
   'lib/background/helpers.js',
   'lib/background/url-skip.js',
   'lib/background/engine-host.js',
@@ -117,7 +119,7 @@ if (!disclosure || !Array.isArray(disclosure.required) ||
     disclosure.required.length !== 1 || disclosure.required[0] !== 'none') {
   errors.push('gecko.data_collection_permissions.required must be ["none"]');
 }
-['alarms', 'publicSuffix', 'webNavigation', 'webRequest', 'webRequestBlocking', '<all_urls>']
+['alarms', 'dns', 'publicSuffix', 'webNavigation', 'webRequest', 'webRequestBlocking', '<all_urls>']
   .forEach(permission => {
     if (!Array.isArray(manifest.permissions) || !manifest.permissions.includes(permission)) {
       errors.push('permissions must include "' + permission + '"');

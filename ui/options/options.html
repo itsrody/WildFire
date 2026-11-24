@@ -76,6 +76,12 @@
   </section>
 
   <section class="card">
+    <h2>CNAME uncloaking</h2>
+    <p class="hint">WildFire asks Firefox DNS for the canonical host of a request and uses cached aliases to match domain rules, <code>$domain=</code>, third-party checks, and site counters. Resolution is local and only the first request to a new alias may pass before its cached name is known.</p>
+    <label class="toggle"><input id="cname-uncloak" type="checkbox"> Uncloak CNAME aliases</label>
+  </section>
+
+  <section class="card">
     <h2>Suggested lists</h2>
     <p class="hint">Shortcuts to well-known community lists. Adding one only registers its URL — nothing is downloaded or enabled until you choose Fetch, then Enable.</p>
     <ul id="suggested-lists" class="sites"></ul>

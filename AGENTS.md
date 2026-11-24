@@ -74,8 +74,10 @@ lib/
     wapi-action.js     native browserAction/badge plumbing
     wapi-capabilities.js readiness/capability surface for native Firefox APIs
     wapi-scripting.js  dynamic content-script registration with atomic replacement
+    wapi-dns.js        native Firefox DNS canonical-name lookups
     wapi-client.js     client-side message API for extension pages and content scripts
   background/          background classic-script chain, load in order:
+    cname.js           bounded canonical-host cache and alias/canonical host sets
     helpers.js         counters/badge, snapshots, diagnostics and host helpers
     url-skip.js        local scheme bypass policy before engine matching
     engine-host.js     engine lifecycle, compiler/cache, cosmetic and scriptlet sync
@@ -171,10 +173,11 @@ used **only** by `tools/`.
 18. `lib/wapi/wapi-action.js` → `window.WildFireWapiAction` (aliased as `window.wapiAction`)
 19. `lib/wapi/wapi-capabilities.js` → `window.WildFireWapiCapabilities` (aliased as `window.wapiCapabilities`)
 20. `lib/wapi/wapi-scripting.js` → `window.WildFireWapiScripting` (aliased as `window.wapiScripting`)
-21. `lib/background/` chain, in order: `helpers.js`, `url-skip.js`,
+21. `lib/wapi/wapi-dns.js` → `window.WildFireWapiDns` (aliased as `window.wapiDns`)
+22. `lib/background/` chain, in order: `cname.js`, `helpers.js`, `url-skip.js`,
     `engine-host.js`, `logger.js`, `requests.js`, `messages.js`,
     `background.js` → `window.WildFireBackground`
-22. `background.js` → calls `WildFireBackground.create(...).start()`
+23. `background.js` → calls `WildFireBackground.create(...).start()`
 
 `wapi.js` is WildFire's Firefox-native API backbone: named idempotent listener
 registration, one prefix-filtered message listener, and thin promise wrappers for
@@ -190,11 +193,12 @@ listener, stream-filter and header-listener plumbing; all blocking, rewrite,
 CSP and remove-header policy stays in `lib/background/requests.js`.
 `wapi-action.js` wraps native badge calls while `helpers.js` owns counter
 formatting and tooltip policy. `wapi-capabilities.js` is the single readiness
-surface for `publicSuffix`, `alarms`, `contentScripts`, storage and the optional
-native bridge; policy that depends on those capabilities stays in the background
-chain. `wapi-scripting.js` owns named dynamic content-script registrations and
-their atomic replacement: a failed register keeps the previous working
-registration, and lifecycle cleanup goes through Firefox's registration handle.
+surface for `publicSuffix`, DNS, `alarms`, `contentScripts`, storage and the
+optional native bridge; policy that depends on those capabilities stays in the
+background chain. `wapi-scripting.js` owns named dynamic content-script
+registrations and their atomic replacement: a failed register keeps the previous
+working registration, and lifecycle cleanup goes through Firefox's registration
+handle.
 The background chain owns these modules; do not add a Chromium shim or
 callback bridge there.
 
@@ -238,7 +242,11 @@ graph without a deliberate redesign.
 - Skip if the tab's top-level host is in `state.disabledSites` (exact or
   subdomain), including requests from embedded frames.
 - Map `details.type` through `mapResourceType`, then call
-  `engine.matchRequest(url, type, documentUrl)`.
+  `engine.matchRequest(url, type, documentUrl, matchHosts)`. `matchHosts` carries
+  the request and document hosts plus any cached canonical CNAME targets, so
+  alias hosts match `||host^`, `$domain=`, third-party, CSP, header, rewrite and
+  hide rules while the original request URL stays intact for redirects and the
+  Inspector.
 - On a block: increment `state.blocked` and `state.blockedBySite[site]` (keyed by
   the tab's top-level registrable domain, not an embedded frame), refresh that
   tab's badge, schedule a debounced stats save (1.5 s), return `{cancel:true}` —
@@ -266,6 +274,19 @@ known. The blocked tab id stays marked until that request arrives (or a bounded
 cleanup timer fires), and a separate counted flag ensures the block is charged
 exactly once even if `tabs.remove()` loses the race.
 
+CNAME uncloaking is a local, cache-backed extension of that synchronous path.
+`lib/wapi/wapi-dns.js` is the only caller of Firefox
+`browser.dns.resolve(host, ['canonical_name'])`; it normalizes hosts, contains
+errors and never executes filter text. `lib/background/cname.js` keeps a bounded
+in-memory map of alias → canonical names with positive and negative TTLs. A
+request can only consume canonical names already in that map: the blocking
+listener starts the async lookup but never awaits it, so the first request to a
+new alias may pass. Resolutions feed host-index lookups, `$domain=`, third-party
+scope, header/CSP/rewrite matching, cosmetic scoping and `siteKey()` counters.
+Only alias and canonical host sets cross the API boundary; no DNS results are
+persisted or reported, and `data_collection_permissions.required` stays
+`["none"]`.
+
 ### Engine shape
 
 `FilterEngine.load(text)` resets and rebuilds three request-rule realms —
@@ -273,7 +294,8 @@ exactly once even if `tabs.remove()` loses the race.
 indexes, plus cosmetic and scriptlet indexes:
 
 - `hostRules: Map<host, rule[]>` for `||host^` rules, keyed by the pattern's
-  leading host (looked up against the request hostname and all its parents).
+  leading host (looked up against every request/document host and all their
+  parents, including cached CNAME canonical names).
   `cspHostRules` and `hideHostRules` mirror it for the other realms, so hide
   exceptions can never suppress requests and CSP exceptions can never suppress
   blockers.
@@ -433,14 +455,17 @@ Filter text is never executed.
 ### State and messages
 
 Storage key `wildfire.state.v1` holds `{enabled, blocked, blockedBySite,
-customFilters, disabledSites, siteRules, blockCspReports, cspReportAllow}`.
+customFilters, disabledSites, siteRules, blockCspReports, cspReportAllow,
+cnameUncloak}`.
 `blocked` is the lifetime total shown in Options;
 `blockedBySite` maps registrable domains to per-site counters shown by the
 toolbar badge and popup. The badge is set per tab and refreshed on activation
 and navigation, so subdomains share one site count while each tab shows its own
 site. `persist(patch)` merges into the in-memory copy and writes a
 **full snapshot** — do not write partial objects directly, or parallel message
-handlers will clobber unrelated fields.
+handlers will clobber unrelated fields. `cnameUncloak` is default-on; turning it
+off stops new DNS lookups and ignores cached canonical names immediately, while
+the bounded cache itself stays purely in memory.
 
 `siteRules` maps registrable domains to validated per-resource-type `allow` or
 `block` actions. Dynamic rules are set from the popup, override static filter
@@ -464,6 +489,7 @@ Background listens for `wildfire:*` messages:
 | `validate-filters` | parse custom filter text with a temporary engine and return line-numbered rejections; no state change |
 | `set-csp-report-blocking` | enable or disable default-on CSP report blocking |
 | `set-csp-report-allow` | replace the allowlist of report endpoint hosts |
+| `set-cname-uncloak` | enable or disable cache-backed CNAME uncloaking |
 | `set-site-rule` | set/clear/flip one `resourceType` rule for a site |
 | `clear-site-rules` | remove every dynamic rule for a site |
 | `reset-stats` | zero the lifetime total and every site counter |
@@ -476,23 +502,23 @@ Background listens for `wildfire:*` messages:
 | `set-list-enabled` | apply or stop a fetched list |
 | `set-list-auto` | opt a fetched, enabled list into daily checks |
 | `cosmetic` | return selectors for a URL |
-| `diagnostics` | toggle/reset in-memory request metrics, ETP observation and CSP report counts |
+| `diagnostics` | toggle/reset in-memory request metrics, ETP observation, CSP report counts and CNAME cache counters |
 | `inspect` | enable/reset/return the bounded local request decision log |
 
 `state`-only fields are not on other responses. The popup keeps the tab info
 it got from `state` and merges it into later responses (`applyResult`); keep
 that behavior when adding popup actions.
 
-`diagnostics` is local-only: metrics and ETP observations live in memory, are
-disabled by default, and are never persisted or reported. WildFire never
-changes Firefox's ETP settings. ETP block errors and `urlClassification` flags
-are observed as hints only; they must never affect `blocked`, `blockedBySite`,
-or filter decisions. `onHeadersReceived` is registered while loaded rules need
-`$csp`, `$rewrite`, or `$removeheader`, and also while CSP report blocking is
-enabled.
+`diagnostics` is local-only: metrics, ETP observations and the CNAME cache
+snapshot live in memory, are disabled by default, and are never persisted or
+reported. WildFire never changes Firefox's ETP settings. ETP block errors and
+`urlClassification` flags are observed as hints only; they must never affect
+`blocked`, `blockedBySite`, or filter decisions. `onHeadersReceived` is
+registered while loaded rules need `$csp`, `$rewrite`, or `$removeheader`, and
+also while CSP report blocking is enabled.
 
 `inspect` is local-only: `lib/background/logger.js` keeps a bounded in-memory
-ring of request, CSP and CSP-report decisions with phase, source, reason,
+ring of request, CSP, CSP-report and CNAME decisions with phase, source, reason,
 document scope, top-level site, request identity and duration. It is disabled by
 default, never persisted, and never sent anywhere; the popup and Inspector use
 `wapi-client` to enable it, refresh it, and clear it. The structured Inspector
@@ -769,7 +795,8 @@ procedural cosmetic selectors (including native-CSS compilation, `:contains()`,
 `:nth-ancestor()`/`:upward()`), opt-in remote lists with a deterministic
 update store and user consent, curated `$csp` response-header filtering on
 Firefox's `onHeadersReceived`, fixed-mapping `$rewrite` response bodies through
-Firefox's `filterResponseData()` stream filter, and a scriptlet alias registry
+Firefox's `filterResponseData()` stream filter, cache-backed CNAME uncloaking
+through Firefox's DNS API, and a scriptlet alias registry
 injected at `document_start` through `wapi-scripting`'s Firefox
 `contentScripts.register()` lifecycle.
 Phase 1A, 1B and 1C are implemented: canonical short aliases, safe needles,

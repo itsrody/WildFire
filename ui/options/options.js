@@ -18,6 +18,7 @@
   const cspReportAllow = document.getElementById('csp-report-allow');
   const cspReportForm = document.getElementById('csp-report-allow-form');
   const cspReportStatus = document.getElementById('csp-report-status');
+  const cnameUncloak = document.getElementById('cname-uncloak');
 
   let state = null;
   let lists = [];
@@ -240,6 +241,10 @@
     cspReportAllow.value = (Array.isArray(state.cspReportAllow) ? state.cspReportAllow : []).join(', ');
   }
 
+  function renderCname() {
+    cnameUncloak.checked = state.cnameUncloak !== false;
+  }
+
   function setCspReportStatus(message) {
     cspReportStatus.textContent = message;
     setTimeout(() => {
@@ -259,6 +264,7 @@
     renderLists();
     renderSuggested();
     renderCspReports();
+    renderCname();
   }
 
   document.getElementById('save').addEventListener('click', saveFilters);
@@ -275,6 +281,11 @@
   blockCspReports.addEventListener('change', async () => {
     state = await client.send('set-csp-report-blocking', { value: blockCspReports.checked });
     renderCspReports();
+  });
+
+  cnameUncloak.addEventListener('change', async () => {
+    state = await client.send('set-cname-uncloak', { value: cnameUncloak.checked });
+    renderCname();
   });
 
   cspReportForm.addEventListener('submit', async event => {

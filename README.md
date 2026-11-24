@@ -18,8 +18,8 @@ WebExtensions APIs and a small filter engine.
 ```
 manifest.json          Firefox MV2 manifest, gecko floor 153.0
 background.js          thin bootstrap for the background controller
-lib/wapi/              Firefox-native API backbone: wapi, contexts, background, router, tabs, webrequest, action, capabilities, client
-lib/background/        background chain: helpers, engine lifecycle, logger, requests, messages, controller
+lib/wapi/              Firefox-native API backbone: wapi, contexts, background, router, tabs, webrequest, action, capabilities, dns, client
+lib/background/        background chain: CNAME cache, helpers, engine lifecycle, logger, requests, messages, controller
 lib/engine/            filter engine module chain (filter/), procedural DOM evaluator
 lib/compile/           filter compiler, worker, compiled-filter cache
 lib/resources/         curated scriptlet / CSP / redirect / rewrite registries
@@ -165,6 +165,24 @@ rewrite already started before the rule changed still gets its response headers
 normalized so the substituted body stays valid. A `block` rule cancels the
 request, counts once, and appears in the local Inspector as a site-rule decision.
 
+## Uncloak CNAME aliases
+
+Options → **CNAME uncloaking** is on by default. WildFire asks Firefox DNS for
+the canonical name of a request host and keeps the result in a bounded,
+in-memory cache with positive and negative TTLs. Cached aliases and canonical
+names both participate in `||host^`, `$domain=`, third-party, CSP, header,
+rewrite and cosmetic matching, and site counters use the canonical registrable
+domain. The request URL is never changed, so redirects and the Inspector still
+show what the page actually requested.
+
+DNS resolution is asynchronous and the blocking listener stays synchronous: the
+first request to a new alias may pass, and later requests use the cached name.
+Lookups are local Firefox DNS queries, bounded and never persisted; WildFire
+does not collect or send DNS data, and `data_collection_permissions` remains
+`["none"]`. Turning the toggle off stops new lookups and ignores cached
+canonical names immediately. The Inspector can record `cname` decisions, and
+local diagnostics report cache hits, misses and resolved aliases.
+
 ## Curated CSP rules
 
 `$csp=alias` adds an extra enforcing `Content-Security-Policy` header to a
@@ -201,7 +219,8 @@ WildFire does not change Firefox's ETP settings or native CSP preferences.
 The popup's **Open Inspector** button opens the standalone WildFire Inspector
 window; **Recording: off/on** toggles local recording without leaving the popup.
 The window shows bounded, in-memory entries for blocked requests, exceptions,
-redirects, rewrites, header changes, CSP headers, and CSP-report cancellations.
+redirects, rewrites, header changes, CSP headers, CSP-report cancellations, and
+resolved CNAME aliases.
 Each row shows the time, decision, phase, request host, resource type, matching
 WildFire rule, reason/detail, and duration. The log can be filtered by decision,
 phase, type, site and free text, limited to rows with a rule, frozen for review
@@ -352,8 +371,9 @@ This is deliberately a *minimal* engine, not a full uBO port:
   named `wildfire:*` handlers instead of a monolithic switch. `wapi-tabs` owns
   native tab/navigation events and feeds PageStore. `wapi-webrequest` owns native
   request, stream-filter and header-listener plumbing. `wapi-action` wraps native
-  badge calls, `wapi-capabilities` reports native API readiness, and
-  `wapi-scripting` owns dynamic content-script registrations with atomic swaps.
+  badge calls, `wapi-capabilities` reports native API readiness, `wapi-dns` wraps
+  Firefox DNS canonical-name lookups, and `wapi-scripting` owns dynamic
+  content-script registrations with atomic swaps.
   `wapi-client` gives popup,
   options and content scripts one prefix-filtered message API with native port
   handles and a wrapped `tabs.query()` instead of scattered Firefox API calls.
@@ -411,7 +431,8 @@ This is deliberately a *minimal* engine, not a full uBO port:
 ## Message API (internal)
 
 Background listens for `wildfire:*` messages: `state`, `toggle`, `toggle-site`,
-`set-filters`, `set-csp-report-blocking`, `set-csp-report-allow`, `reset-stats`,
+`set-filters`, `set-csp-report-blocking`, `set-csp-report-allow`,
+`set-cname-uncloak`, `reset-stats`,
 `reload`, `list-state`, `suggested-lists`, `add-list`, `remove-list`,
 `update-list`, `set-list-enabled`, `set-list-auto`, `cosmetic`, `diagnostics`, and
 `inspect`. `diagnostics` accepts an optional boolean `value` to enable/disable

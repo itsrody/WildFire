@@ -54,9 +54,11 @@ const WAPI_FILES = [
   'lib/wapi/wapi-webrequest.js',
   'lib/wapi/wapi-action.js',
   'lib/wapi/wapi-capabilities.js',
-  'lib/wapi/wapi-scripting.js'
+  'lib/wapi/wapi-scripting.js',
+  'lib/wapi/wapi-dns.js'
 ];
 const BACKGROUND_FILES = [
+  'lib/background/cname.js',
   'lib/background/helpers.js',
   'lib/background/url-skip.js',
   'lib/background/engine-host.js',
@@ -111,7 +113,7 @@ const { FilterEngine, mapResourceType, WildFirePageStore, RedirectResources, Wil
   WildFireWapiBackground, wapiBackground, WildFireWapiRouter, wapiRouter,
   WildFireWapiTabs, wapiTabs, WildFireWapiWebRequest, wapiWebRequest,
   WildFireWapiAction, wapiAction, WildFireWapiCapabilities, wapiCapabilities,
-  WildFireWapiScripting, wapiScripting } = context;
+  WildFireWapiScripting, wapiScripting, WildFireWapiDns, wapiDns } = context;
 
 const engine = new FilterEngine();
 engine.load([
@@ -193,6 +195,37 @@ assert.strictEqual(invalidDomainEngine.rejectedRegex.length, 1,
 assert.strictEqual(invalidDomainEngine.matchRequest(
   'https://invalid.example/a.js', 'script', 'https://page.com/').blocked, false,
   'a rejected domain rule never blocks');
+
+// CNAME uncloaking supplies alias and canonical hosts to the same match path.
+const cnameEngine = new FilterEngine();
+cnameEngine.load([
+  '||canon.example^$script',
+  '||canondoc.example^$domain=canon.example',
+  '||party.example^$third-party',
+  '||first.example^$~third-party'
+].join('\n'));
+const cnameMatch = (url, documentUrl, hosts) =>
+  cnameEngine.matchRequest(url, mapResourceType('script'), documentUrl, hosts);
+assert.strictEqual(cnameMatch('https://alias.example/ad.js', 'https://site.test/', {
+  target: ['alias.example', 'canon.example'], document: ['site.test']
+}).blocked, true, 'a cached canonical host matches a domain-anchored rule');
+assert.strictEqual(cnameMatch('https://alias.example/ad.js', 'https://site.test/').blocked, false,
+  'the alias alone does not match a canonical-host rule');
+assert.strictEqual(cnameMatch('https://canondoc.example/ad.js', 'https://aliasdoc.example/', {
+  target: ['canondoc.example'], document: ['aliasdoc.example', 'canon.example']
+}).blocked, true, 'a cached canonical document host matches $domain=');
+assert.strictEqual(cnameMatch('https://party.example/ad.js', 'https://canon.example/', {
+  target: ['party.example'], document: ['canon.example', 'canonalias.example']
+}).blocked, true, 'canonical hosts participate in third-party checks');
+assert.strictEqual(cnameMatch('https://first.example/ad.js', 'https://first.example/', {
+  target: ['first.example', 'alias.other.test'], document: ['first.example']
+}).blocked, true, 'one first-party host is enough for $~third-party');
+
+const cnameCosmeticEngine = new FilterEngine();
+cnameCosmeticEngine.load('canon.example##.canonical-ad');
+assert.deepStrictEqual(Array.from(cnameCosmeticEngine.getCosmetic('alias.example', {
+  hosts: ['canon.example']
+})), ['.canonical-ad'], 'canonical hosts also scope cosmetic rules');
 
 assert.deepStrictEqual(Array.from(engine.getCosmetic('example.com')), ['.shared'],
   'cosmetic rules plus generic, minus exception');
@@ -2691,6 +2724,7 @@ async function testRemoveRuntimeIntegration() {
     tabs:{query:async()=>[],onUpdated:{addListener:()=>{}},onRemoved:{addListener:()=>{}},sendMessage:async()=>{},remove:async()=>{}},
     alarms:{onAlarm:{addListener:()=>{}},clear:async()=>{},get:async()=>null,create:async()=>{}},
     contentScripts:{register:async()=>({unregister:async()=>{}})},
+    dns:{resolve:async(host,flags)=>({canonicalName:host==='cname-alias.example'?'cname-canon.example.':host,flags})},
     publicSuffix:{getDomain:host=>host.split('.').slice(-2).join('.')}
   };
   ['lib/state/store.js',...ENGINE_FILES,'lib/state/page-store.js','lib/resources/redirect-resources.js','lib/state/remote-lists.js', 'lib/state/suggested-lists.js','lib/resources/csp-resources.js',...SCRIPTLET_FILES,'lib/resources/rewrite-resources.js','lib/compile/compile-cache.js','lib/compile/compiler.js',...WAPI_FILES, ...BACKGROUND_FILES]
@@ -2843,6 +2877,26 @@ async function testRemoveRuntimeIntegration() {
     'a removeparam regex ending in $ parses and matches');
   assert.strictEqual(rpRequest('empty.example', 'utm_source=x'), undefined,
     'a removeparam regex ending in $ does not overmatch');
+
+  // CNAME uncloaking is cache-backed: the first async lookup cannot block the
+  // synchronous listener, but later requests match the canonical host.
+  api.logger.setEnabled(true);
+  api.setState({ enabled: true, customFilters: '||cname-canon.example^', disabledSites: [], cnameUncloak: true });
+  await api.loadFilters(true); await new Promise(r=>setTimeout(r,30));
+  const cnameRequest = () => apiHooks.onBeforeRequest({
+    url: 'https://cname-alias.example/ad.js', type: 'script',
+    tabId: 3, frameId: 0, documentUrl: 'https://site.test/'
+  });
+  assert.strictEqual(cnameRequest(), undefined,
+    'the first CNAME request passes until Firefox DNS resolves the alias');
+  await new Promise(r=>setImmediate(r));
+  const cachedCname = cnameRequest();
+  assert.ok(cachedCname && cachedCname.cancel,
+    'a cached canonical host matches a domain-anchored rule');
+  assert.ok(api.logger.snapshot().entries.some(entry => entry.phase === 'cname' &&
+    entry.detail.includes('cname-canon.example')), 'the Inspector records canonical names');
+  assert.ok(api.cname.snapshot().aliases >= 1, 'local diagnostics count resolved aliases');
+  api.logger.setEnabled(false);
 }
 
 async function testIncrementalRemoteCompileSemantics() {
@@ -5407,6 +5461,7 @@ async function testWapiCapabilities() {
       create: async () => {}
     },
     contentScripts: { register: async () => ({ unregister: async () => {} }) },
+    dns: { resolve: async () => ({ canonicalName: '' }) },
     storage: { local: { get: async () => ({}), set: async () => {} } },
     webRequest: { filterResponseData: () => ({}) },
     wildfireNative: nativeBridge
@@ -5423,6 +5478,7 @@ async function testWapiCapabilities() {
   assert.strictEqual(JSON.stringify(caps.snapshot()), JSON.stringify({
     runtime: true,
     publicSuffix: true,
+    dns: true,
     alarms: true,
     contentScripts: true,
     filterResponseData: true,
@@ -5455,6 +5511,78 @@ async function testWapiCapabilities() {
   const invalidBridge = WildFireWapiCapabilities.create({ browserApi: { wildfireNative: {} } });
   assert.strictEqual(invalidBridge.has('nativeBridge'), false,
     'a bridge without setPayload is not a capability');
+}
+
+async function testCnameUncloaking() {
+  assert.strictEqual(WildFireWapiDns, context.WildFireWapiDns,
+    'wapi-dns is exposed as a canonical backbone module');
+  const lookups = [];
+  const dns = WildFireWapiDns.create({
+    browserApi: {
+      dns: {
+        async resolve(host, flags) {
+          lookups.push([host, flags.slice()]);
+          if (host === 'alias.example') return { canonicalName: 'canon.example.' };
+          if (host === 'broken.example') throw new Error('dns failed');
+          return { canonicalName: host };
+        }
+      }
+    }
+  });
+  assert.strictEqual(dns.supported, true, 'wapi-dns detects Firefox dns.resolve');
+  assert.strictEqual(JSON.stringify(dns.flags), JSON.stringify(['canonical_name']));
+  assert.strictEqual((await dns.resolve('ALIAS.example.')).canonical, 'canon.example',
+    'wapi-dns normalizes hosts and canonical names');
+  assert.strictEqual((await dns.resolve('127.0.0.1')).canonical, '',
+    'literal IP addresses are not resolved as aliases');
+  assert.strictEqual((await dns.resolve('broken.example')).error, 'dns failed',
+    'DNS failures are contained in the native boundary');
+  assert.strictEqual(WildFireWapiDns.create({ browserApi: {} }).supported, false,
+    'DNS is optional when Firefox does not expose the API');
+
+  let nowMs = 1000;
+  const decisions = [];
+  const resolverState = { cnameUncloak: true };
+  const resolver = context.WildFireBackgroundCore.createCnameResolver({
+    wapiDns: dns,
+    state: resolverState,
+    now: () => nowMs,
+    recordDecision: entry => decisions.push(entry),
+    safeHost: url => new URL(url).hostname,
+    siteKey: host => host
+  });
+  assert.strictEqual(resolver.canonicalFor('alias.example'), '',
+    'the first lookup cannot block the synchronous request path');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(resolver.canonicalFor('alias.example'), 'canon.example',
+    'the canonical host is served from the local cache after resolution');
+  assert.strictEqual(JSON.stringify(resolver.hostsFor('alias.example')),
+    JSON.stringify(['alias.example', 'canon.example']),
+    'requests match both alias and canonical hosts');
+  assert.ok(decisions.some(entry => entry.phase === 'cname' &&
+    entry.detail === 'alias.example -> canon.example'), 'canonical names reach local inspection');
+
+  resolver.canonicalFor('missing.example');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(resolver.canonicalFor('missing.example'), '',
+    'negative entries are cached without an alias');
+  assert.ok(resolver.snapshot().negatives >= 1, 'negative results are counted locally');
+
+  const beforeExpiry = lookups.length;
+  nowMs += 61000;
+  assert.strictEqual(resolver.canonicalFor('alias.example'), '',
+    'an expired alias no longer serves its cached canonical host');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(lookups.length, beforeExpiry + 1,
+    'an expired alias is resolved again');
+  assert.strictEqual(resolver.canonicalFor('alias.example'), 'canon.example',
+    'the refreshed result stays in the bounded local cache');
+
+  resolverState.cnameUncloak = false;
+  const beforeDisabled = lookups.length;
+  resolver.canonicalFor('disabled.example');
+  assert.strictEqual(lookups.length, beforeDisabled,
+    'a disabled resolver does not query Firefox DNS');
 }
 
 async function testWapiContexts() {
@@ -5621,7 +5749,7 @@ async function testBackgroundControllerRobustness() {
     const actions = healthy.debug().wapiRouter.actions();
     assert.strictEqual(actions.join(','), [
       'state', 'toggle', 'toggle-site', 'set-filters', 'validate-filters',
-      'set-csp-report-blocking', 'set-csp-report-allow', 'set-site-rule', 'clear-site-rules',
+      'set-csp-report-blocking', 'set-csp-report-allow', 'set-cname-uncloak', 'set-site-rule', 'clear-site-rules',
       'reset-stats',
       'reload', 'suggested-lists', 'list-state', 'add-list', 'remove-list',
       'update-list', 'set-list-enabled', 'set-list-auto', 'cosmetic',
@@ -6054,6 +6182,7 @@ Promise.resolve()
   .then(() => testWapiWebRequest())
   .then(() => testWapiAction())
   .then(() => testWapiCapabilities())
+  .then(() => testCnameUncloaking())
   .then(() => testWapiScripting())
   .then(() => testPreventFetchResponseConfig())
   .then(() => testBackgroundLogger())
