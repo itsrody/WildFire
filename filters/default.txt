@@ -1,3 +1,5 @@
+! Title: WildFire default filters
+! Description: Starter rules bundled with WildFire.
 ! WildFire default filter list
 ! ---------------------------
 ! Syntax supported by this build:

@@ -194,29 +194,37 @@
       item.className = 'list-item';
       const row = document.createElement('div');
       row.className = 'list-row';
+      const metadata = entry.metadata && typeof entry.metadata === 'object' ? entry.metadata : {};
       const label = document.createElement('span');
       label.className = 'list-url';
-      label.textContent = entry.url;
+      label.textContent = entry.builtin
+        ? (metadata.title || 'WildFire default filters') + ' (bundled)'
+        : (metadata.title || entry.url);
       const meta = document.createElement('span');
       meta.className = 'list-meta';
       const when = entry.checkedAt || entry.updatedAt;
-      const status = !entry.text ? 'Not fetched' : (entry.enabled ? 'Active' : 'Fetched');
+      const status = !entry.text ? 'Not fetched'
+        : (entry.enabled ? (entry.builtin ? 'Active (bundled)' : 'Active') : 'Disabled');
       const time = when ? new Date(when).toLocaleString() : 'never';
       const hash = entry.hash ? ' · ' + String(entry.hash).slice(0, 8) : '';
       const err = entry.lastError ? ' · Error: ' + entry.lastError : '';
-      meta.textContent = status + ' · ' + time + hash + err;
+      const details = [metadata.version, metadata.description, metadata.expires]
+        .filter(Boolean).join(' · ');
+      meta.textContent = status + ' · ' + time + hash + err + (details ? ' · ' + details : '');
       row.append(label, meta);
 
       const actions = document.createElement('div');
       actions.className = 'list-actions';
-      actions.append(
-        actionButton(entry.text ? 'Update' : 'Fetch', () => listAction('update-list', entry.url)),
-        actionButton(entry.enabled ? 'Disable' : 'Enable',
-          () => listAction('set-list-enabled', entry.url, !entry.enabled)),
-        actionButton(entry.autoUpdate ? 'Auto: on' : 'Auto: off',
-          () => listAction('set-list-auto', entry.url, !entry.autoUpdate)),
-        actionButton('Remove', () => listAction('remove-list', entry.url))
-      );
+      actions.append(actionButton(entry.enabled ? 'Disable' : 'Enable',
+        () => listAction('set-list-enabled', entry.url, !entry.enabled)));
+      if (!entry.builtin) {
+        actions.append(
+          actionButton(entry.text ? 'Update' : 'Fetch', () => listAction('update-list', entry.url)),
+          actionButton(entry.autoUpdate ? 'Auto: on' : 'Auto: off',
+            () => listAction('set-list-auto', entry.url, !entry.autoUpdate)),
+          actionButton('Remove', () => listAction('remove-list', entry.url))
+        );
+      }
       item.append(row, actions);
       listsList.appendChild(item);
     });

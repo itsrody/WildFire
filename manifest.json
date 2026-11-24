@@ -52,6 +52,7 @@
       "lib/engine/filter/engine-cosmetic.js",
       "lib/state/page-store.js",
       "lib/resources/redirect-resources.js",
+      "lib/state/bundled-lists.js",
       "lib/state/remote-lists.js",
       "lib/state/suggested-lists.js",
       "lib/resources/csp-resources.js",

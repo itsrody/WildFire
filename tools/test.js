@@ -89,6 +89,9 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/resources/redirect-resource
   filename: 'redirect-resources.js'
 });
 loadFiles(context, PROCEDURAL_FILES);
+vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/state/bundled-lists.js'), 'utf8'), context, {
+  filename: 'bundled-lists.js'
+});
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/state/remote-lists.js'), 'utf8'), context, {
   filename: 'remote-lists.js'
 });
@@ -109,7 +112,7 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/compile/compiler.js'), 'utf
   filename: 'compiler.js'
 });
 loadFiles(context, [...WAPI_FILES, ...BACKGROUND_FILES]);
-const { FilterEngine, mapResourceType, WildFirePageStore, RedirectResources, WildFireProcedural, RemoteLists, WildFireSuggestedLists, CspResources, WildFireScriptlets, RewriteResources, WildFireCompileCache, WildFireCompiler, WildFireStore, WildFireBackground, WildFireWapi, wapi, WildFireWapiContexts, wapiContexts,
+const { FilterEngine, mapResourceType, WildFirePageStore, RedirectResources, WildFireProcedural, RemoteLists, WildFireBundledLists, WildFireSuggestedLists, CspResources, WildFireScriptlets, RewriteResources, WildFireCompileCache, WildFireCompiler, WildFireStore, WildFireBackground, WildFireWapi, wapi, WildFireWapiContexts, wapiContexts,
   WildFireWapiBackground, wapiBackground, WildFireWapiRouter, wapiRouter,
   WildFireWapiTabs, wapiTabs, WildFireWapiWebRequest, wapiWebRequest,
   WildFireWapiAction, wapiAction, WildFireWapiCapabilities, wapiCapabilities,
@@ -2473,7 +2476,7 @@ async function testStaleGenerationWorkerHang() {
     contentScripts: { register: async () => ({ unregister: async () => {} }) },
     publicSuffix: { getDomain: host => host.split('.').slice(-2).join('.') }
   };
-  ['lib/state/store.js', ...ENGINE_FILES, 'lib/state/page-store.js', 'lib/resources/redirect-resources.js', 'lib/state/remote-lists.js', 'lib/state/suggested-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js', 'lib/compile/compile-cache.js', 'lib/compile/compiler.js', ...WAPI_FILES, ...BACKGROUND_FILES]
+  ['lib/state/store.js', ...ENGINE_FILES, 'lib/state/page-store.js', 'lib/resources/redirect-resources.js', 'lib/state/bundled-lists.js', 'lib/state/remote-lists.js', 'lib/state/suggested-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js', 'lib/compile/compile-cache.js', 'lib/compile/compiler.js', ...WAPI_FILES, ...BACKGROUND_FILES]
     .forEach(f => vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f }));
   const bgSource = fs.readFileSync(path.join(ROOT, 'background.js'), 'utf8')
     .replace(/  wildfire\.start\(\);\n\}\)\(\);\s*$/, '  globalThis.__wildfireTest = wildfire.debug(); wildfire.start(); })();');
@@ -2582,7 +2585,9 @@ async function testBackgroundLoadFiltersIntegration() {
     fetch: async url => {
       const u = String(url);
       if (u.includes('default.compiled.json')) return { ok: true, json: async () => fakeCompiled('||bundled.example^') };
-      if (u.includes('default.txt')) return { ok: true, text: async () => '||bundled.example^' };
+      if (u.includes('default.txt')) {
+        return { ok: true, text: async () => '! Title: WildFire starter\n! Expires: 7 days\n||bundled.example^' };
+      }
       return { ok: false, status: 404, json: async () => ({}), text: async () => '' };
     }
   });
@@ -2629,7 +2634,7 @@ async function testBackgroundLoadFiltersIntegration() {
 
   [
     'lib/state/store.js', ...ENGINE_FILES, 'lib/state/page-store.js', 'lib/resources/redirect-resources.js',
-    'lib/state/remote-lists.js', 'lib/state/suggested-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js',
+    'lib/state/bundled-lists.js', 'lib/state/remote-lists.js', 'lib/state/suggested-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js',
     'lib/compile/compile-cache.js', 'lib/compile/compiler.js', ...WAPI_FILES, ...BACKGROUND_FILES
   ].forEach(f => vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f }));
 
@@ -2642,6 +2647,25 @@ async function testBackgroundLoadFiltersIntegration() {
   const api = ctx.__wildfireTest;
   assert.ok(api, 'background test hook exposed');
   api._apiHooks = apiHooks;
+
+  const listed = await api.onMessage({ type: 'wildfire:list-state' }, {});
+  const builtin = listed.lists.find(entry => entry.builtin);
+  assert.ok(builtin, 'the background exposes the preshipped list');
+  assert.strictEqual(builtin.enabled, true, 'the preshipped list is active by default');
+  assert.strictEqual(builtin.autoUpdate, false, 'the preshipped list has no network source');
+  assert.strictEqual(builtin.metadata.title, 'WildFire starter',
+    'preshipped header metadata survives storage');
+  assert.strictEqual(api.engine.matchRequest('https://bundled.example/x.js', 'script',
+    'https://site.test/').blocked, true, 'preshipped rules are loaded once');
+  const disabledBundled = await api.onMessage({
+    type: 'wildfire:set-list-enabled',
+    url: WildFireBundledLists.DEFAULT_URL,
+    value: false
+  }, {});
+  assert.strictEqual(disabledBundled.ok, true, 'the preshipped list can be disabled');
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.strictEqual(api.engine.matchRequest('https://bundled.example/x.js', 'script',
+    'https://site.test/').blocked, false, 'disabling the preshipped list removes its rules');
 
   // Instrument compiler to count actual compiles
   const origCompile = api.compiler.compile.bind(api.compiler);
@@ -2727,7 +2751,7 @@ async function testRemoveRuntimeIntegration() {
     dns:{resolve:async(host,flags)=>({canonicalName:host==='cname-alias.example'?'cname-canon.example.':host,flags})},
     publicSuffix:{getDomain:host=>host.split('.').slice(-2).join('.')}
   };
-  ['lib/state/store.js',...ENGINE_FILES,'lib/state/page-store.js','lib/resources/redirect-resources.js','lib/state/remote-lists.js', 'lib/state/suggested-lists.js','lib/resources/csp-resources.js',...SCRIPTLET_FILES,'lib/resources/rewrite-resources.js','lib/compile/compile-cache.js','lib/compile/compiler.js',...WAPI_FILES, ...BACKGROUND_FILES]
+  ['lib/state/store.js',...ENGINE_FILES,'lib/state/page-store.js','lib/resources/redirect-resources.js','lib/state/bundled-lists.js', 'lib/state/remote-lists.js', 'lib/state/suggested-lists.js','lib/resources/csp-resources.js',...SCRIPTLET_FILES,'lib/resources/rewrite-resources.js','lib/compile/compile-cache.js','lib/compile/compiler.js',...WAPI_FILES, ...BACKGROUND_FILES]
     .forEach(f=>vm.runInContext(fs.readFileSync(path.join(ROOT,f),'utf8'),ctx,{filename:f}));
   const bgSource = fs.readFileSync(path.join(ROOT,'background.js'),'utf8')
     .replace(/  wildfire\.start\(\);\n\}\)\(\);\s*$/, '  globalThis.__wildfireTest = wildfire.debug(); wildfire.start(); })();');
@@ -3079,7 +3103,7 @@ async function testCompileInFlightDedup() {
     publicSuffix: { getDomain: h => h.split('.').slice(-2).join('.') }
   };
   ['lib/state/store.js', ...ENGINE_FILES, 'lib/state/page-store.js', 'lib/resources/redirect-resources.js',
-    'lib/state/remote-lists.js', 'lib/state/suggested-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js',
+    'lib/state/bundled-lists.js', 'lib/state/remote-lists.js', 'lib/state/suggested-lists.js', 'lib/resources/csp-resources.js', ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js',
     'lib/compile/compile-cache.js', 'lib/compile/compiler.js', ...WAPI_FILES, ...BACKGROUND_FILES]
     .forEach(f => vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f }));
 
@@ -3751,7 +3775,7 @@ async function testPerSiteBadgeCounters() {
   };
   loadFiles(ctx, [
     'lib/state/store.js', ...ENGINE_FILES, 'lib/state/page-store.js',
-    'lib/resources/redirect-resources.js', 'lib/state/remote-lists.js',
+    'lib/resources/redirect-resources.js', 'lib/state/bundled-lists.js', 'lib/state/remote-lists.js',
     'lib/state/suggested-lists.js', 'lib/resources/csp-resources.js',
     ...SCRIPTLET_FILES, 'lib/resources/rewrite-resources.js',
     'lib/compile/compile-cache.js', 'lib/compile/compiler.js', ...WAPI_FILES, ...BACKGROUND_FILES
@@ -4166,6 +4190,11 @@ async function testRemoteLists() {
     'list hashing is deterministic');
   assert.notStrictEqual(RemoteLists.hashText('abc'), RemoteLists.hashText('abd'),
     'different text has a different hash');
+  const mismatched = RemoteLists.normalizeSnapshot({
+    lists: [{ url: 'https://stale.example/list', text: 'abc', hash: 'wrong' }]
+  });
+  assert.strictEqual(mismatched.lists[0].hash, RemoteLists.hashText('abc'),
+    'a stored hash is recomputed from the exact text');
 
   function memoryStorage(initial) {
     let data = Object.assign({}, initial);
@@ -4204,6 +4233,127 @@ async function testRemoteLists() {
   assert.strictEqual(registered.ok, true, 'a suggested URL can be registered');
   assert.strictEqual(registered.list.enabled, false, 'suggested lists are registered disabled');
   assert.strictEqual(registered.list.text, '', 'suggested lists are registered unfetched');
+
+  const bundledCatalog = WildFireBundledLists.all();
+  assert.strictEqual(bundledCatalog.length, 1, 'one default list is preshipped');
+  assert.strictEqual(bundledCatalog[0].builtin, true, 'the preshipped list is marked built-in');
+  bundledCatalog[0].url = 'https://changed.example/';
+  assert.strictEqual(WildFireBundledLists.all()[0].url, WildFireBundledLists.DEFAULT_URL,
+    'the bundled catalog cannot be mutated by callers');
+  assert.strictEqual(RemoteLists.normalizeUrl(WildFireBundledLists.DEFAULT_URL), '',
+    'the bundled sentinel is not accepted as an external URL');
+  assert.strictEqual(
+    RemoteLists.normalizeUrl(WildFireBundledLists.DEFAULT_URL, { allowBuiltin: true }),
+    WildFireBundledLists.DEFAULT_URL,
+    'the store recognizes the bundled sentinel');
+
+  const dayMs = 24 * 60 * 60 * 1000;
+  const headerText = '\uFEFF! Title: Example Rules\r\n' +
+    '! Description: Test filters\r\n' +
+    '! Version: 2026.11.24\r\n' +
+    '! Homepage: https://example.com/rules\r\n' +
+    '! License: MIT\r\n' +
+    '! Expires: 2 days\r\n' +
+    '! Last Modified: Tue, 24 Nov 2026 00:00:00 GMT\r\n' +
+    '! Checksum: abc123\r\n' +
+    '! Diff-Path: rules.diff\r\n' +
+    '||tracker.example^\r\n' +
+    '! Title: Not metadata\r\n';
+  const parsedMeta = RemoteLists.parseMetadata(headerText);
+  assert.strictEqual(parsedMeta.title, 'Example Rules', 'Title metadata is parsed once');
+  assert.strictEqual(parsedMeta.description, 'Test filters', 'Description metadata is parsed');
+  assert.strictEqual(parsedMeta.version, '2026.11.24', 'Version metadata is parsed');
+  assert.strictEqual(parsedMeta.homepage, 'https://example.com/rules', 'Homepage metadata is parsed');
+  assert.strictEqual(parsedMeta.license, 'MIT', 'License metadata is parsed');
+  assert.strictEqual(parsedMeta.checksum, 'abc123', 'Checksum metadata is retained, not executed');
+  assert.strictEqual(parsedMeta.diffPath, 'rules.diff', 'Diff-Path metadata is parsed');
+  assert.strictEqual(parsedMeta.lastModified, 'Tue, 24 Nov 2026 00:00:00 GMT',
+    'Last Modified metadata is parsed');
+  assert.strictEqual(parsedMeta.expiresMs, 2 * dayMs, 'Expires metadata is a bounded duration');
+  assert.strictEqual(RemoteLists.parseDuration('4 hours'), 4 * 60 * 60 * 1000,
+    'short expiry durations are understood');
+  assert.strictEqual(RemoteLists.parseDuration('90 days'), 0,
+    'unreasonable expiry durations are ignored');
+
+  let bundledFetches = 0;
+  const preshipped = RemoteLists.create({
+    storage: memoryStorage({ [RemoteLists.KEY]: { lists: [] } }),
+    fetchImpl: async () => { throw new Error('the preshipped list must not be fetched'); },
+    bundledTextLoader: async () => { bundledFetches += 1; return headerText; },
+    now: () => 1000,
+    timeoutMs: 0
+  });
+  const seeded = await preshipped.seedBundled();
+  assert.strictEqual(seeded.ok, true, 'the preshipped list is seeded locally');
+  assert.strictEqual(bundledFetches, 1, 'seeding reads bundled text without a network request');
+  assert.strictEqual(seeded.list.builtin, true, 'the seeded entry is built-in');
+  assert.strictEqual(seeded.list.enabled, true, 'the preshipped list starts enabled');
+  assert.strictEqual(seeded.list.autoUpdate, false, 'the preshipped list never auto-fetches');
+  assert.strictEqual(seeded.list.text, headerText, 'the exact preshipped text is stored');
+  assert.strictEqual(seeded.list.metadata.title, 'Example Rules',
+    'preshipped header metadata is stored');
+  assert.ok((await preshipped.enabledText()).includes('! wildfire bundled: '),
+    'the preshipped entry contributes bundled filter text');
+  assert.strictEqual((await preshipped.update(WildFireBundledLists.DEFAULT_URL)).ok, false,
+    'the preshipped list cannot be fetched');
+  assert.strictEqual((await preshipped.remove(WildFireBundledLists.DEFAULT_URL)).ok, false,
+    'the preshipped list cannot be removed');
+  assert.strictEqual((await preshipped.setAutoUpdate(WildFireBundledLists.DEFAULT_URL, true)).ok, false,
+    'the preshipped list cannot be scheduled for updates');
+  const disabledBundled = await preshipped.setEnabled(WildFireBundledLists.DEFAULT_URL, false);
+  assert.strictEqual(disabledBundled.ok, true, 'the preshipped list can be disabled');
+  assert.strictEqual(await preshipped.enabledText(), '',
+    'a disabled preshipped list contributes no rules');
+
+  let metaClock = 1000;
+  const metaRemote = RemoteLists.create({
+    storage: memoryStorage({ [RemoteLists.KEY]: { lists: [] } }),
+    fetchImpl: async () => remoteResponse('! Title: Remote rules\n! Expires: 2 days\n||ads.example^', {
+      etag: '"m1"',
+      'last-modified': 'Tue, 24 Nov 2026 00:00:00 GMT',
+      'content-type': 'text/plain'
+    }),
+    now: () => metaClock,
+    timeoutMs: 0
+  });
+  await metaRemote.add('https://meta.example/list.txt');
+  const metaFetched = await metaRemote.update('https://meta.example/list.txt');
+  assert.strictEqual(metaFetched.list.metadata.title, 'Remote rules',
+    'remote header metadata is parsed');
+  assert.strictEqual(metaFetched.list.metadata.expiresMs, 2 * dayMs,
+    'remote expiry metadata controls update timing');
+  assert.strictEqual(metaFetched.list.metadata.lastModified, 'Tue, 24 Nov 2026 00:00:00 GMT',
+    'HTTP Last-Modified fills missing header metadata');
+  assert.strictEqual(metaFetched.list.metadata.contentType, 'text/plain',
+    'HTTP Content-Type is retained as metadata');
+  await metaRemote.setEnabled('https://meta.example/list.txt', true);
+  await metaRemote.setAutoUpdate('https://meta.example/list.txt', true);
+  metaClock = 1000 + 2 * dayMs - 1;
+  assert.strictEqual((await metaRemote.updateDue()).results.length, 0,
+    'metadata expiry postpones an early check');
+  metaClock = 1000 + 2 * dayMs;
+  assert.strictEqual((await metaRemote.updateDue()).results.length, 1,
+    'metadata expiry makes the list due');
+
+  const htmlRemote = RemoteLists.create({
+    storage: memoryStorage({ [RemoteLists.KEY]: { lists: [{ url: 'https://html.example/list' }] } }),
+    fetchImpl: async () => remoteResponse('<html>error</html>', { 'content-type': 'text/html' }),
+    now: () => 1000,
+    timeoutMs: 0
+  });
+  const htmlResult = await htmlRemote.update('https://html.example/list');
+  assert.strictEqual(htmlResult.ok, false, 'an HTML error page is rejected');
+  assert.ok(/HTML/.test(htmlResult.error), 'HTML rejection is explained');
+
+  const lengthRemote = RemoteLists.create({
+    storage: memoryStorage({ [RemoteLists.KEY]: { lists: [{ url: 'https://length.example/list' }] } }),
+    fetchImpl: async () => remoteResponse('x', { 'content-length': '9999' }),
+    now: () => 1000,
+    timeoutMs: 0,
+    maxTextLength: 8
+  });
+  const lengthResult = await lengthRemote.update('https://length.example/list');
+  assert.strictEqual(lengthResult.ok, false, 'an oversized Content-Length is rejected before reading');
 
   let clock = 1000;
   let fetchMode = 'ok';
@@ -4289,7 +4439,7 @@ async function testRemoteLists() {
   assert.strictEqual(failed.list.checkedAt, 3000, 'a failed fetch records check time');
 
   fetchMode = 'ok';
-  clock = 4000;
+  clock = dayMs + 4000;
   const due = await remote.updateDue();
   assert.strictEqual(due.ok, true, 'due updates succeed');
   assert.strictEqual(due.changed, false, 'unchanged auto-update does not mark rules changed');

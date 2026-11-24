@@ -23,7 +23,7 @@ lib/background/        background chain: CNAME cache, helpers, engine lifecycle,
 lib/engine/            filter engine module chain (filter/), procedural DOM evaluator
 lib/compile/           filter compiler, worker, compiled-filter cache
 lib/resources/         curated scriptlet / CSP / redirect / rewrite registries
-lib/state/             storage wrapper, remote lists, per-tab/frame page state
+lib/state/             storage wrapper, preshipped + remote lists, per-tab/frame page state
 content/cosmetic.js    injects hidden-element CSS, re-applies on demand
 filters/default.txt    bundled starter rules
 ui/popup/              toolbar popup with inspector buttons
@@ -136,19 +136,29 @@ Cosmetic host lists accept comma-separated domains and `~domain` exclusions;
 both positive and negated hosts use parent-domain scoping. Lines starting with
 `!` are comments.
 
-## Remote filter lists
+## Filter lists
+
+The preshipped `WildFire default filters` list is built in. It is seeded from
+`filters/default.txt`, shown in Options with its header metadata, loaded once,
+and refreshed with each extension update. It has no network source: it is never
+fetched, cannot be updated or removed, and can only be disabled.
 
 Open Options → **Suggested lists** for shortcuts to well-known community lists,
-or **Remote filter lists** to add any `http(s)` URL. Adding a URL — suggested or
-typed — only registers it; use **Fetch** to download it, then **Enable** to apply
-its rules. You can **Update** it later, opt into daily checks with **Auto**, or
+or **Filter lists** to add any `http(s)` URL. Adding a URL — suggested or typed —
+only registers it; use **Fetch** to download it, then **Enable** to apply its
+rules. You can **Update** it later, opt into daily checks with **Auto**, or
 **Remove** it. The suggested catalog is inert: WildFire never adds, fetches, or
-enables a list for you, and it sends no data about you — the manifest still
-declares `data_collection_permissions: ["none"]`.
+enables an external list for you, and it sends no data about you — the manifest
+still declares `data_collection_permissions: ["none"]`.
 
-Fetches bypass the HTTP cache, are size-capped and time-limited, and support
-`ETag`/`Last-Modified` revalidation. A `304` reuses the stored rules. The exact
-text is stored under `wildfire.remote.v1`, so the applied rules are reproducible.
+Fetches bypass the HTTP cache, are size-capped (including `Content-Length`
+preflight), time-limited, and support `ETag`/`Last-Modified` revalidation. A
+`304` reuses the stored rules; an unchanged `200` keeps the original content
+time. WildFire reads standard `! Title`, `! Description`, `! Version`,
+`! Homepage`, `! License`, `! Expires`, `! Checksum`, `! Diff-Path` and
+`! Last Modified` headers, stores them with the exact text, and uses `! Expires`
+to pace opted-in checks. Everything is stored under `wildfire.remote.v1`, so the
+applied rules are reproducible.
 
 ## Dynamic site rules
 
@@ -383,9 +393,10 @@ This is deliberately a *minimal* engine, not a full uBO port:
   registration is idempotent, a failed init settles readiness with a recorded
   error, and scriptlet registrations are swapped atomically so a failed
   replacement keeps the old one.
-- Remote lists are opt-in: no URL is bundled, nothing is fetched until you add a
-  URL and explicitly fetch it, and a fetched list must be enabled before its
-  rules apply. WildFire stores the exact text and a hash of each applied list.
+- The default list is preshipped and local-only; external lists are opt-in:
+  nothing is fetched until you add a URL and explicitly fetch it, and a fetched
+  list must be enabled before its rules apply. WildFire stores the exact text,
+  a hash, and parsed header metadata for each applied list.
 - Firefox ETP is left untouched. WildFire observes ETP block errors and
   classifications only while diagnostics are enabled, and never adds them to
   WildFire's counters. Header listeners are registered when loaded rules need

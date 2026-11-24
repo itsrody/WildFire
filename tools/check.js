@@ -152,6 +152,11 @@ if (manifest.background && manifest.background.scripts) {
   if (backgroundScripts[backgroundScripts.length - 1] !== 'background.js') {
     errors.push('background.js must be the final background script');
   }
+  const bundledIndex = backgroundScripts.indexOf('lib/state/bundled-lists.js');
+  const remoteIndex = backgroundScripts.indexOf('lib/state/remote-lists.js');
+  if (bundledIndex === -1 || remoteIndex === -1 || bundledIndex >= remoteIndex) {
+    errors.push('bundled-lists.js must load before remote-lists.js in manifest');
+  }
   if (!chainAt(backgroundScripts, backgroundScripts.indexOf(ENGINE_CHAIN[0]), ENGINE_CHAIN)) {
     errors.push('filter engine chain out of order in manifest');
   }
@@ -224,6 +229,11 @@ if (!testChain) {
       errors.push('tools/test.js background chain out of order: expected ' + file);
     }
   });
+}
+const testBundledIndex = testSource.indexOf("'lib/state/bundled-lists.js'");
+const testRemoteIndex = testSource.indexOf("'lib/state/remote-lists.js'");
+if (testBundledIndex === -1 || testRemoteIndex === -1 || testBundledIndex >= testRemoteIndex) {
+  errors.push('tools/test.js must load bundled-lists.js before remote-lists.js');
 }
 checkDeclaredChain('tools/test.js', testSource, 'ENGINE_FILES', ENGINE_CHAIN);
 checkDeclaredChain('tools/test.js', testSource, 'PROCEDURAL_FILES', PROCEDURAL_CHAIN);

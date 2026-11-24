@@ -121,7 +121,8 @@ lib/
     rewrite-resources.js   WildFire-owned bodies for $rewrite responses
   state/
     store.js           wapi.storage.local wrapper, key wildfire.state.v1
-    remote-lists.js    opt-in remote list store, key wildfire.remote.v1
+    bundled-lists.js   inert catalog of the preshipped local-only default list
+    remote-lists.js    preshipped + opt-in remote list store, key wildfire.remote.v1
     suggested-lists.js inert catalog of suggested list URLs (Options shortcuts)
     page-store.js      per-tab/frame document, site, popup and page cache state
 content/cosmetic.js    injects hidden-element CSS in every frame
@@ -155,29 +156,30 @@ used **only** by `tools/`.
    `engine-cosmetic.js` → `window.FilterEngine`, `window.mapResourceType`
 3. `lib/state/page-store.js` → `window.WildFirePageStore`
 4. `lib/resources/redirect-resources.js` → `window.RedirectResources`
-5. `lib/state/remote-lists.js` → `window.RemoteLists`
-6. `lib/state/suggested-lists.js` → `window.WildFireSuggestedLists`
-7. `lib/resources/csp-resources.js` → `window.CspResources`
-8. `lib/resources/scriptlets/` chain, in order: `core.js`, `runtime.js`,
+5. `lib/state/bundled-lists.js` → `window.WildFireBundledLists`
+6. `lib/state/remote-lists.js` → `window.RemoteLists`
+7. `lib/state/suggested-lists.js` → `window.WildFireSuggestedLists`
+8. `lib/resources/csp-resources.js` → `window.CspResources`
+9. `lib/resources/scriptlets/` chain, in order: `core.js`, `runtime.js`,
    `transforms.js`, `adguard-helpers.js`, `definitions.js`,
    `adguard-definitions.js`, `api.js` → `window.WildFireScriptlets`
-9. `lib/resources/rewrite-resources.js` → `window.RewriteResources`
-10. `lib/compile/compile-cache.js` → `window.WildFireCompileCache`
-11. `lib/compile/compiler.js` → `window.WildFireCompiler`
-12. `lib/wapi/wapi.js` → `window.WildFireWapi` (aliased as `window.wapi`)
-13. `lib/wapi/wapi-contexts.js` → `window.WildFireWapiContexts` (aliased as `window.wapiContexts`)
-14. `lib/wapi/wapi-background.js` → `window.WildFireWapiBackground` (aliased as `window.wapiBackground`)
-15. `lib/wapi/wapi-router.js` → `window.WildFireWapiRouter` (aliased as `window.wapiRouter`)
-16. `lib/wapi/wapi-tabs.js` → `window.WildFireWapiTabs` (aliased as `window.wapiTabs`)
-17. `lib/wapi/wapi-webrequest.js` → `window.WildFireWapiWebRequest` (aliased as `window.wapiWebRequest`)
-18. `lib/wapi/wapi-action.js` → `window.WildFireWapiAction` (aliased as `window.wapiAction`)
-19. `lib/wapi/wapi-capabilities.js` → `window.WildFireWapiCapabilities` (aliased as `window.wapiCapabilities`)
-20. `lib/wapi/wapi-scripting.js` → `window.WildFireWapiScripting` (aliased as `window.wapiScripting`)
-21. `lib/wapi/wapi-dns.js` → `window.WildFireWapiDns` (aliased as `window.wapiDns`)
-22. `lib/background/` chain, in order: `cname.js`, `helpers.js`, `url-skip.js`,
+10. `lib/resources/rewrite-resources.js` → `window.RewriteResources`
+11. `lib/compile/compile-cache.js` → `window.WildFireCompileCache`
+12. `lib/compile/compiler.js` → `window.WildFireCompiler`
+13. `lib/wapi/wapi.js` → `window.WildFireWapi` (aliased as `window.wapi`)
+14. `lib/wapi/wapi-contexts.js` → `window.WildFireWapiContexts` (aliased as `window.wapiContexts`)
+15. `lib/wapi/wapi-background.js` → `window.WildFireWapiBackground` (aliased as `window.wapiBackground`)
+16. `lib/wapi/wapi-router.js` → `window.WildFireWapiRouter` (aliased as `window.wapiRouter`)
+17. `lib/wapi/wapi-tabs.js` → `window.WildFireWapiTabs` (aliased as `window.wapiTabs`)
+18. `lib/wapi/wapi-webrequest.js` → `window.WildFireWapiWebRequest` (aliased as `window.wapiWebRequest`)
+19. `lib/wapi/wapi-action.js` → `window.WildFireWapiAction` (aliased as `window.wapiAction`)
+20. `lib/wapi/wapi-capabilities.js` → `window.WildFireWapiCapabilities` (aliased as `window.wapiCapabilities`)
+21. `lib/wapi/wapi-scripting.js` → `window.WildFireWapiScripting` (aliased as `window.wapiScripting`)
+22. `lib/wapi/wapi-dns.js` → `window.WildFireWapiDns` (aliased as `window.wapiDns`)
+23. `lib/background/` chain, in order: `cname.js`, `helpers.js`, `url-skip.js`,
     `engine-host.js`, `logger.js`, `requests.js`, `messages.js`,
     `background.js` → `window.WildFireBackground`
-23. `background.js` → calls `WildFireBackground.create(...).start()`
+24. `background.js` → calls `WildFireBackground.create(...).start()`
 
 `wapi.js` is WildFire's Firefox-native API backbone: named idempotent listener
 registration, one prefix-filtered message listener, and thin promise wrappers for
@@ -475,8 +477,11 @@ per-site paused tabs. An `allow` rule also skips `$removeparam`, `$removeheader`
 one filtered request and is recorded as a local Inspector decision. Rules are
 keyed by the tab's top-level site even when the request comes from an embedded
 frame. Storage key `wildfire.remote.v1` holds
-`{lists: [{url, enabled, autoUpdate, etag, lastModified, text, updatedAt, hash}]}`
-and is owned entirely by `lib/state/remote-lists.js`.
+`{lists: [{url, builtin, enabled, autoUpdate, etag, lastModified, text,
+updatedAt, checkedAt, hash, lastError, metadata}]}` and is owned entirely by
+`lib/state/remote-lists.js`. The preshipped `wildfire:bundled/default.txt` entry
+is seeded from `filters/default.txt` with parsed header metadata, starts enabled,
+cannot be fetched or removed, and can only be disabled in Options.
 
 Background listens for `wildfire:*` messages:
 
@@ -530,20 +535,30 @@ continues, and copies a matching rule as WildFire syntax. The blocking listener
 records only when the logger is enabled, and inspection never changes `blocked`,
 `blockedBySite`, or filter decisions.
 
-Remote lists are strictly opt-in. The bundled `lib/state/suggested-lists.js`
-catalog is inert: Options shows its URLs as shortcuts, and clicking one only
-sends `add-list`, which never fetches. A list cannot be enabled until an
-explicit `update-list` has stored text.
-`lib/state/remote-lists.js` fetches with `cache: 'no-store'`, a size cap and an
-`AbortController` timeout; a 304 keeps the stored text but refreshes the check
-time. The exact text and its hash are persisted so the applied rules are
-reproducible. `loadFilters()` composes bundled → custom → enabled remote text,
-and exceptions still win over blockers. Daily checks exist only for lists whose
-owner opted in via `set-list-auto`; the `alarms` permission supports that one
-named alarm. Because nothing is collected or sent about the user and no list is
-fetched before consent, `data_collection_permissions.required` stays `["none"]`;
-the suggested catalog does not change that, since selecting it is a user action
-and fetching still requires a separate explicit step.
+The preshipped default list is remote-list shaped but strictly local.
+`lib/state/bundled-lists.js` is an inert catalog with a `wildfire:bundled/default.txt`
+sentinel; `lib/state/remote-lists.js` seeds that entry from `filters/default.txt`
+at startup, parses `! Title`, `! Description`, `! Version`, `! Homepage`,
+`! License`, `! Expires`, `! Checksum`, `! Diff-Path` and `! Last Modified`
+metadata, stores the exact text and hash, and loads it once before custom and
+external remote rules. The sentinel has no update source: `update-list`,
+`set-list-auto` and `remove-list` reject it, and `set-list-enabled` can only
+disable it. Extension updates refresh the preshipped text while preserving the
+user's enabled choice.
+
+External lists remain opt-in. The bundled `lib/state/suggested-lists.js` catalog
+is inert: Options shows its URLs as shortcuts, and clicking one only sends
+`add-list`, which never fetches. A list cannot be enabled until an explicit
+`update-list` has stored text. Fetches use `cache: 'no-store'`, validator headers,
+a size cap (including `Content-Length` preflight), an `AbortController` timeout,
+final-URL and HTML-error checks, and parsed header metadata. A 304 keeps the
+stored text and metadata but refreshes the check time; an unchanged 200 keeps
+the original content time. Daily checks exist only for enabled, fetched lists
+whose owner opted in via `set-list-auto`, with `! Expires` metadata shortening
+the interval down to one day; the `alarms` permission supports that one named
+alarm. Because nothing is collected or sent about the user and no external list
+is fetched before consent, `data_collection_permissions.required` stays
+`["none"]`.
 
 ---
 
