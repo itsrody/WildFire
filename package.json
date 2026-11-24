@@ -9,6 +9,7 @@
     "test": "node tools/test.js",
     "build": "node tools/build.js",
     "smoke": "node tools/smoke.js",
+    "smoke:rules": "node tools/smoke-rules.js",
     "dev": "web-ext run --source-dir ."
   }
 }

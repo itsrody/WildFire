@@ -30,7 +30,7 @@ ui/popup/              toolbar popup with inspector buttons
 ui/options/            custom filters + paused sites
 ui/inspector/          local-only request decision window with logger-ui renderer
 assets/                generated PNG icons
-tools/                 icon generator, validator, XPI packager
+tools/                 icon generator, validator, tests, XPI packager, Firefox smoke tools
 dist/                  build output (generated)
 ```
 
@@ -45,6 +45,24 @@ npm run dev
 ```
 
 Requires Firefox or Firefox ESR **153 or newer**; older versions will refuse to install.
+
+## Rule-performance smoke
+
+Run every supported rule family against a real Firefox instance:
+
+```sh
+npm run smoke:rules
+# optional: -- --firefox /path/to/firefox --headed --filler 2000 --out report.json
+```
+
+The tool builds a temporary WildFire copy with locally authored benchmark rules,
+loads it through `web-ext`, and reports blocking, redirect, rewrite, CSP,
+parameter/header removal, cosmetic, procedural, and scriptlet outcomes alongside
+engine counts, diagnostic phase timings, and per-request Inspector durations.
+Remote auto-updates are disabled in the smoke copy so measurements are local.
+The smoke copy registers scriptlets in the main world so page-visible defusers
+can be measured; XPath hide state is reported as a diagnostic because Gecko
+evaluates node-context XPath in the content-script world.
 
 ## Counters
 

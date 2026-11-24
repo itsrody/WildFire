@@ -132,7 +132,7 @@ ui/
   options/             custom filters, paused sites, remote lists, stats reset
   inspector/           local-only request decision window (logger-ui.js renderer)
 assets/                generated PNG icons (16/32/48/96/128)
-tools/                 icon generator, validator, tests, XPI packager
+tools/                 icon generator, validator, tests, XPI packager, Firefox smoke tools
 dist/                  generated XPI — ignored, never reviewed or committed
 docs/                  design notes for non-shipped architecture explorations
 browser/               FOSS Firefox native bridge scaffold (not packaged in XPI)
