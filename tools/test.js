@@ -3117,6 +3117,13 @@ async function testCompileCacheAndCompiler() {
   const compiled = { v: FilterEngine.COMPILED_VERSION, cap: 0, n: [], c: { g: [], ge: [], d: [], de: [] }, p: { g: [], ge: [], d: [], de: [] }, s: [], d: [] };
   await cache.set(text, compiled, { source: 'remote', hash: 'h' });
   assert.deepStrictEqual(await cache.get(text), compiled, 'compile cache round-trips compiled data');
+  const textDigest = WildFireCompileCache.hashText(text).split(':')[0];
+  assert.strictEqual(
+    WildFireCompileCache.keyFor(text, FilterEngine.COMPILED_VERSION, textDigest),
+    WildFireCompileCache.keyFor(text, FilterEngine.COMPILED_VERSION),
+    'a supplied text digest reproduces the cache key without rehashing');
+  assert.deepStrictEqual(await cache.get(text, textDigest), compiled,
+    'compile cache accepts a supplied text digest');
 
   // In-memory LRU tier: `set` populates memory synchronously, so a subsequent
   // `get` must be served without any storage.local read.
