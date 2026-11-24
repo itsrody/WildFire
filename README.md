@@ -348,7 +348,7 @@ Implemented uBO-compatible alias families:
 | DOM / style | `remove-attr` (`ra`), `remove-class` (`rc`), `set-attr`, `remove-node-text` (`rmnt`), `replace-node-text` (`rpnt`), `disable-newtab-links`, `href-sanitizer`, `overlay-buster`, `spoof-css`, `prevent-canvas` |
 | Cookies / storage | `set-cookie`, `set-cookie-reload`, `remove-cookie`, `set-local-storage-item`, `set-session-storage-item` |
 | Data | `json-prune`, `evaldata-prune`, `prevent-fetch`, `prevent-xhr` |
-| Response transforms | `json-prune-fetch-response`, `json-prune-xhr-response`, `xml-prune`, `m3u-prune` |
+| Response transforms | `json-prune-fetch-response`, `json-prune-xhr-response`, `xml-prune`, `m3u-prune`, `mpegdash-prune` (`mpeg-dash-prune`) |
 | Object / JSONPath edits | `json-edit`, `json-edit-fetch/xhr-request`, `json-edit-fetch/xhr-response`, `jsonl-edit-fetch/xhr-response`, `edit-outbound-object`, `edit-inbound-object`, `edit-this-object`, `edit-object-on-setter`, `edit-element-object` |
 | Detectors | `nobab`, `nobab2`, `nofab`, `fingerprint2`, `fingerprint3`, `popads` (`popads.net`), `popads-dummy`, `multiup`, `prebid-ads`, `ampproject_v0` |
 
@@ -380,10 +380,11 @@ uses the same needle/token data, inserts the replacement as literal text, and
 skips `script`, `style`, `noscript`, and `template` subtrees so filter text can
 never become executable page code.
 
-The non-trusted uBO general-purpose and defuser catalog is implemented with
+The full non-trusted uBO resource-library alias catalog is implemented with
 original WildFire code, including WildFire-owned bridges for `rpnt`,
 `edit-object-on-setter`, `prevent-clipboard-write`, `prevent-navigation`,
-`popads.net`, and `multiup`. Trusted-only aliases remain rejected because
+`popads.net`, `multiup`, and the `mpegdash-prune` DASH response transform.
+Trusted-only aliases remain rejected because
 WildFire has no source-trust model. Updated scriptlets apply to pages opened
 after the change. A validated, data-only scriptlet snapshot is restored before
 async startup work, so a previously fetched list also applies on the first page

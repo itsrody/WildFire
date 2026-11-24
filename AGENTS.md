@@ -122,6 +122,7 @@ lib/
         prevent-navigation.js   uBO-style navigation bridge
         popads-net.js           dotted `popads.net` alias
         multiup.js              MultiUp detector stub
+        mpegdash-prune.js       DASH manifest pruning
         edit-object-on-setter.js  JSONPath edit on assignment
         ubo-acis.js             AdGuard `ubo-acis.js` bridge
         ubo-aeld.js             AdGuard `ubo-aeld.js` bridge
@@ -177,7 +178,8 @@ used **only** by `tools/`.
    `adguard-definitions.js`, `shims/set-constant-tokens.js`,
    `shims/replace-node-text.js`, `shims/prevent-clipboard-write.js`,
    `shims/prevent-navigation.js`, `shims/popads-net.js`, `shims/multiup.js`,
-   `shims/edit-object-on-setter.js`, `shims/ubo-acis.js`, `shims/ubo-aeld.js`,
+   `shims/mpegdash-prune.js`, `shims/edit-object-on-setter.js`,
+   `shims/ubo-acis.js`, `shims/ubo-aeld.js`,
    `shims/ubo-aopw.js`, `shims/ubo-aost.js`, `api.js` →
    `window.WildFireScriptlets`
 10. `lib/resources/rewrite-resources.js` → `window.RewriteResources`

@@ -42,6 +42,7 @@ const SCRIPTLET_FILES = [
   'lib/resources/scriptlets/shims/prevent-navigation.js',
   'lib/resources/scriptlets/shims/popads-net.js',
   'lib/resources/scriptlets/shims/multiup.js',
+  'lib/resources/scriptlets/shims/mpegdash-prune.js',
   'lib/resources/scriptlets/shims/edit-object-on-setter.js',
   'lib/resources/scriptlets/shims/ubo-acis.js',
   'lib/resources/scriptlets/shims/ubo-aeld.js',
@@ -1773,6 +1774,16 @@ const parenPayload = Array.from(parenEngine.getScriptletPayload(), rule => ({
 assert.deepStrictEqual(parenPayload[0], {
   alias: 'aeld', args: ['load', '(!o)']
 }, 'parenthesized needles survive parsing without becoming nested rules');
+
+const slashNeedleEngine = new FilterEngine(null, null, WildFireScriptlets);
+slashNeedleEngine.load('page.example##+js(mpegdash-prune, Period, /dash)');
+assert.strictEqual(slashNeedleEngine.rejectedScriptlets.length, 0,
+  'bare slash-prefixed uBO needles are plain data, not unterminated regexes');
+assert.deepStrictEqual(Array.from(slashNeedleEngine.getScriptletPayload(), rule =>
+  ({ alias: rule.alias, args: Array.from(rule.args) }))[0], {
+  alias: 'mpegdash-prune', args: ['Period', '/dash']
+}, 'bare slash needles reach the registry unchanged');
+
 assert.strictEqual(WildFireScriptlets.canonical('rpnt'), 'replace-node-text',
   'rpnt canonicalizes to the WildFire replace-node-text shim');
 assert.strictEqual(WildFireScriptlets.canonical('popads.net'), 'popads',
@@ -2262,6 +2273,64 @@ assert.notStrictEqual(WildFireScriptlets.validate('trusted-replace-node-text', [
 assert.strictEqual(WildFireScriptlets.canonical('no-floc'), 'no-floc',
   'the deprecated no-floc alias is still accepted safely');
 
+const uBoAliases = [
+  'abort-current-script', 'acs', 'abort-current-inline-script', 'acis',
+  'abort-on-property-read', 'aopr', 'abort-on-property-write', 'aopw',
+  'abort-on-stack-trace', 'aost', 'addeventlistener-defuser', 'aeld',
+  'prevent-addeventlistener', 'remove-cookie', 'cookie-remover',
+  'call-nothrow', 'disable-newtab-links', 'evaldata-prune', 'json-prune',
+  'json-prune-fetch-response', 'json-prune-xhr-response', 'xml-prune',
+  'm3u-prune', 'mpegdash-prune', 'mpeg-dash-prune', 'noeval',
+  'noeval-silent', 'silent-noeval', 'noeval-if', 'prevent-eval-if',
+  'prevent-fetch', 'no-fetch-if', 'prevent-requestAnimationFrame',
+  'no-requestAnimationFrame-if', 'norafif', 'prevent-setInterval',
+  'no-setInterval-if', 'nosiif', 'setInterval-defuser', 'prevent-setTimeout',
+  'no-setTimeout-if', 'nostif', 'setTimeout-defuser', 'adjust-setInterval',
+  'nano-setInterval-booster', 'nano-sib', 'adjust-setTimeout',
+  'nano-setTimeout-booster', 'nano-stb', 'nowebrtc', 'webrtc-if',
+  'prevent-innerHTML', 'prevent-xhr', 'no-xhr-if', 'set-attr',
+  'remove-attr', 'ra', 'remove-class', 'rc',
+  'replace-node-text', 'rpnt', 'remove-node-text', 'rmnt', 'href-sanitizer',
+  'prevent-refresh', 'refresh-defuser', 'set-constant', 'set',
+  'set-cookie', 'set-cookie-reload', 'set-local-storage-item',
+  'set-session-storage-item', 'spoof-css', 'prevent-canvas',
+  'prevent-dialog', 'close-window', 'window-close-if', 'prevent-window-open',
+  'nowoif', 'no-window-open-if', 'window.open-defuser',
+  'window.name-defuser', 'windowname-defuser', 'overlay-buster',
+  'alert-buster', 'json-edit', 'json-edit-xhr-response',
+  'json-edit-xhr-request', 'json-edit-fetch-response', 'json-edit-fetch-request',
+  'jsonl-edit-fetch-response', 'jsonl-edit-xhr-response', 'edit-outbound-object',
+  'edit-inbound-object', 'edit-this-object', 'edit-object-on-setter',
+  'edit-element-object', 'ampproject_v0', 'fingerprint2', 'fingerprintjs2',
+  'fingerprint3', 'fingerprintjs3', 'nobab', 'nobab2', 'nofab',
+  'popads-dummy', 'popads', 'popads.net', 'prebid-ads', 'multiup', 'no-floc'
+];
+assert.deepStrictEqual(uBoAliases.filter(alias =>
+  WildFireScriptlets.validate(alias, []).startsWith('unknown scriptlet alias')), [],
+  'every non-trusted uBO shim alias resolves to a WildFire implementation');
+
+const trustedAliases = [
+  'trusted-click-element', 'trusted-set-constant', 'trusted-set',
+  'trusted-suppress-native-method', 'trusted-override-element-method',
+  'trusted-prevent-dom-bypass', 'trusted-set-cookie',
+  'trusted-set-cookie-reload', 'trusted-set-local-storage-item',
+  'trusted-set-session-storage-item', 'trusted-create-HTML',
+  'trusted-prevent-xhr', 'trusted-prevent-fetch',
+  'trusted-replace-xhr-response', 'trusted-replace-fetch-response',
+  'trusted-rpfr', 'trusted-replace-argument',
+  'trusted-prune-inbound-object', 'trusted-prune-outbound-object',
+  'trusted-replace-node-text', 'trusted-rpnt', 'trusted-rpot',
+  'trusted-replace-outbound-text', 'trusted-set-attr'
+];
+assert.deepStrictEqual(trustedAliases.filter(alias =>
+  !WildFireScriptlets.validate(alias, []).includes('trusted scriptlets require')), [],
+  'trusted-only uBO aliases stay rejected until WildFire has a source-trust model');
+assert.strictEqual(WildFireScriptlets.validate('mpegdash-prune',
+  ['Period:has(> EventStream)', '/dash']), '',
+  'mpegdash-prune accepts a bounded DASH selector and URL needle');
+assert.notStrictEqual(WildFireScriptlets.validate('mpegdash-prune',
+  ['Period<script>']), '', 'DASH selectors cannot contain filter-supplied code');
+
 const nestedObligatoryContext = dataScriptletContext();
 nestedObligatoryContext.WildFireScriptlets.apply([
   { alias: 'json-prune', args: ['ad', 'ads.url'], domains: [], isException: false }
@@ -2322,6 +2391,20 @@ assert.strictEqual(xmlContext.transformed, '<pruned/>',
   'xml-prune serializes a pruned document with WildFire-owned code');
 assert.strictEqual(xmlContext.xmlRemoved, true,
   'xml-prune removes the selected nodes');
+
+const dashContext = dataScriptletContext();
+dashContext.WildFireScriptlets.apply([
+  { alias: 'mpegdash-prune',
+    args: ['Period:has(> EventStream[schemeIdUri="urn:sva:advertising"])',
+      'page.example'],
+    domains: [], isException: false }
+]);
+new dashContext.Response('<MPD><Period><EventStream/></Period></MPD>')
+  .text().then(text => { dashContext.transformed = text; });
+assert.strictEqual(dashContext.transformed, '<pruned/>',
+  'mpegdash-prune serializes a pruned DASH manifest');
+assert.strictEqual(dashContext.xmlRemoved, true,
+  'mpegdash-prune removes ad periods with WildFire-owned XML code');
 
 const m3uContext = dataScriptletContext();
 m3uContext.WildFireScriptlets.apply([

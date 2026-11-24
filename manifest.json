@@ -68,6 +68,7 @@
       "lib/resources/scriptlets/shims/prevent-navigation.js",
       "lib/resources/scriptlets/shims/popads-net.js",
       "lib/resources/scriptlets/shims/multiup.js",
+      "lib/resources/scriptlets/shims/mpegdash-prune.js",
       "lib/resources/scriptlets/shims/edit-object-on-setter.js",
       "lib/resources/scriptlets/shims/ubo-acis.js",
       "lib/resources/scriptlets/shims/ubo-aeld.js",
