@@ -2809,6 +2809,40 @@ async function testRemoveRuntimeIntegration() {
   assert.ok(hdrImp && !hdrImp.requestHeaders.some(h=>h.name.toLowerCase()==='cookie'), 'important removeheader overrides exception');
   const mix = apiHooks.onBeforeRequest({ url:'https://mix.example/app.js?ad=1', type:'script', tabId:2, frameId:0, documentUrl:'https://site.test/' });
   assert.ok(mix && mix.cancel, 'block takes precedence over removeparam');
+
+  // removeparam value semantics: regexes see name=value, plain names stay
+  // case-sensitive, and authored flags are preserved.
+  api.setState({ enabled: true, customFilters: [
+    '||value.example^$removeparam=/^utm_source=news/',
+    '||exact.example^$removeparam=/^utm_source$/',
+    '||case.example^$removeparam=UTM_Source',
+    '||insensitive.example^$removeparam=/^utm_source=news/i',
+    '||empty.example^$removeparam=/^utm_source=$/'
+  ].join('\n'), disabledSites: [] });
+  await api.loadFilters(true); await new Promise(r=>setTimeout(r,30));
+  const rpRequest = (host, query) => apiHooks.onBeforeRequest({
+    url: 'https://' + host + '/pixel?' + query, type: 'image',
+    tabId: 2, frameId: 0, documentUrl: 'https://site.test/'
+  });
+  const valueYes = rpRequest('value.example', 'utm_source=news&keep=1');
+  assert.ok(valueYes && valueYes.redirectUrl && !valueYes.redirectUrl.includes('utm_source='),
+    'removeparam regex matches a name=value pair');
+  assert.strictEqual(rpRequest('value.example', 'utm_source=other&keep=1'), undefined,
+    'removeparam regex does not match a different value');
+  assert.strictEqual(rpRequest('exact.example', 'utm_source=other'), undefined,
+    'a name-only regex does not match a name=value pair');
+  assert.strictEqual(rpRequest('case.example', 'utm_source=news'), undefined,
+    'plain removeparam names stay case-sensitive');
+  const caseYes = rpRequest('case.example', 'UTM_Source=news&keep=1');
+  assert.ok(caseYes && caseYes.redirectUrl && !caseYes.redirectUrl.includes('UTM_Source='),
+    'plain removeparam removes the authored spelling');
+  const insensitive = rpRequest('insensitive.example', 'UTM_SOURCE=NEWS&keep=1');
+  assert.ok(insensitive && insensitive.redirectUrl, 'explicit removeparam /i matches');
+  const empty = rpRequest('empty.example', 'utm_source=&keep=1');
+  assert.ok(empty && empty.redirectUrl && !empty.redirectUrl.includes('utm_source'),
+    'a removeparam regex ending in $ parses and matches');
+  assert.strictEqual(rpRequest('empty.example', 'utm_source=x'), undefined,
+    'a removeparam regex ending in $ does not overmatch');
 }
 
 async function testIncrementalRemoteCompileSemantics() {
@@ -3490,6 +3524,50 @@ async function testPhase1CRemoveModifiers() {
   assert.strictEqual(e2.loadCompiled(blob), true, 'compiled remove modifiers load');
   assert.ok(e2.getCapabilities() & FilterEngine.CAP.REMOVEPARAM, 'compiled removeparam capability');
   assert.ok(e2.getCapabilities() & FilterEngine.CAP.REMOVEHEADER, 'compiled removeheader capability');
+
+  const delimiterEngine = new FilterEngine();
+  delimiterEngine.load([
+    '||literal.example/cost$50$script',
+    '||escaped.example/cost\\$50$script',
+    '||trailing.example/cost$'
+  ].join('\n'));
+  assert.strictEqual(delimiterEngine.matchRequest(
+    'https://literal.example/cost$50', 'script', 'https://site.test/').blocked,
+  true, 'a literal $ in a URL pattern survives option parsing');
+  assert.strictEqual(delimiterEngine.matchRequest(
+    'https://escaped.example/cost$50', 'script', 'https://site.test/').blocked,
+  true, 'an escaped $ is treated as pattern data');
+  assert.strictEqual(delimiterEngine.matchRequest(
+    'https://trailing.example/cost$', 'script', 'https://site.test/').blocked,
+  true, 'a trailing literal $ is not an empty option delimiter');
+
+  const flagsEngine = new FilterEngine();
+  flagsEngine.load([
+    '||default.example^$removeparam=/^utm_source=news/',
+    '||flags.example^$removeparam=/^utm_source=news/i'
+  ].join('\n'));
+  const defaultFlags = flagsEngine.matchRemoveparam(
+    'https://default.example/?utm_source=news', 'image', 'https://site.test/').params;
+  assert.strictEqual(defaultFlags[0].regex.flags, '', 'removeparam regexes are case sensitive by default');
+  const flagsBlob = flagsEngine.toCompiled();
+  const flagsLoaded = new FilterEngine();
+  assert.strictEqual(flagsLoaded.loadCompiled(flagsBlob), true, 'compiled removeparam flags load');
+  const loadedFlags = flagsLoaded.matchRemoveparam(
+    'https://flags.example/?UTM_SOURCE=NEWS', 'image', 'https://site.test/').params;
+  assert.strictEqual(loadedFlags[0].regex.flags, 'i', 'explicit removeparam flags survive compiled round-trip');
+
+  const delimiterRegexEngine = new FilterEngine();
+  delimiterRegexEngine.load('||anchor.example^$removeparam=/^utm_source$/');
+  assert.strictEqual(delimiterRegexEngine.matchRemoveparam(
+    'https://anchor.example/?utm_source=1', 'image', 'https://site.test/').params.length,
+  1, 'a regex ending in $ does not confuse the option delimiter');
+
+  const commaRegexEngine = new FilterEngine();
+  commaRegexEngine.load('||comma.example^$removeparam=/^a=1,b=2/,image');
+  const commaParams = commaRegexEngine.matchRemoveparam(
+    'https://comma.example/?a=1,b=2', 'image', 'https://site.test/').params;
+  assert.strictEqual(commaParams[0].regex.source, '^a=1,b=2',
+    'a comma inside a removeparam regex does not split options');
 }
 
 async function testPerSiteBadgeCounters() {

@@ -244,9 +244,11 @@ template is executed.
 
 - `$removeparam` / `$removeparam=name` / `$removeparam=/re/`: removes matching
   query params by redirecting the request to a cleaned URL when the request is
-  not blocked/redirected by a normal network rule. Applies to matching requests
-  (including navigations) and respects `@@` exceptions, `$important`,
-  domain/type options, and `$badfilter`.
+  not blocked/redirected by a normal network rule. Plain names are
+  case-sensitive; regexes match the raw `name=value` pair and are also
+  case-sensitive unless authored with `/i`, `/m`, `/s` or `/u` flags. Applies to
+  matching requests (including navigations) and respects `@@` exceptions,
+  `$important`, domain/type options, and `$badfilter`.
 - `$removeheader=request:header-name` / `$removeheader=response:header-name`:
   removes matching request headers in `onBeforeSendHeaders` and response headers
   in `onHeadersReceived`. Header names are validated; invalid rules are rejected

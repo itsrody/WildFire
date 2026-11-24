@@ -593,8 +593,12 @@ and count as one filtered request. Filter-supplied bodies are not supported.
 
 `$removeparam` and `$removeheader` are parsed/validated in the IR and applied
 only when compiled capabilities require them. `$removeparam` redirects to a
-cleaned URL when a request is not blocked/redirected by a normal rule;
-`$removeheader` strips validated request/response header names in
+cleaned URL when a request is not blocked/redirected by a normal rule; plain
+names are case-sensitive, while regex values match the raw `name=value` pair
+with authored `i`/`m`/`s`/`u` flags and no implicit `i`. Option names are
+normalized but option values are preserved. Plain network patterns use an
+option-aware `$` delimiter so literal `$` and `$removeparam=/^x=$/` survive
+parsing. `$removeheader` strips validated request/response header names in
 `onBeforeSendHeaders`/`onHeadersReceived`. Both respect `@@`, `$important`,
 domain/type scoping, and compile-time `$badfilter`. Filter text cannot supply
 code or arbitrary header/body values.
