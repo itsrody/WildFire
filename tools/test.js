@@ -891,6 +891,14 @@ assert.strictEqual(classify(procOnExample.find(rule => rule.base === '.box'), '/
   'unsupported selectors fall back to JS evaluation');
 context.CSS.supports = originalSupports;
 
+const supportCalls = [];
+context.CSS.supports = (...args) => { supportCalls.push(args); return true; };
+assert.strictEqual(classify(procOnExample.find(rule => rule.base === '.box'), '/').mode, 'css',
+  'Gecko-style selector() conditions keep native CSS enabled');
+assert.deepStrictEqual(supportCalls[0], ['selector(.box:has(.inner))'],
+  'selector validation uses the one-argument CSS.supports condition');
+context.CSS.supports = originalSupports;
+
 let queryCalls = [];
 const groupedRoot = {
   querySelectorAll: query => {
@@ -1833,6 +1841,15 @@ assert.strictEqual(attributeContext.wildFireElements[2].getAttribute('src'), '/c
   'set-attr copies a value from another attribute');
 assert.ok(attributeContext.observer, 'the stay token keeps a DOM observer active');
 
+const scriptletSupportCalls = [];
+attributeContext.CSS.supports = (...args) => { scriptletSupportCalls.push(args); return true; };
+attributeContext.WildFireScriptlets.apply([
+  { alias: 'remove-attr', args: ['data-ad', 'a'], domains: [], isException: false }
+]);
+assert.ok(scriptletSupportCalls.some(args =>
+  args.length === 1 && args[0] === 'selector(a)'),
+  'scriptlet selector validation uses Gecko-compatible CSS.supports');
+
 const innerHtmlContext = scriptletDomContext();
 innerHtmlContext.wildFireElements[0]._html = 'initial';
 innerHtmlContext.WildFireScriptlets.apply([
@@ -2590,6 +2607,14 @@ async function testBackgroundLoadFiltersIntegration() {
       if (u.includes('default.txt')) {
         return { ok: true, text: async () => '! Title: WildFire starter\n! Expires: 7 days\n||bundled.example^' };
       }
+      if (u.includes('uAssetsCDN/filters/filters.min.txt')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => '' },
+          text: async () => '! Title: uBlock filters\n! Expires: 5 days\n||ubo.example^'
+        };
+      }
       if (u.includes('auto.test/list.txt')) {
         return {
           ok: true,
@@ -2667,6 +2692,15 @@ async function testBackgroundLoadFiltersIntegration() {
     'preshipped header metadata survives storage');
   assert.strictEqual(api.engine.matchRequest('https://bundled.example/x.js', 'script',
     'https://site.test/').blocked, true, 'preshipped rules are loaded once');
+  const preshippedRemoteList = listed.lists
+    .find(entry => entry.url === RemoteLists.PRESHIPPED_REMOTE_URL);
+  assert.ok(preshippedRemoteList, 'the uAssets CDN list is preshipped as a remote list');
+  assert.strictEqual(preshippedRemoteList.enabled, true,
+    'the preshipped remote list is active by default');
+  assert.ok(preshippedRemoteList.text.includes('||ubo.example^'),
+    'the preshipped remote list is fetched directly from its URL');
+  assert.strictEqual(api.engine.matchRequest('https://ubo.example/x.js', 'script',
+    'https://site.test/').blocked, true, 'preshipped remote rules are active');
   const disabledBundled = await api.onMessage({
     type: 'wildfire:set-list-enabled',
     url: WildFireBundledLists.DEFAULT_URL,
@@ -4339,6 +4373,15 @@ async function testRemoteLists() {
     'preshipped header metadata is stored');
   assert.ok((await preshipped.enabledText()).includes('! wildfire bundled: '),
     'the preshipped entry contributes bundled filter text');
+  const seededUbo = seeded.snapshot.lists
+    .find(entry => entry.url === RemoteLists.PRESHIPPED_REMOTE_URL);
+  assert.ok(seededUbo, 'the uAssets CDN URL is registered as a remote list');
+  assert.strictEqual(RemoteLists.PRESHIPPED_REMOTE_URL,
+    'https://ublockorigin.github.io/uAssetsCDN/filters/filters.min.txt',
+    'the preshipped remote URL points at the uAssets CDN');
+  assert.strictEqual(seededUbo.text, '', 'the preshipped remote list starts unfetched');
+  assert.strictEqual(seededUbo.enabled, true, 'the preshipped remote list starts enabled');
+  assert.strictEqual(seededUbo.autoUpdate, true, 'the preshipped remote list auto-fetches');
 
   const updatedBundled = await preshipped.update(WildFireBundledLists.DEFAULT_URL);
   assert.strictEqual(updatedBundled.ok, true, 'an explicit Update fetches the default URL');

@@ -145,17 +145,23 @@ and refreshed from
 It auto-fetches on startup, then revalidates on its `! Expires` interval. It
 cannot be removed; **Disable** or **Auto: off** opts out.
 
+WildFire also preships a remote list directly from
+`https://ublockorigin.github.io/uAssetsCDN/filters/filters.min.txt`. It starts
+enabled and is fetched into storage on startup; no upstream filter text is
+vendored into this repository.
+
 Open Options → **Suggested lists** for shortcuts to well-known community lists,
 or **Filter lists** to add any `http(s)` URL. Adding a URL — suggested or typed —
 fetches it immediately but leaves it disabled; choose **Enable** to apply its
 rules. Every list then revalidates on its own `! Expires` interval; **Auto: off**
 disables automatic checks, and **Update** forces a check now. The suggested
-catalog is inert: WildFire never adds or enables an external list for you, and
-it sends no data about you — the manifest still declares
+catalog is inert: WildFire never adds or enables those shortcut lists for you,
+and it sends no data about you — the manifest still declares
 `data_collection_permissions: ["none"]`.
 
 Fetches bypass the HTTP cache, are size-capped (including `Content-Length`
-preflight), time-limited, and support `ETag`/`Last-Modified` revalidation. A
+preflight), time-limited to 60 seconds, and support `ETag`/`Last-Modified`
+revalidation. A
 `304` reuses the stored rules; an unchanged `200` keeps the original content
 time. WildFire reads standard `! Title`, `! Description`, `! Version`,
 `! Homepage`, `! License`, `! Expires`, `! Checksum`, `! Diff-Path` and
@@ -396,10 +402,11 @@ This is deliberately a *minimal* engine, not a full uBO port:
   registration is idempotent, a failed init settles readiness with a recorded
   error, and scriptlet registrations are swapped atomically so a failed
   replacement keeps the old one.
-- The default list ships preshipped; external lists are added only by the user.
-  Every list auto-fetches once and revalidates on its `! Expires` interval unless
-  Auto is off. Added lists must be enabled before their rules apply. WildFire
-  stores the exact text, a hash, and parsed header metadata for each list.
+- The default list ships preshipped, and the uAssets CDN list is preshipped as a
+  direct remote URL. Every list auto-fetches once and revalidates on its
+  `! Expires` interval unless Auto is off. User-added lists must be enabled
+  before their rules apply. WildFire stores the exact text, a hash, and parsed
+  header metadata for each list.
 - Firefox ETP is left untouched. WildFire observes ETP block errors and
   classifications only while diagnostics are enabled, and never adds them to
   WildFire's counters. Header listeners are registered when loaded rules need

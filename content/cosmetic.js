@@ -20,7 +20,9 @@
   function isSafeSelector(selector) {
     if (typeof selector !== 'string' || !selector.trim()) return false;
     try {
-      if (typeof CSS !== 'undefined' && CSS.supports && !CSS.supports('selector', selector)) return false;
+      // Gecko accepts the selector() condition, not the two-argument form.
+      if (typeof CSS !== 'undefined' && CSS.supports &&
+          !CSS.supports('selector(' + selector + ')')) return false;
       document.querySelector(selector);
       return true;
     } catch (error) {

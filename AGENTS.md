@@ -402,7 +402,7 @@ only future navigations receive updated scriptlets.
 selector and subtracts applicable exceptions, including hide modifiers from the
 policy. `content/cosmetic.js` asks for them once
 on load via `wildfire:cosmetic` and re-applies on `wildfire:apply` broadcasts;
-it validates each selector with `CSS.supports('selector', …)` and
+it validates each selector with `CSS.supports('selector(…)')` and
 `document.querySelector` before injecting a `<style id="wildfire-cosmetic">`.
 
 Procedural selectors (`:has-text()`, `:contains()`, `:matches-path()`, `:has()`,
@@ -484,7 +484,9 @@ updatedAt, checkedAt, hash, lastError, metadata}]}` and is owned entirely by
 `https://raw.githubusercontent.com/itsrody/WildFire/main/filters/default.txt` as
 its update source. It auto-fetches on startup, then follows `! Expires`; it
 cannot be removed and can be disabled or opted out of Auto in Options. The old
-`wildfire:bundled/default.txt` sentinel is migrated to that URL.
+`wildfire:bundled/default.txt` sentinel is migrated to that URL. The store also
+preseeds the uAssets CDN filters URL as an enabled remote list fetched directly;
+that URL is not vendored into the repository.
 
 Background listens for `wildfire:*` messages:
 
@@ -551,15 +553,18 @@ out. A fetched update persists across extension reseeds; the legacy
 `wildfire:bundled/default.txt` sentinel migrates to the default URL while
 preserving user state.
 
-External lists are added only by the user. The bundled
-`lib/state/suggested-lists.js` catalog is inert: Options shows its URLs as
-shortcuts, and clicking one only sends `add-list`. Every registered list,
-including the default list, auto-fetches once and then revalidates at its
-`! Expires` interval, which defaults to one day and can be as short as one
-minute. `set-list-auto` can disable this per list. Added lists stay disabled
-until the user enables them, so automatic fetching never silently applies new
-rules. Fetches use `cache: 'no-store'`, validator headers, a size cap (including
-`Content-Length` preflight), an `AbortController` timeout, final-URL and
+One remote list is preshipped by explicit owner decision:
+`https://ublockorigin.github.io/uAssetsCDN/filters/filters.min.txt`. It is
+registered directly from its URL, starts enabled, and is fetched into
+`wildfire.remote.v1` on startup; no upstream filter text is vendored into this
+repository. The bundled `lib/state/suggested-lists.js` catalog remains inert:
+Options shows its URLs as shortcuts, and clicking one only sends `add-list`.
+Every registered list, including the default and preshipped remote lists,
+auto-fetches once and then revalidates at its `! Expires` interval, which
+defaults to one day and can be as short as one minute. `set-list-auto` can
+disable this per list. User-added lists stay disabled until the user enables
+them. Fetches use `cache: 'no-store'`, validator headers, a size cap (including
+`Content-Length` preflight), a 60-second `AbortController` timeout, final-URL and
 HTML-error checks, and parsed header metadata. A 304 keeps the stored text and
 metadata but refreshes the check time; an unchanged 200 keeps the original
 content time. The `alarms` permission supports the one named alarm, whose period
