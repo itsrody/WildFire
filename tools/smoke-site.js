@@ -592,7 +592,10 @@ function phaseDeltas(current, previous) {
       calls,
       totalMs,
       avgMs: calls > 0 ? Number((totalMs / calls).toFixed(3)) : 0,
-      maxMs: Number(now.maxMs) || 0
+      maxMs: Number(now.maxMs) || 0,
+      candidates: numberDelta(now.candidates, before.candidates),
+      regexEvaluations: numberDelta(now.regexEvaluations, before.regexEvaluations),
+      cacheHits: numberDelta(now.cacheHits, before.cacheHits)
     };
     return result;
   }, {});

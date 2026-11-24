@@ -378,7 +378,9 @@ negated callback needles, and `remove-node-text` supports `includes`,
 The non-trusted uBO general-purpose and defuser catalog is implemented with
 original WildFire code. Trusted-only aliases (including `replace-node-text` /
 `rpnt`) remain rejected because WildFire has no source-trust model. Updated
-scriptlets apply to pages opened after the change.
+scriptlets apply to pages opened after the change. A validated, data-only
+scriptlet snapshot is restored before async startup work, so a previously
+fetched list also applies on the first page after a restart.
 
 AdGuard scriptlets are also accepted with
 `[domains]#%#//scriptlet('alias', 'arg', ...)`; `#@%#//scriptlet(...)`
@@ -409,8 +411,10 @@ This is deliberately a *minimal* engine, not a full uBO port:
   long patterns and stateful flags are rejected when the list loads.
 - Advanced `domain=` patterns are limited to `example.*` and `*.example.*`;
   `elemhide` is not supported as a standalone network option.
-- Rules are indexed by their `||host^` key and 4-character tokens; patterns with
-  no usable token (including regex filters) are scanned per request.
+- Rules are indexed by their `||host^` key (also stored in a reverse-label trie)
+  and one frequency-ranked 4-character token; patterns with no usable token
+  (including regex filters) are scanned per request. A bounded decision cache
+  skips repeated request/type/host tuples within one filter generation.
 - Page/tab/frame state lives in a synchronous in-memory store. It tracks document
   lifetimes, frame URLs, top-level site attribution, popup state, and per-page
   cosmetic/scriptlet caches; nothing about visited pages is persisted.

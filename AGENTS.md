@@ -297,15 +297,19 @@ indexes, plus cosmetic and scriptlet indexes:
 
 - `hostRules: Map<host, rule[]>` for `||host^` rules, keyed by the pattern's
   leading host (looked up against every request/document host and all their
-  parents, including cached CNAME canonical names).
-  `cspHostRules` and `hideHostRules` mirror it for the other realms, so hide
-  exceptions can never suppress requests and CSP exceptions can never suppress
-  blockers.
-- `tokenRules: Map<token, rule[]>` for generic rules, keyed by a few 4-character
-  tokens from each required literal chunk; `unindexedRules: rule[]` holds
-  patterns with no usable token. Candidates are the union of host, token and
-  fallback matches within one realm, sorted by load order before exception/blocker
-  selection.
+  parents, including cached CNAME canonical names). A reversed-label
+  `hostTrie` stores the same rules so suffix lookups avoid rebuilding parent
+  strings on every request; `cspHostTrie` and `hideHostTrie` mirror it.
+  `cspHostRules` and `hideHostRules` mirror the flat map for the other realms, so
+  hide exceptions can never suppress requests and CSP exceptions can never
+  suppress blockers.
+- `tokenRules: Map<token, rule[]>` for generic rules, keyed by one 4-character
+  token chosen from the rule's literal chunks using corpus frequency and bucket
+  cost; `unindexedRules: rule[]` holds patterns with no usable token. Candidates
+  are the union of host, token and fallback matches within one realm, sorted by
+  load order before exception/blocker selection. A bounded per-generation
+  decision cache short-circuits repeated request/type/host tuples; any filter
+  load or compiled activation clears it.
 - `cosmeticByDomain` / `cosmeticExceptionsByDomain: Map<domain, entry[]>` plus
   `genericCosmetic` / `genericCosmeticExceptions`. Each entry carries a selector
   and `include`/`exclude` host scopes; negated (`~host`) targets are preserved
@@ -395,8 +399,11 @@ all five in sync. There is no `eval`, no `Function`, and no filter-sourced scrip
 anywhere;
 `WildFireScriptlets.apply()` revalidates every entry, resolves domains against
 `location.hostname`, and lets `#@#+js()` cancel the matching
-alias/arguments. Registrations are replaced whenever the engine reloads, and
-only future navigations receive updated scriptlets.
+alias/arguments. A validated, data-only scriptlet snapshot is persisted in the
+compile-cache layer and registered before async startup work, so a previously
+fetched list applies on the first navigation after restart or update.
+Registrations are replaced whenever the engine reloads, and only future
+navigations receive updated scriptlets.
 
 `getCosmetic(host, policy)` merges generic selectors with every parent-domain
 selector and subtracts applicable exceptions, including hide modifiers from the

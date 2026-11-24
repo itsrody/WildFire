@@ -141,6 +141,8 @@ The extension keeps its current responsibilities:
 6. Send payload to `browser.wildfireNative` when present.
 7. Register `document_start` fallback through `browser.contentScripts.register()`
    for `documentStart` rules, or for all rules when the bridge is absent/fails.
+   A validated data-only snapshot is restored before async startup work so the
+   previous generation applies to the first navigation after a restart.
 
 No new filter syntax is required by this design.
 

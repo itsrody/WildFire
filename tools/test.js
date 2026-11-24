@@ -408,6 +408,55 @@ assert.strictEqual(
   indexEngine.matchRequest('https://keep.example/popup.js', mapResourceType('script'), '').blocked,
   false, 'exceptions win through the token index');
 
+// Frequent literal chunks must not win token selection when a distinctive
+// chunk exists in the same rule.
+const freqEngine = new FilterEngine();
+freqEngine.load(Array.from({ length: 40 }, (_, index) =>
+  'common' + index + '*select' + index + 'zone' + index).join('\n'));
+const commonTokens = freqEngine._ruleTokens({ pattern: 'common' });
+const selectedTokens = Array.from(freqEngine.tokenRules.values())
+  .flatMap(bucket => bucket.map(rule => rule._tk[0]));
+assert.ok(commonTokens.length > 0 && selectedTokens.length > 0,
+  'frequency fixture produces indexed rules');
+assert.ok(selectedTokens.every(token => !commonTokens.includes(token)),
+  'frequent chunks are avoided by token selection');
+
+// Host rules are also stored in a reversed-label trie so subdomain lookups can
+// collect parent-domain rules without allocating every parent string.
+const hostTrieEngine = new FilterEngine();
+hostTrieEngine.load('||example.org^');
+assert.ok(hostTrieEngine.hostRules.has('example.org'), 'flat host index remains available');
+const orgNode = hostTrieEngine.hostTrie.children.get('org');
+assert.ok(orgNode && orgNode.children.has('example'), 'reverse host trie stores host labels');
+assert.strictEqual(hostTrieEngine.matchRequest(
+  'https://sub.example.org/a.js', 'script', 'https://page.test/').blocked, true,
+'host trie still matches parent-domain rules on subdomains');
+assert.strictEqual(hostTrieEngine.matchRequest(
+  'https://example.net/a.js', 'script', 'https://page.test/').blocked, false,
+'host trie does not match unrelated hosts');
+
+// A bounded per-generation cache short-circuits repeated URL/type/host tuples.
+const decisionEngine = new FilterEngine();
+decisionEngine.load('||ads.test^$script');
+decisionEngine.setMatchStatsEnabled(true);
+const cachedUrl = 'https://ads.test/banner.js';
+assert.strictEqual(decisionEngine.matchRequest(cachedUrl, 'script', 'https://page.test/').blocked, true,
+  'first request evaluates the engine');
+assert.ok(decisionEngine.getLastMatchStats().candidates > 0,
+  'first request reports candidate work');
+decisionEngine.matchRequest(cachedUrl, 'script', 'https://page.test/');
+assert.strictEqual(decisionEngine.getLastMatchStats().cacheHits, 1,
+  'repeated request is served from the decision cache');
+assert.strictEqual(decisionEngine.getLastMatchStats().candidates, 0,
+  'cached request skips candidate construction');
+decisionEngine.matchRequest(cachedUrl, 'script', 'https://page.test/',
+  { target: ['alias.test'], document: ['page.test'] });
+assert.strictEqual(decisionEngine.getLastMatchStats().cacheHits, 0,
+  'a different host set uses a different cache key');
+decisionEngine.load('@@||ads.test^', { append: true });
+assert.strictEqual(decisionEngine.matchRequest(cachedUrl, 'script', 'https://page.test/').blocked, false,
+  'appending rules invalidates cached decisions');
+
 const plainEngineFast = new FilterEngine();
 plainEngineFast.load([
   '||ads.example/track.js',
@@ -3089,6 +3138,32 @@ async function testCompileCacheAndCompiler() {
   const corruptCache = WildFireCompileCache.create({ browserApi: { storage: { local: corruptStorage } }, version: FilterEngine.COMPILED_VERSION });
   assert.strictEqual(await corruptCache.get('bad'), null, 'corrupt compiled entry is rejected');
 
+  const scriptletSnapshot = {
+    v: WildFireCompileCache.SCRIPTLET_SNAPSHOT_VERSION,
+    engineVersion: FilterEngine.COMPILED_VERSION,
+    generation: 4,
+    hash: 'snapshot-hash',
+    phases: { realmBirth: [], documentStart: [] },
+    at: 1
+  };
+  await cache.setScriptlets(scriptletSnapshot);
+  const restoredScriptlets = await cache.getScriptlets();
+  assert.ok(restoredScriptlets, 'valid scriptlet snapshot is persisted');
+  assert.strictEqual(restoredScriptlets.generation, 4, 'scriptlet snapshot keeps its generation');
+  assert.strictEqual(restoredScriptlets.hash, 'snapshot-hash', 'scriptlet snapshot keeps its hash');
+  await cache.setScriptlets(Object.assign({}, scriptletSnapshot, { engineVersion: -1 }));
+  assert.strictEqual((await cache.getScriptlets()).generation, 4,
+    'a snapshot from another compiled version is ignored');
+  const badScriptletStorage = memoryStorage({
+    [WildFireCompileCache.SCRIPTLET_STORAGE_KEY]: Object.assign({}, scriptletSnapshot, { hash: 7 })
+  });
+  const badScriptletCache = WildFireCompileCache.create({
+    browserApi: { storage: { local: badScriptletStorage } },
+    version: FilterEngine.COMPILED_VERSION
+  });
+  assert.strictEqual(await badScriptletCache.getScriptlets(), null,
+    'a malformed scriptlet snapshot is rejected');
+
   class FakeWorker {
     constructor() { this.messages = []; this.terminated = false; }
     postMessage(msg) {
@@ -3254,6 +3329,14 @@ async function testCompileCacheIdbLru() {
   try {
     const cache = WildFireCompileCache.create({ browserApi: { storage: { local: { async get() { return {}; }, async set() {} } } }, version: FilterEngine.COMPILED_VERSION });
     const blob = { v: FilterEngine.COMPILED_VERSION, cap: 0, n: [], c: { g: [], ge: [], d: [], de: [] }, p: { g: [], ge: [], d: [], de: [] }, s: [], d: [] };
+    await cache.setScriptlets({
+      v: WildFireCompileCache.SCRIPTLET_SNAPSHOT_VERSION,
+      engineVersion: FilterEngine.COMPILED_VERSION,
+      generation: 1,
+      hash: 'idb-snapshot',
+      phases: { realmBirth: [], documentStart: [] },
+      at: 1
+    });
     // Fill to capacity with ascending `at`.
     await Array.from({ length: 64 }).reduce((chain, _, i) => chain.then(() =>
       cache.set('t' + i, blob, { at: i + 1 })), Promise.resolve());
@@ -3264,7 +3347,9 @@ async function testCompileCacheIdbLru() {
     assert.ok(store.has(cache.keyFor('t0')), 'LRU prune keeps recently touched entry');
     assert.ok(!store.has(cache.keyFor('t1')), 'LRU prune evicts least-recently-used entry');
     assert.ok(store.has(cache.keyFor('t64')), 'newest entry retained');
-    assert.ok(store.size <= 64, 'IDB cache bounded to MAX_ENTRIES');
+    assert.ok(store.has(WildFireCompileCache.SCRIPTLET_KEY),
+      'scriptlet snapshot key is never evicted by compiled LRU pruning');
+    assert.ok(store.size <= 65, 'IDB cache bounded apart from the reserved snapshot');
   } finally {
     context.indexedDB = prevIdb;
   }
@@ -4035,7 +4120,14 @@ async function testPerSiteBadgeCounters() {
     'the header listener is registered for CSP report stripping');
 
   await bgMessageHandler({ type: 'wildfire:diagnostics', value: true }, {});
-  blockOn(1, 'https://www.example.com/');
+  apiHooks.onBeforeRequest({
+    url: 'https://ads.test/diagnostic.js',
+    type: 'script',
+    tabId: 1,
+    frameId: 0,
+    documentUrl: 'https://www.example.com/',
+    requestId: 'per-site-diagnostic'
+  });
   apiHooks.onErrorOccurred({
     requestId: 'etp-block',
     error: 'NS_ERROR_TRACKING_URI',
@@ -5981,20 +6073,20 @@ async function testBackgroundControllerRobustness() {
       }
     };
   };
-  const makeLocalStore = () => {
-    let data = {};
+  const makeLocalStore = initial => {
+    let data = Object.assign({}, initial || {});
     return {
       get: async key => ({ [key]: data[key] }),
       set: async patch => { data = Object.assign({}, data, patch); }
     };
   };
-  const makeBrowser = () => ({
+  const makeBrowser = (initialStorage) => ({
     runtime: {
       getURL: path => 'moz-extension://test/' + path,
       onMessage: eventHub(),
       onConnect: eventHub()
     },
-    storage: { local: makeLocalStore() },
+    storage: { local: makeLocalStore(initialStorage) },
     browserAction: {
       setBadgeBackgroundColor: () => {},
       setBadgeText: () => {}
@@ -6040,6 +6132,7 @@ async function testBackgroundControllerRobustness() {
   });
   const defaultText = fs.readFileSync(path.join(ROOT, 'filters/default.txt'), 'utf8');
   const savedFetch = context.fetch;
+  let savedIdb = null;
   const savedError = console.error;
   const savedWarn = console.warn;
   console.error = () => {};
@@ -6140,6 +6233,50 @@ async function testBackgroundControllerRobustness() {
       'startup exposes the content script capability');
     assert.strictEqual(caps.nativeBridge, false,
       'the optional native bridge stays unavailable when not supplied');
+
+    // A persisted data-only snapshot must register at document_start before
+    // state reads, remote lists or cosmetic refresh complete.
+    const snapshotEntry = {
+      alias: 'set-constant', syntax: 'ubo',
+      args: ['foo', '1'], domains: ['example.com'], isException: false
+    };
+    const snapshotPayload = { realmBirth: [snapshotEntry], documentStart: [] };
+    savedIdb = context.indexedDB;
+    context.indexedDB = undefined;
+    let releaseState = null;
+    const earlyRegistrations = [];
+    const earlyBrowser = makeBrowser({
+      [WildFireCompileCache.SCRIPTLET_STORAGE_KEY]: {
+        v: WildFireCompileCache.SCRIPTLET_SNAPSHOT_VERSION,
+        engineVersion: FilterEngine.COMPILED_VERSION,
+        generation: 7,
+        hash: context.WildFireBackgroundCore.scriptletHash([snapshotEntry]),
+        phases: snapshotPayload,
+        at: Date.now()
+      }
+    });
+    earlyBrowser.contentScripts.register = async registration => {
+      earlyRegistrations.push(registration);
+      return { unregister: async () => {} };
+    };
+    const early = WildFireBackground.create({
+      browserApi: earlyBrowser,
+      store: makeStore(() => new Promise(resolve => { releaseState = () => resolve(Object.assign({}, defaults)); }))
+    });
+    const earlyStart = early.start();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.ok(earlyRegistrations.length > 0,
+      'a restored scriptlet snapshot registers before the state read resolves');
+    const earlyRegistration = earlyRegistrations[0];
+    assert.strictEqual(earlyRegistration.runAt, 'document_start',
+      'restored scriptlets still run at document_start');
+    assert.strictEqual(earlyRegistration.allFrames, true,
+      'restored scriptlets run in all frames');
+    assert.ok(JSON.stringify(earlyRegistration).includes('set-constant'),
+      'restored registration carries validated scriptlet data');
+    assert.ok(releaseState, 'state read is intentionally still pending');
+    releaseState();
+    await earlyStart;
 
     const previous = await healthy.context.wapiScripting.register('scriptlets', {
       matches: ['<all_urls>'],
@@ -6255,6 +6392,7 @@ async function testBackgroundControllerRobustness() {
     healthy.context.recordBlock = savedRecordBlock;
   } finally {
     context.fetch = savedFetch;
+    context.indexedDB = savedIdb;
     console.error = savedError;
     console.warn = savedWarn;
   }

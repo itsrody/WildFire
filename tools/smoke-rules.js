@@ -358,6 +358,8 @@ function disableRemoteAuto(extDir) {
   const patched = source
     .replace('autoUpdate: existing && existing.autoUpdateChoice ? existing.autoUpdate : true,',
       'autoUpdate: false,')
+    .replace('autoUpdateChoice: existing ? existing.autoUpdateChoice : false,',
+      'autoUpdateChoice: true,')
     .replace(/autoUpdate: remoteExisting && remoteExisting\.autoUpdateChoice\s*\?\s*remoteExisting\.autoUpdate\s*:\s*true,/,
       'autoUpdate: false,');
   if (patched === source) die('Could not disable remote auto-update in the smoke copy');
