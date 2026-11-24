@@ -76,7 +76,7 @@
       "lib/background/helpers.js",
       "lib/background/url-skip.js",
       "lib/background/engine-host.js",
-      "lib/background/inspector.js",
+      "lib/background/logger.js",
       "lib/background/requests.js",
       "lib/background/messages.js",
       "lib/background/background.js",

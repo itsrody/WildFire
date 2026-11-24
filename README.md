@@ -19,7 +19,7 @@ engine.
 manifest.json          Firefox MV2 manifest, gecko floor 153.0
 background.js          thin bootstrap for the background controller
 lib/wapi/              Firefox-native API backbone: wapi, contexts, background, router, tabs, webrequest, action, capabilities, client
-lib/background/        background chain: helpers, engine lifecycle, inspector, requests, messages, controller
+lib/background/        background chain: helpers, engine lifecycle, logger, requests, messages, controller
 lib/engine/            filter engine module chain (filter/), procedural DOM evaluator
 lib/compile/           filter compiler, worker, compiled-filter cache
 lib/resources/         curated scriptlet / CSP / redirect / rewrite registries
@@ -28,7 +28,7 @@ content/cosmetic.js    injects hidden-element CSS, re-applies on demand
 filters/default.txt    bundled starter rules
 ui/popup/              toolbar popup with inspector buttons
 ui/options/            custom filters + paused sites
-ui/inspector/          local-only request decision window with log helpers
+ui/inspector/          local-only request decision window with logger-ui renderer
 assets/                generated PNG icons
 tools/                 icon generator, validator, XPI packager
 dist/                  build output (generated)

@@ -42,8 +42,8 @@ const SCRIPTLET_FILES = [
 const CLIENT_FILE = 'lib/wapi/wapi-client.js';
 /* Native Options filter editor shell. */
 const EDITOR_FILE = 'ui/options/editor.js';
-/* Local Inspector log helpers shared by the diagnostic window. */
-const INSPECTOR_LOG_FILE = 'ui/inspector/log.js';
+/* Local Inspector renderer and pure log helpers. */
+const INSPECTOR_UI_FILE = 'ui/inspector/logger-ui.js';
 /* Background controller is a classic-script chain loaded before the bootstrap. */
 const WAPI_FILES = [
   'lib/wapi/wapi.js',
@@ -60,7 +60,7 @@ const BACKGROUND_FILES = [
   'lib/background/helpers.js',
   'lib/background/url-skip.js',
   'lib/background/engine-host.js',
-  'lib/background/inspector.js',
+  'lib/background/logger.js',
   'lib/background/requests.js',
   'lib/background/messages.js',
   'lib/background/background.js'
@@ -3803,9 +3803,9 @@ async function testWapiScripting() {
   assert.strictEqual(await unsupported.replace('x', makeDetails()), false);
 }
 
-async function testInspector() {
+async function testBackgroundLogger() {
   const ctx = {
-    inspectorEnabled: false,
+    loggerEnabled: false,
     now: () => 1700000000000,
     monotonicMs: () => 1000,
     safeHost: url => {
@@ -3813,18 +3813,18 @@ async function testInspector() {
     },
     siteKey: host => host.split('.').slice(-2).join('.')
   };
-  Object.assign(ctx, context.WildFireBackgroundCore.createInspector(ctx));
+  Object.assign(ctx, context.WildFireBackgroundCore.createLogger(ctx));
 
-  assert.strictEqual(ctx.inspector.enabled, false, 'inspector starts disabled');
-  assert.strictEqual(ctx.recordInspection({ url: 'https://ads.test/a.js' }), null,
-    'disabled inspector drops records');
-  assert.strictEqual(ctx.inspector.snapshot().entries.length, 0);
-  assert.strictEqual(ctx.inspector.limit, 256);
+  assert.strictEqual(ctx.logger.enabled, false, 'local logger starts disabled');
+  assert.strictEqual(ctx.recordDecision({ url: 'https://ads.test/a.js' }), null,
+    'disabled logger drops records');
+  assert.strictEqual(ctx.logger.snapshot().entries.length, 0);
+  assert.strictEqual(ctx.logger.limit, 256);
 
-  ctx.inspector.setEnabled(true);
-  assert.strictEqual(ctx.inspector.enabled, true);
+  ctx.logger.setEnabled(true);
+  assert.strictEqual(ctx.logger.enabled, true);
   const rule = { pattern: '||ads.test^', sourceKind: 'custom', hash: 'abc' };
-  const item = ctx.recordInspection({
+  const item = ctx.recordDecision({
     phase: 'request', decision: 'blocked', rule, detail: 'blocked', ms: 1.2346,
     reason: 'network rule', source: 'static',
     url: 'https://ads.test/a.js?secret=1', type: 'script', tabId: 7,
@@ -3844,31 +3844,31 @@ async function testInspector() {
   assert.strictEqual(item.documentUrl, 'https://page.test/', 'document scope is recorded');
   assert.strictEqual(item.requestId, 'req-1', 'request identity is recorded');
 
-  const snapshot = ctx.inspector.snapshot();
+  const snapshot = ctx.logger.snapshot();
   assert.strictEqual(snapshot.entries.length, 1);
   snapshot.entries.length = 0;
-  assert.strictEqual(ctx.inspector.snapshot().entries.length, 1,
+  assert.strictEqual(ctx.logger.snapshot().entries.length, 1,
     'snapshots are copies');
 
-  Array.from({ length: 300 }, (unused, index) => ctx.recordInspection({
+  Array.from({ length: 300 }, (unused, index) => ctx.recordDecision({
     url: 'https://host' + index + '.test/',
     decision: 'allowed'
   }));
-  const capped = ctx.inspector.snapshot().entries;
-  assert.strictEqual(capped.length, 256, 'inspector keeps a bounded ring buffer');
+  const capped = ctx.logger.snapshot().entries;
+  assert.strictEqual(capped.length, 256, 'logger keeps a bounded ring buffer');
   assert.strictEqual(capped[0].id, 46, 'oldest entries are dropped first');
   assert.strictEqual(capped[capped.length - 1].id, 301);
 
-  const cleared = ctx.inspector.clear();
+  const cleared = ctx.logger.clear();
   assert.strictEqual(cleared.entries.length, 0);
-  ctx.inspector.setEnabled(false);
-  assert.strictEqual(ctx.recordInspection({ url: 'https://ads.test/' }), null);
+  ctx.logger.setEnabled(false);
+  assert.strictEqual(ctx.recordDecision({ url: 'https://ads.test/' }), null);
 }
 
-function testInspectorLogHelpers() {
-  const logCtx = vm.createContext({});
-  loadFiles(logCtx, [INSPECTOR_LOG_FILE]);
-  const log = logCtx.WildFireInspectorLog;
+function testInspectorUiHelpers() {
+  const uiCtx = vm.createContext({});
+  loadFiles(uiCtx, [INSPECTOR_UI_FILE]);
+  const log = uiCtx.WildFireInspectorUI;
   const entries = [
     {
       at: 1700000000000, ms: 1.25, decision: 'blocked', phase: 'request',
@@ -4000,7 +4000,7 @@ async function testInspectorPage() {
     }
   });
   loadClient(ctx);
-  loadFiles(ctx, [INSPECTOR_LOG_FILE]);
+  loadFiles(ctx, [INSPECTOR_UI_FILE]);
   vm.runInContext(fs.readFileSync(path.join(ROOT, 'ui/inspector/inspector.js'), 'utf8'), ctx, {
     filename: 'inspector.js'
   });
@@ -4984,8 +4984,8 @@ async function testBackgroundControllerRobustness() {
       'startup exposes the native action adapter');
     assert.strictEqual(healthy.debug().wapiScripting, healthy.context.wapiScripting,
       'startup exposes the native scripting adapter');
-    assert.strictEqual(healthy.debug().inspector, healthy.context.inspector,
-      'startup exposes the local inspector');
+    assert.strictEqual(healthy.debug().logger, healthy.context.logger,
+      'startup exposes the local decision logger');
     const caps = healthy.debug().wapiCapabilities.snapshot();
     assert.strictEqual(caps.publicSuffix, true,
       'startup exposes the native domain capability');
@@ -5384,8 +5384,8 @@ Promise.resolve()
   .then(() => testWapiAction())
   .then(() => testWapiCapabilities())
   .then(() => testWapiScripting())
-  .then(() => testInspector())
-  .then(() => testInspectorLogHelpers())
+  .then(() => testBackgroundLogger())
+  .then(() => testInspectorUiHelpers())
   .then(() => testInspectorPage())
   .then(() => testUrlSkip())
   .then(() => testWapiContexts())

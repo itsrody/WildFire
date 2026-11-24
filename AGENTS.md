@@ -76,7 +76,7 @@ lib/
     helpers.js         counters/badge, snapshots, diagnostics and host helpers
     url-skip.js        local scheme bypass policy before engine matching
     engine-host.js     engine lifecycle, compiler/cache, cosmetic and scriptlet sync
-    inspector.js       local-only bounded request decision log
+    logger.js          local-only bounded request decision logger
     requests.js        synchronous webRequest handlers and rewrite streams
     messages.js        wildfire:* message router
     background.js      controller: state, listeners, startup and readiness
@@ -124,7 +124,7 @@ filters/default.txt    bundled starter rules (~85 network rules)
 ui/
   popup/               toolbar popup (status, counter, pause controls, inspector buttons)
   options/             custom filters, paused sites, remote lists, stats reset
-  inspector/           local-only request decision window (log.js helpers)
+  inspector/           local-only request decision window (logger-ui.js renderer)
 assets/                generated PNG icons (16/32/48/96/128)
 tools/                 icon generator, validator, tests, XPI packager
 dist/                  generated XPI — ignored, never reviewed or committed
@@ -169,7 +169,7 @@ used **only** by `tools/`.
 19. `lib/wapi/wapi-capabilities.js` → `window.WildFireWapiCapabilities` (aliased as `window.wapiCapabilities`)
 20. `lib/wapi/wapi-scripting.js` → `window.WildFireWapiScripting` (aliased as `window.wapiScripting`)
 21. `lib/background/` chain, in order: `helpers.js`, `url-skip.js`,
-    `engine-host.js`, `inspector.js`, `requests.js`, `messages.js`,
+    `engine-host.js`, `logger.js`, `requests.js`, `messages.js`,
     `background.js` → `window.WildFireBackground`
 22. `background.js` → calls `WildFireBackground.create(...).start()`
 
@@ -472,17 +472,18 @@ or filter decisions. `onHeadersReceived` is registered while loaded rules need
 `$csp`, `$rewrite`, or `$removeheader`, and also while CSP report blocking is
 enabled.
 
-`inspect` is local-only: `lib/background/inspector.js` keeps a bounded in-memory
+`inspect` is local-only: `lib/background/logger.js` keeps a bounded in-memory
 ring of request, CSP and CSP-report decisions with phase, source, reason,
 document scope, top-level site, request identity and duration. It is disabled by
-default, never persisted, and never sent anywhere; Options uses `wapi-client`
-to enable it, refresh it, and clear it. The structured Inspector window
-(`ui/inspector/`) filters by decision, phase, resource type, site and free text,
-freezes the current view while recording continues, and copies a matching rule
-as WildFire syntax. `ui/inspector/log.js` owns the pure filtering, summary and
-copy-rule helpers; the page owns only DOM rendering. The blocking listener
-records only when the inspector is enabled, and inspection never changes
-`blocked`, `blockedBySite`, or filter decisions.
+default, never persisted, and never sent anywhere; the popup and Inspector use
+`wapi-client` to enable it, refresh it, and clear it. The structured Inspector
+window is split: `ui/inspector/logger-ui.js` owns pure filtering, summary,
+copy-rule helpers and DOM rendering, while `ui/inspector/inspector.js` only wires
+native messages, controls and refresh. The window filters by decision, phase,
+resource type, site and free text, freezes the current view while recording
+continues, and copies a matching rule as WildFire syntax. The blocking listener
+records only when the logger is enabled, and inspection never changes `blocked`,
+`blockedBySite`, or filter decisions.
 
 Remote lists are strictly opt-in. The bundled `lib/state/suggested-lists.js`
 catalog is inert: Options shows its URLs as shortcuts, and clicking one only
