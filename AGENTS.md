@@ -217,18 +217,23 @@ graph without a deliberate redesign.
 `webRequest.onBeforeRequest` is registered with `{urls:['<all_urls>']}` and
 `['blocking']`, so **the listener must be synchronous**:
 
-- Skip when `state.enabled` is false, or when the tab's popup was already
-  cancelled/closed by `$popup`.
+- First cancel a `main_frame` request whose tab already has a pending `$popup`
+  block; the block was counted when the decision was made, so this step never
+  counts again. Then skip when `state.enabled` is false.
 - Apply the local `url-skip.js` scheme policy before any engine matching: only
   `http`, `https`, `ws`, `wss` and `ftp` URLs are filterable. Internal, extension,
   `data:`, `blob:` and `file:` URLs return no blocking response and record a
   `skipped` Inspector reason instead of a counter.
 - Resolve the document URL through `WildFirePageStore`: `details.documentUrl`,
   then `details.originUrl`, then the frame URL cached by `documentId` from
-  `webNavigation`/`webRequest`, then the top-level page URL, then the last frame
+  `webNavigation`/`webRequest`, then the `main_frame` request URL, then the
+  cached frame URL, then the committed top-level page URL, then the last frame
   ancestor. The store is synchronous, in-memory, and owns per-tab frame trees,
-  popup state, site attribution, and transient page caches.
-- Skip if the document host is in `state.disabledSites` (exact or subdomain).
+  popup state, site attribution, and transient page caches. An in-flight
+  top-level request never replaces the committed page identity, so a blocked
+  navigation cannot poison counters or pause checks.
+- Skip if the tab's top-level host is in `state.disabledSites` (exact or
+  subdomain), including requests from embedded frames.
 - Map `details.type` through `mapResourceType`, then call
   `engine.matchRequest(url, type, documentUrl)`.
 - On a block: increment `state.blocked` and `state.blockedBySite[site]` (keyed by
@@ -243,7 +248,8 @@ graph without a deliberate redesign.
   no blocking response so the request continues with the substituted body.
   Navigations are never redirected or rewritten, and an unknown alias falls
   back to a cancel.
-- Exceptions (`@@`) always win; the engine returns early on the first match.
+- Exceptions (`@@`) win unless an `$important` blocker applies; the engine
+  scans all candidates in load order to make that decision.
 
 **Never make the blocking listener async.** Engine state lives in memory and
 is rebuilt from `filters/default.txt` plus `customFilters` at startup; storage
@@ -253,7 +259,9 @@ rules cannot cancel navigation. `$popup` uses a Firefox-native two-step path:
 `webNavigation.onCreatedNavigationTarget` records the source tab/frame and does
 an early `tabs.remove()` when it can prove a block, and `webRequest.onBeforeRequest`
 synchronously cancels the popup's `main_frame` request when a popup source is
-known. A blocked tab id is tracked so the request is not counted twice.
+known. The blocked tab id stays marked until that request arrives (or a bounded
+cleanup timer fires), and a separate counted flag ensures the block is charged
+exactly once even if `tabs.remove()` loses the race.
 
 ### Engine shape
 
@@ -645,7 +653,8 @@ gets a syntax-table row when the feature is user-visible.
 10. **No hand-written `for` / `while` / `do` loops.** Express iteration with
     native helpers — `map`, `filter`, `reduce`, `forEach`, `some`, `every`,
     `find`, `flatMap`, `Array.from({length: n})`. `tools/check.js` fails on any
-    line that starts an explicit loop, in runtime code *and* tools.
+    line that starts an explicit loop, in runtime code *and* tools. The
+    non-packaged `browser/` scaffold is exempt from this check.
 
 ---
 
@@ -659,10 +668,11 @@ web-ext lint --source-dir . --output text
 
 The bar is: tests pass, build succeeds, `web-ext lint` reports **0 errors and
 0 warnings**. `tools/check.js` asserts MV2, the 153.0 floor, the gecko id,
-data-collection disclosure, the `publicSuffix` and `webNavigation` permissions,
+data-collection disclosure (`required: ["none"]`), the `publicSuffix`,
+`webNavigation`, `webRequest`, `webRequestBlocking` and `<all_urls>` permissions,
 every manifest-referenced file, `node --check` on all scripts, the loop-free
-rule across every `.js` file (including tools), and the wapi boundary rule that
-keeps raw `browser.*`/`chrome.*` calls inside `lib/wapi/`.
+rule across every packaged `.js` file (including tools), and the wapi boundary
+rule that keeps raw `browser.*`/`chrome.*` calls inside `lib/wapi/`.
 If any of those change, update the check in the same commit.
 
 For manual testing: `npm run dev` (or load `manifest.json` through

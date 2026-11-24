@@ -153,8 +153,9 @@ affected, and paused tabs keep their existing pause behavior.
 
 An `allow` rule skips all WildFire handling for that type, including parameter
 and header edits, CSP injection/report stripping, redirects and rewrites. A
-`block` rule cancels the request, counts once, and appears in the local
-Inspector as a site-rule decision.
+rewrite already started before the rule changed still gets its response headers
+normalized so the substituted body stays valid. A `block` rule cancels the
+request, counts once, and appears in the local Inspector as a site-rule decision.
 
 ## Curated CSP rules
 

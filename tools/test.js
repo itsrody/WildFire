@@ -68,7 +68,8 @@ const loadEngine = target => loadFiles(target, ENGINE_FILES);
 const loadScriptlets = target => loadFiles(target, SCRIPTLET_FILES);
 const loadClient = target => loadFiles(target, [CLIENT_FILE]);
 const context = vm.createContext({
-  console, URL, CSS: { supports: () => true }, location: { hostname: 'page.example' }
+  console, URL, setTimeout, clearTimeout, setImmediate,
+  CSS: { supports: () => true }, location: { hostname: 'page.example' }
 });
 context.window = context;
 vm.runInContext(fs.readFileSync(path.join(ROOT, 'lib/state/store.js'), 'utf8'), context, {
@@ -285,10 +286,17 @@ assert.strictEqual(scope.documentUrlFor({ tabId: 8, frameId: 0, documentId: 'doc
 scope.observeRequest({
   tabId: 11, frameId: 0, type: 'main_frame', url: 'https://nav.example/', documentId: 'doc-nav'
 });
-assert.strictEqual(scope.topUrlForTab(11), 'https://nav.example/',
-  'a main-frame request updates the top-level URL before commit');
-assert.strictEqual(scope.siteForTab(11), 'nav.example',
-  'site attribution follows the main-frame request URL');
+assert.strictEqual(scope.topUrlForTab(11), '',
+  'a pending main-frame request does not replace the committed top-level URL');
+assert.strictEqual(scope.siteForTab(11), '',
+  'a cancelled navigation cannot poison site attribution');
+const pendingNav = scope.contextFor({
+  tabId: 11, frameId: 0, type: 'main_frame', url: 'https://nav.example/', documentId: 'doc-nav'
+});
+assert.strictEqual(pendingNav.topUrl, 'https://nav.example/',
+  'the pending request still supplies request-scoped top-level context');
+assert.strictEqual(pendingNav.documentUrl, 'https://nav.example/',
+  'the pending navigation URL is its own document scope');
 
 scope.observeNavigation({ tabId: 9, frameId: 0, documentId: 'doc-disabled', url: 'https://blocked.example/' });
 assert.strictEqual(scope.contextFor({ tabId: 9, frameId: 0 }).disabled, true,
@@ -306,8 +314,19 @@ assert.strictEqual(scope.blockedForTab(10), 0,
 scope.markPopup(7, 'https://source.example/');
 assert.strictEqual(scope.popupSourceFor(7), 'https://source.example/', 'popup source is stored per tab');
 scope.markPopupBlocked(7);
+scope.markPopupCounted(7);
+assert.strictEqual(scope.isPopupBlocked(7), true, 'a popup block stays pending until its request');
+assert.strictEqual(scope.isPopupCounted(7), true, 'a pending popup block tracks its count');
 assert.strictEqual(scope.consumePopupBlock(7), true, 'a popup block is consumed once');
 assert.strictEqual(scope.isPopupBlocked(7), false, 'consuming clears the popup block flag');
+assert.strictEqual(scope.isPopupCounted(7), false, 'consuming clears the popup count flag');
+assert.strictEqual(scope.popupSourceFor(7), '', 'consuming clears the popup source');
+scope.markPopup(7, 'https://source.example/');
+scope.markPopupBlocked(7);
+scope.markPopupCounted(7);
+scope.clearPopup(7);
+assert.strictEqual(scope.isPopupBlocked(7), false, 'cleanup clears a popup block with no follow-up request');
+assert.strictEqual(scope.isPopupCounted(7), false, 'cleanup clears the popup count');
 scope.setCosmetic(7, { selectors: ['.ad'] });
 scope.setScriptlets(7, { hash: 'v1' });
 assert.deepStrictEqual(scope.getCosmetic(7), { selectors: ['.ad'] }, 'cosmetic cache is per page');
@@ -549,6 +568,31 @@ assert.strictEqual(
 assert.strictEqual(
   documentEngine.matchPopup('https://scoped.example/open', 'https://other.example/').blocked,
   false, '$popup honors document exclusions');
+
+const popupModifierEngine = new FilterEngine(null, alias => CspResources.resolve(alias));
+popupModifierEngine.load([
+  '||cdn.example^$popup,csp=no-script',
+  '||cdn.example^$popup,removeparam=utm_source',
+  '||cdn.example^$popup,removeheader=request:cookie',
+  '||doc.example^$document,redirect=noopjs'
+].join('\n'));
+assert.deepStrictEqual(
+  Array.from(popupModifierEngine.matchCsp(
+    'https://cdn.example/app.js', 'document', 'https://source.example/').directives),
+  [], '$popup rules never inject CSP on ordinary documents');
+assert.deepStrictEqual(
+  Array.from(popupModifierEngine.matchRemoveparam(
+    'https://cdn.example/app.js?utm_source=x', 'document', 'https://source.example/').params),
+  [], '$popup rules never remove parameters on ordinary documents');
+assert.deepStrictEqual(
+  Array.from(popupModifierEngine.matchRemoveheader(
+    'https://cdn.example/app.js', 'document', 'https://source.example/').headers),
+  [], '$popup rules never remove headers on ordinary documents');
+const documentRedirect = popupModifierEngine.matchRequest(
+  'https://doc.example/landing', mapResourceType('main_frame'), 'https://source.example/');
+assert.strictEqual(documentRedirect.blocked, true, '$document redirect rules still block navigation');
+assert.strictEqual(documentRedirect.redirect, null,
+  'matchRequest never returns a redirect target for a navigation');
 
 const plainEngine = new FilterEngine();
 plainEngine.load('example.net*track');
@@ -4908,6 +4952,219 @@ async function testCompilerTimeoutFallback() {
   compiler.destroy();
 }
 
+async function testTrafficPathRegressions() {
+  const savedFetch = context.fetch;
+  const savedWarn = console.warn;
+  const savedDebug = console.debug;
+  console.warn = () => {};
+  console.debug = () => {};
+  context.fetch = async url => String(url).includes('default.compiled.json')
+    ? { ok: false }
+    : { ok: true, text: async () => '' };
+
+  const hooks = {};
+  const localData = {};
+  const local = {
+    async get(key) { return key === undefined ? Object.assign({}, localData) : { [key]: localData[key] }; },
+    async set(patch) { Object.assign(localData, patch || {}); },
+    async remove(key) { delete localData[key]; }
+  };
+  let delaySave = false;
+  let releaseSave = null;
+  const store = {
+    defaults: WildFireStore.defaults,
+    async get() { return Object.assign({}, WildFireStore.defaults); },
+    async save(next) {
+      if (delaySave) {
+        delaySave = false;
+        await new Promise(resolve => { releaseSave = resolve; });
+      }
+      return Object.assign({}, next);
+    }
+  };
+  const hub = { addListener() {}, removeListener() {} };
+  const browserApi = {
+    runtime: {
+      getURL: path => 'moz-extension://test/' + path,
+      onMessage: hub,
+      onConnect: hub
+    },
+    storage: { local },
+    browserAction: { setBadgeText: () => {}, setBadgeBackgroundColor: () => {} },
+    webRequest: {
+      onBeforeRequest: {
+        addListener(fn, filter) {
+          if (filter && Array.isArray(filter.types) && filter.types.includes('csp_report')) hooks.cspReport = fn;
+          else hooks.beforeRequest = fn;
+        }
+      },
+      onBeforeSendHeaders: { addListener(fn) { hooks.sendHeaders = fn; } },
+      onHeadersReceived: { addListener(fn) { hooks.headers = fn; } },
+      onCompleted: hub,
+      onErrorOccurred: hub,
+      onBeforeRedirect: hub,
+      filterResponseData: () => ({
+        ondata() {}, onstop() {}, onerror() {}, write() {}, close() {}, disconnect() {}
+      })
+    },
+    webNavigation: {
+      onCreatedNavigationTarget: { addListener(fn) { hooks.popup = fn; } },
+      onCommitted: hub,
+      onReferenceFragmentUpdated: hub,
+      onHistoryStateUpdated: hub
+    },
+    tabs: {
+      query: async () => [],
+      remove: async () => new Promise(() => {}),
+      sendMessage: async () => {},
+      onUpdated: hub,
+      onRemoved: hub
+    },
+    alarms: {
+      onAlarm: hub, clear: async () => {}, get: async () => null, create: async () => {}
+    },
+    contentScripts: { register: async () => ({ unregister: async () => {} }) },
+    publicSuffix: { getDomain: host => host.split('.').slice(-2).join('.') }
+  };
+
+  try {
+    const bg = WildFireBackground.create({ browserApi, store });
+    await bg.start();
+    const c = bg.context;
+    const wait = () => new Promise(resolve => setTimeout(resolve, 20));
+
+    c.state = Object.assign({}, c.state, {
+      enabled: true,
+      customFilters: '||blocked-target.test^$document',
+      disabledSites: [],
+      siteRules: {}
+    });
+    await c.loadFilters(true);
+    await wait();
+    c.pageStore.observeNavigation({
+      tabId: 1, frameId: 0, documentId: 'doc-news', url: 'https://news.example.com/'
+    });
+    const nav = c.onBeforeRequest({
+      url: 'https://blocked-target.test/landing',
+      type: 'main_frame',
+      tabId: 1,
+      frameId: 0,
+      documentUrl: 'https://blocked-target.test/landing',
+      requestId: 'nav-block'
+    });
+    assert.ok(nav && nav.cancel, 'a $document rule cancels the navigation');
+    assert.strictEqual(c.pageStore.topUrlForTab(1), 'https://news.example.com/',
+      'a cancelled navigation leaves the committed page untouched');
+    assert.strictEqual(c.state.blocked, 1, 'the navigation block is counted once');
+    assert.strictEqual(c.state.blockedBySite['example.com'], 1,
+      'a blocked navigation is attributed to the tab site');
+    assert.strictEqual(c.state.blockedBySite['blocked-target.test'] || 0, 0,
+      'a blocked navigation target is not charged for the block');
+
+    c.state = Object.assign({}, c.state, {
+      customFilters: '||popup.example^$popup',
+      disabledSites: [],
+      siteRules: {}
+    });
+    await c.loadFilters(true);
+    await wait();
+    c.pageStore.observeNavigation({
+      tabId: 2, frameId: 0, documentId: 'doc-source', url: 'https://source.example.com/'
+    });
+    assert.strictEqual(typeof hooks.popup, 'function', 'popup navigation hook is registered');
+    hooks.popup({
+      tabId: 3,
+      sourceTabId: 2,
+      sourceFrameId: 0,
+      url: 'https://popup.example/open'
+    });
+    const afterEarlyBlock = c.state.blocked;
+    assert.strictEqual(afterEarlyBlock, 2, 'the early popup block is counted once');
+    const popupRequest = c.onBeforeRequest({
+      url: 'https://popup.example/open',
+      type: 'main_frame',
+      tabId: 3,
+      frameId: 0,
+      documentUrl: 'https://popup.example/open',
+      requestId: 'popup-request'
+    });
+    assert.ok(popupRequest && popupRequest.cancel,
+      'a follow-up popup request is cancelled even before tabs.remove() lands');
+    assert.strictEqual(c.state.blocked, afterEarlyBlock,
+      'the follow-up popup request does not count twice');
+    assert.strictEqual(c.state.blockedBySite['popup.example'] || 0, 0,
+      'a popup block is attributed to its source site');
+    assert.strictEqual(c.popupCleanupTimers.has(3), false,
+      'consuming a pending popup block cancels its cleanup timer');
+
+    c.state = Object.assign({}, c.state, {
+      customFilters: '||api.example^$removeheader=response:x-track',
+      disabledSites: [],
+      siteRules: { 'example.com': { script: 'allow' } }
+    });
+    await c.loadFilters(true);
+    await wait();
+    c.pageStore.observeNavigation({
+      tabId: 4, frameId: 0, documentId: 'doc-top', url: 'https://www.example.com/'
+    });
+    c.pageStore.observeNavigation({
+      tabId: 4, frameId: 1, parentFrameId: 0, documentId: 'doc-frame',
+      url: 'https://embed.third.test/'
+    });
+    const iframeHeaders = c.onHeadersReceived({
+      url: 'https://api.example/data',
+      type: 'script',
+      tabId: 4,
+      frameId: 1,
+      documentUrl: 'https://embed.third.test/',
+      responseHeaders: [{ name: 'X-Track', value: '1' }]
+    });
+    assert.strictEqual(iframeHeaders, undefined,
+      'a top-level allow suppresses header edits inside embedded frames');
+
+    c.state = Object.assign({}, c.state, {
+      disabledSites: ['example.com'],
+      siteRules: {}
+    });
+    const pausedHeaders = c.onHeadersReceived({
+      url: 'https://api.example/data',
+      type: 'script',
+      tabId: 4,
+      frameId: 1,
+      documentUrl: 'https://embed.third.test/',
+      responseHeaders: [{ name: 'X-Track', value: '1' }]
+    });
+    assert.strictEqual(pausedHeaders, undefined,
+      'a paused top-level site suppresses header edits inside embedded frames');
+
+    c.state = Object.assign({}, c.state, {
+      enabled: true,
+      blocked: 0,
+      blockedBySite: {},
+      disabledSites: [],
+      siteRules: {}
+    });
+    delaySave = true;
+    const saving = c.persist({ cspReportAllow: ['reports.example'] });
+    await new Promise(resolve => setImmediate(resolve));
+    c.recordBlock(9, 'blocked.test');
+    releaseSave();
+    const saved = await saving;
+    assert.strictEqual(saved.state.blocked, 1,
+      'a counter recorded during a storage write survives the write');
+    assert.strictEqual(saved.state.blockedBySite['blocked.test'], 1,
+      'a per-site counter recorded during a storage write survives the write');
+    assert.deepStrictEqual(saved.state.cspReportAllow, ['reports.example'],
+      'the persisted patch is still applied after the concurrent counter');
+  } finally {
+    // Compiler status events are emitted asynchronously after loadFilters().
+    await new Promise(resolve => setTimeout(resolve, 50));
+    context.fetch = savedFetch;
+    console.warn = savedWarn;
+    console.debug = savedDebug;
+  }
+}
+
 Promise.resolve()
   .then(() => testPhase0Foundation())
   .then(() => testPhase1AAliases())
@@ -4916,6 +5173,7 @@ Promise.resolve()
   .then(() => testPhase1CRemoveModifiers())
   .then(() => testCompileCacheAndCompiler())
   .then(() => testCompilerTimeoutFallback())
+  .then(() => testTrafficPathRegressions())
   .then(() => testCompileCacheIdbLru())
   .then(() => testCompileInFlightDedup())
   .then(() => testIncrementalRemoteCompileSemantics())

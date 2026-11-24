@@ -112,14 +112,17 @@ if (!gecko || gecko.strict_min_version !== '153.0') {
   errors.push('browser_specific_settings.gecko.strict_min_version must be "153.0"');
 }
 if (!gecko || !gecko.id) errors.push('browser_specific_settings.gecko.id is required');
-if (!gecko || !gecko.data_collection_permissions) {
-  errors.push('browser_specific_settings.gecko.data_collection_permissions is required');
+const disclosure = gecko && gecko.data_collection_permissions;
+if (!disclosure || !Array.isArray(disclosure.required) ||
+    disclosure.required.length !== 1 || disclosure.required[0] !== 'none') {
+  errors.push('gecko.data_collection_permissions.required must be ["none"]');
 }
-['alarms', 'publicSuffix', 'webNavigation'].forEach(permission => {
-  if (!Array.isArray(manifest.permissions) || !manifest.permissions.includes(permission)) {
-    errors.push('permissions must include "' + permission + '"');
-  }
-});
+['alarms', 'publicSuffix', 'webNavigation', 'webRequest', 'webRequestBlocking', '<all_urls>']
+  .forEach(permission => {
+    if (!Array.isArray(manifest.permissions) || !manifest.permissions.includes(permission)) {
+      errors.push('permissions must include "' + permission + '"');
+    }
+  });
 
 const referenced = new Set();
 if (manifest.icons) Object.values(manifest.icons).forEach(value => referenced.add(value));
