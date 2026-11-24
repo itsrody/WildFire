@@ -92,6 +92,21 @@ const SCRIPTLET_CHAIN = [
   'lib/resources/scriptlets/shims/ubo-aeld.js',
   'lib/resources/scriptlets/shims/ubo-aopw.js',
   'lib/resources/scriptlets/shims/ubo-aost.js',
+  'lib/resources/scriptlets/shims/adguard-constructor.js',
+  'lib/resources/scriptlets/shims/adguard-events.js',
+  'lib/resources/scriptlets/shims/adguard-fetch-shim.js',
+  'lib/resources/scriptlets/shims/adguard-href-sanitizer.js',
+  'lib/resources/scriptlets/shims/adguard-innerhtml.js',
+  'lib/resources/scriptlets/shims/adguard-jsonpath-prune.js',
+  'lib/resources/scriptlets/shims/adguard-m3u-prune.js',
+  'lib/resources/scriptlets/shims/adguard-property-path.js',
+  'lib/resources/scriptlets/shims/adguard-refresh.js',
+  'lib/resources/scriptlets/shims/adguard-set-constant.js',
+  'lib/resources/scriptlets/shims/adguard-spoof-css.js',
+  'lib/resources/scriptlets/shims/adguard-timer-adjust.js',
+  'lib/resources/scriptlets/shims/adguard-window-open.js',
+  'lib/resources/scriptlets/shims/adguard-xhr-shim.js',
+  'lib/resources/scriptlets/shims/adguard-xml-prune.js',
   'lib/resources/scriptlets/api.js'
 ];
 

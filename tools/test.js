@@ -48,6 +48,21 @@ const SCRIPTLET_FILES = [
   'lib/resources/scriptlets/shims/ubo-aeld.js',
   'lib/resources/scriptlets/shims/ubo-aopw.js',
   'lib/resources/scriptlets/shims/ubo-aost.js',
+  'lib/resources/scriptlets/shims/adguard-constructor.js',
+  'lib/resources/scriptlets/shims/adguard-events.js',
+  'lib/resources/scriptlets/shims/adguard-fetch-shim.js',
+  'lib/resources/scriptlets/shims/adguard-href-sanitizer.js',
+  'lib/resources/scriptlets/shims/adguard-innerhtml.js',
+  'lib/resources/scriptlets/shims/adguard-jsonpath-prune.js',
+  'lib/resources/scriptlets/shims/adguard-m3u-prune.js',
+  'lib/resources/scriptlets/shims/adguard-property-path.js',
+  'lib/resources/scriptlets/shims/adguard-refresh.js',
+  'lib/resources/scriptlets/shims/adguard-set-constant.js',
+  'lib/resources/scriptlets/shims/adguard-spoof-css.js',
+  'lib/resources/scriptlets/shims/adguard-timer-adjust.js',
+  'lib/resources/scriptlets/shims/adguard-window-open.js',
+  'lib/resources/scriptlets/shims/adguard-xhr-shim.js',
+  'lib/resources/scriptlets/shims/adguard-xml-prune.js',
   'lib/resources/scriptlets/api.js'
 ];
 /* Client-side message backbone shared by extension pages and content scripts. */
@@ -2502,6 +2517,16 @@ function adguardScriptletContext(hostname) {
   const sandbox = {
     console: { log: () => {} },
     Promise, WeakMap, WeakSet, URL, Date, Math, Reflect,
+    CSS: { supports: () => true },
+    EventTarget: class EventTarget {
+      addEventListener() {}
+      removeEventListener() {}
+    },
+    XMLHttpRequest: class XMLHttpRequest {
+      open(method, url) { this.url = url; }
+      get responseText() { return this.body || ''; }
+      set responseText(value) { this.body = value; }
+    },
     JSON: { parse: text => JSON.parse(text), stringify: value => JSON.stringify(value) },
     location: {
       hostname,
@@ -2536,8 +2561,8 @@ function adguardScriptletContext(hostname) {
 
 const adguardContext = adguardScriptletContext('page.example');
 adguardContext.WildFireScriptlets.apply(adguardPayload);
-assert.strictEqual(adguardContext.adGuardFlag, true,
-  'AdGuard yes maps to a WildFire-owned true constant');
+assert.strictEqual(adguardContext.adGuardFlag, 'yes',
+  'AdGuard yes is preserved as a bounded string constant');
 assert.strictEqual(adguardContext.guardedByBothSyntaxes, undefined,
   'a #@%# exception cancels the same behavior written with ##+js');
 assert.strictEqual(adguardContext.document.browsingTopics, undefined,
@@ -2573,6 +2598,79 @@ storageContext.WildFireScriptlets.apply([{
 }]);
 assert.strictEqual(storageContext.localStorage.legacy, undefined,
   'AdGuard storage removal accepts WildFire-safe regex keys');
+
+const longPrunePath = Array.from({ length: 700 }, () => 'a').join('');
+[
+  ['abort-current-inline-script', ['EventTarget.prototype.addEventListener', 'window.TextDecoder']],
+  ['abort-on-property-read', ['wio-vpopunder']],
+  ['abort-on-stack-trace', ['EventTarget.prototype.addEventListener', 'inlineScript']],
+  ['remove-attr', ['data-block-adblock', '.player-wrap[data-block-adblock]']],
+  ['remove-class', ['is-hidden', '#checkclick']],
+  ['prevent-window-open', ['/include/redirect.php']],
+  ['prevent-window-open', ['!/sharing/link']],
+  ['prevent-window-open', ['0', 'cda.pl']],
+  ['prevent-settimeout', ['show', '10*1000']],
+  ['set-constant', ['aPopunder', 'emptyArray']],
+  ['set-constant', ['document.fourth', 'yes', '', 'asFunction']],
+  ['set-constant', ['video_player_config.players.0.adblock', 'false']],
+  ['set-constant', ['zJSYdQ ', 'true']],
+  ['inject-css-in-shadow-dom', ['.ads a[href^="https://amzn.to/"] { display:none!important; }']],
+  ['prevent-constructor', ['MutationObserver', '["blocked", "*"]']],
+  ['json-prune', ['[?(@.i && @.b)]$.e']],
+  ['json-prune', ['$..children.*[?(@.id=="ad-network-boot")].dangerouslySetInnerHTML.__html']],
+  ['json-prune', ['configs.[-].snapshot.[=]./nativead|displayad/']],
+  ['json-prune', [longPrunePath]]
+].forEach(([alias, args]) => {
+  assert.strictEqual(WildFireScriptlets.validate(alias, args, 'adguard'), '',
+    'AdGuard ' + alias + ' accepts bounded documented argument forms');
+});
+assert.ok(/not allowed/.test(WildFireScriptlets.validate(
+  'spoof-css', ['#ad', 'debug', 'true'], 'adguard')),
+'AdGuard debug CSS spoofing stays rejected');
+assert.ok(/trusted/.test(WildFireScriptlets.validate(
+  'trusted-set-constant', ['flag', 'false'], 'adguard')),
+'AdGuard trusted aliases stay rejected');
+
+const propertyPathContext = adguardScriptletContext('page.example');
+propertyPathContext.WildFireScriptlets.apply([{
+  alias: 'abort-on-property-read', syntax: 'adguard',
+  args: ['EventTarget.prototype.addEventListener'], domains: [], isException: false
+}]);
+assert.throws(() => propertyPathContext.EventTarget.prototype.addEventListener,
+  /blocked read/, 'AdGuard prototype-path property guards are honored');
+
+const jsonPathContext = adguardScriptletContext('page.example');
+jsonPathContext.WildFireScriptlets.apply([{
+  alias: 'json-prune', syntax: 'adguard',
+  args: ['$.playerResponse[?(@.ads)].keep'], domains: [], isException: false
+}]);
+assert.deepStrictEqual(jsonPathContext.JSON.parse(
+  '{"playerResponse":{"a":{"ads":1,"keep":2},"b":{"keep":3}}}'),
+{ playerResponse: { a: { ads: 1 }, b: { keep: 3 } } },
+'AdGuard JSONPath-shaped prune specs remove only guarded paths');
+
+const xhrDirectiveContext = adguardScriptletContext('page.example');
+xhrDirectiveContext.WildFireScriptlets.apply([{
+  alias: 'prevent-xhr', syntax: 'adguard',
+  args: ['ads.example', 'emptyArr'], domains: [], isException: false
+}]);
+const guardedXhr = new xhrDirectiveContext.XMLHttpRequest();
+guardedXhr.open('GET', 'https://ads.example/x');
+assert.strictEqual(guardedXhr.responseText, '[]',
+  'AdGuard XHR directives replace the response body with curated data');
+
+const constTokenContext = adguardScriptletContext('page.example');
+constTokenContext.WildFireScriptlets.apply([{
+  alias: 'set-constant', syntax: 'adguard',
+  args: ['emptyArrayData', 'emptyArray'], domains: [], isException: false
+}]);
+assert.deepStrictEqual(Array.from(constTokenContext.emptyArrayData), [],
+  'AdGuard emptyArray maps to a fresh WildFire-owned array');
+
+const timerDelay = adguardContext.WildFireScriptletCore.compileDelayMatcher('10*1000');
+assert.strictEqual(timerDelay.error, '', 'timer arithmetic is parsed as bounded data');
+assert.strictEqual(timerDelay.matcher(10000), true,
+  'timer arithmetic matches the computed delay');
 
 const rewriteEngine = new FilterEngine(null, null, null,
   alias => RewriteResources.hasAlias(alias),
@@ -5177,7 +5275,7 @@ async function testPreventFetchResponseConfig() {
   adguardFetchContext.WildFireScriptlets.apply([
     {
       alias: 'prevent-fetch', syntax: 'adguard',
-      args: ['*', '{}', 'opaque'], domains: [], isException: false
+      args: ['*', 'emptyObj', 'opaque'], domains: [], isException: false
     }
   ]);
   const adguardResponse = await adguardFetchContext.fetch('https://ads.example/x.js');

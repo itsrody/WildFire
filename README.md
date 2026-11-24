@@ -357,14 +357,18 @@ Constants include `true`, `false`, `null`, `undefined`, `0`, `1`, `emptyObj`,
 function tokens such as `noopFunc`, `trueFunc`, `falseFunc` and `throwFunc`.
 Needles can be case-insensitive literals or a conservative `/regex/` with `i`,
 `m`, `s` or `u` flags; balanced parentheses are plain needle data. Unsafe
-patterns are rejected at load time and never reach a page. Properties are plain dotted paths,
-and prototype paths such as `__proto__` are rejected. Every alias is validated
-again before it runs. `trusted-*` aliases stay rejected until WildFire has an
-explicit source-trust model.
+patterns are rejected at load time and never reach a page. Properties are plain dotted paths
+with optional numeric keys after the first segment; dangerous `__proto__` and
+`constructor` segments and terminal `prototype` paths are rejected. AdGuard
+property shims also accept a bounded set of documented Gecko prototype targets
+such as `EventTarget.prototype.addEventListener`. Every alias is validated again
+before it runs. `trusted-*` aliases stay rejected until WildFire has an explicit
+source-trust model.
 
 Timer defusers accept an optional delay matcher: an exact value, `min-max`,
-`min-`, `-max`, `!value` for negation, and `-0` for negative delays. Callback
-needles can also be negated with `!`. `prevent-window-open` matches all
+`min-`, `-max`, bounded arithmetic such as `10*1000`, `!value` for negation, and
+`-0` for negative delays. Callback needles can also be negated with `!`.
+`prevent-window-open` matches all
 `window.open()` arguments and accepts an optional decoy lifetime in seconds plus
 `obj` or `blank` replacement. `prevent-fetch` accepts a curated third
 response-config argument: a response type shorthand or a JSON object limited to
@@ -400,15 +404,23 @@ The catalog covers the documented untrusted AdGuard aliases, including:
 | Family | Examples |
 | --- | --- |
 | Shared behavior | `abort-current-inline-script`, `set-constant`, `prevent-fetch`, `remove-attr`, `json-prune`, `xml-prune` |
-| Privacy / navigation | `no-topics`, `no-protected-audience`, `prevent-navigation`, `prevent-constructor`, `prevent-canvas`, `prevent-element-src-loading` |
-| DOM / requests | `hide-in-shadow-dom`, `remove-in-shadow-dom`, `inject-css-in-shadow-dom`, `remove-request-query-parameter`, `prevent-innerHTML` |
+| Property / stack anchors | `EventTarget.prototype.addEventListener`, `wio-vpopunder`, `abort-on-stack-trace`, `inlineScript` |
+| Timer tuning | `adjust-setTimeout`, `adjust-setInterval`, exact match, `*` and bounded boost values |
+| Privacy / navigation | `no-topics`, `no-protected-audience`, `prevent-navigation`, `prevent-constructor`, `prevent-canvas`, `prevent-element-src-loading`, `prevent-refresh`, `prevent-addEventListener` |
+| DOM / requests | `hide-in-shadow-dom`, `remove-in-shadow-dom`, `inject-css-in-shadow-dom`, `remove-request-query-parameter`, `prevent-innerHTML`, `href-sanitizer`, `spoof-css` |
+| Data / responses | bounded JSONPath filters, legacy `[-]`/`[=]` prune paths, `prevent-fetch` body directives, `prevent-xhr` response modes, literal `m3u-prune` needles |
+| Constants | `emptyArray`, `yes`/`no` strings, `noopCallbackFunc`, `asFunction`, `asCallback`, `asResolved`, `asRejected` |
 | Analytics / detector stubs | `google-analytics`, `matomo`, `metrika-yandex-tag`, `prebid`, `scorecardresearch-beacon`, `set-popads-dummy` |
 | Introspection | `log`, `log-eval`, `log-addEventListener`, `dir-string` |
 | uBO bridges | `ubo-acis.js`, `ubo-aeld.js`, `ubo-aopw.js`, `ubo-aost` |
 
+AdGuard `set-constant` values such as `trueFunc`, `emptyArray` and
+`noopCallbackFunc` map to WildFire-owned data or named functions; unsafe or
+oversized arguments are rejected at load time. JSONPath-shaped prune specs are
+bounded data and only remove matched keys — no filter expression is evaluated.
 AdGuard aliases documented as debug-only or trusted-only are rejected. Filter
-text still never supplies code: values such as `trueFunc` map to WildFire-owned
-functions, and no `eval`, `Function` or dynamic source execution is used.
+text still never supplies code: no `eval`, `Function` or dynamic source
+execution is used.
 
 ## Design notes / limits
 
