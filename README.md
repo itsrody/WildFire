@@ -64,6 +64,21 @@ The smoke copy registers scriptlets in the main world so page-visible defusers
 can be measured; XPath hide state is reported as a diagnostic because Gecko
 evaluates node-context XPath in the content-script world.
 
+## Real-site smoke
+
+Run WildFire against a live site with the shipped remote lists enabled:
+
+```sh
+npm run smoke:site
+# optional: -- --url https://www.youtube.com --firefox /path/to/firefox --run-ms 10000 --out site.json
+```
+
+The tool opens the URL in a headed Firefox window by default (use `--headless`
+to opt out), waits for the preshipped remote list to load,
+and reports navigation timing, resource totals, engine counts, diagnostic phase
+totals, Inspector decisions, cosmetic/scriptlet timings, and remote-list state.
+Scriptlet timings reflect the rules active at navigation start.
+
 ## Counters
 
 The toolbar badge and popup count requests blocked on the active tab's site
