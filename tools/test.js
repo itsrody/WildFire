@@ -1584,6 +1584,217 @@ assert.strictEqual(WildFireScriptlets.validate('href-sanitizer', ['a', '[href]',
 assert.notStrictEqual(WildFireScriptlets.validate('href-sanitizer', ['a', '[href]', 'eval(1)']), '',
   'href-sanitizer rejects unknown transforms');
 
+assert.strictEqual(WildFireScriptlets.validate('remove-attr', ['onclick', 'a', 'stay complete']), '',
+  'remove-attr accepts the documented selector and applying flags');
+assert.strictEqual(WildFireScriptlets.validate('remove-attr', ['onclick|data-track']), '',
+  'remove-attr accepts an attribute list without a selector');
+assert.notStrictEqual(WildFireScriptlets.validate('remove-attr', ['onclick', 'a', 'eval(1)']), '',
+  'remove-attr rejects unsafe applying flags');
+assert.strictEqual(WildFireScriptlets.validate('remove-class', ['banner', 'a', 'stay']), '',
+  'remove-class accepts the documented selector and flags');
+assert.strictEqual(WildFireScriptlets.validate('set-attr', ['img', 'src', '[data-src]']), '',
+  'set-attr accepts a copied attribute value');
+assert.notStrictEqual(WildFireScriptlets.validate('set-attr', ['img', 'onclick', 'page()']), '',
+  'set-attr cannot install an event-handler attribute');
+assert.strictEqual(WildFireScriptlets.validate('prevent-innerHTML', ['a', '!safe']), '',
+  'prevent-innerHTML accepts a selector and negated pattern');
+assert.notStrictEqual(WildFireScriptlets.validate('prevent-innerHTML', ['a'.repeat(501)]), '',
+  'prevent-innerHTML rejects an oversized selector');
+assert.strictEqual(WildFireScriptlets.validate('prevent-requestanimationframe', ['!allowed']), '',
+  'the RAF defuser accepts a negated callback needle');
+assert.strictEqual(WildFireScriptlets.validate('remove-node-text',
+  ['#text', 'Ad', 'includes', 'sponsor', 'sedCount', '1', 'stay', '1', 'quitAfter', '1000']), '',
+  'remove-node-text accepts the documented tokens');
+assert.notStrictEqual(WildFireScriptlets.validate('remove-node-text',
+  ['#text', 'Ad', 'eval(1)']), '', 'remove-node-text rejects unknown tokens');
+assert.strictEqual(WildFireScriptlets.validate('remove-attr',
+  ['onclick', 'a', 'stay'], 'adguard'), '', 'AdGuard remove-attr reuses the shared flags');
+
+function scriptletTextNode(value) {
+  return {
+    nodeType: 3, nodeName: '#text', nodeValue: String(value),
+    get textContent() { return this.nodeValue; }
+  };
+}
+
+function scriptletElement(tag, attributes, classes, text) {
+  const attrs = Object.assign({}, attributes);
+  const classSet = new Set(classes || []);
+  const element = {
+    tagName: String(tag).toUpperCase(),
+    nodeName: String(tag).toUpperCase(),
+    nodeType: 1,
+    parentNode: null,
+    attributes: [],
+    childNodes: [],
+    classList: {
+      add: name => classSet.add(name),
+      remove: name => classSet.delete(name),
+      contains: name => classSet.has(name)
+    },
+    getAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(attrs, name) ? String(attrs[name]) : null;
+    },
+    setAttribute(name, value) {
+      const next = String(value);
+      const existing = this.attributes.find(attr => attr.name === name);
+      if (existing) existing.value = next;
+      else this.attributes.push({ name, value: next });
+      attrs[name] = next;
+      if (name === 'class') {
+        next.split(/\s+/).filter(Boolean).forEach(item => classSet.add(item));
+      }
+    },
+    removeAttribute(name) {
+      delete attrs[name];
+      this.attributes = this.attributes.filter(attr => attr.name !== name);
+    },
+    matches(selector) {
+      if (selector === '*') return true;
+      if (selector.startsWith('.')) return classSet.has(selector.slice(1));
+      if (selector.startsWith('#')) return attrs.id === selector.slice(1);
+      return selector.toLowerCase() === String(tag).toLowerCase();
+    },
+    get textContent() {
+      return this.childNodes.map(node => node.nodeType === 3
+        ? node.nodeValue : String(node.textContent || '')).join('');
+    },
+    set textContent(value) {
+      this.childNodes = value === '' ? [] : [scriptletTextNode(value)];
+    }
+  };
+  if (text) element.childNodes.push(scriptletTextNode(text));
+  Object.keys(attrs).forEach(name => element.attributes.push({ name, value: String(attrs[name]) }));
+  return element;
+}
+
+function scriptletDomContext() {
+  const elements = [
+    scriptletElement('a', { href: '/real', 'data-src': '/copy', onclick: 'page()' },
+      ['banner'], 'sponsor Ad'),
+    scriptletElement('div', { 'data-ad': '1', 'data-src': '/other' },
+      ['ad'], 'Other Ad'),
+    scriptletElement('img', { src: '/blank', 'data-src': '/copy' }, [], 'image')
+  ];
+  const sandbox = {
+    console, URL, Date, Math, WeakMap,
+    CSS: { supports: () => true },
+    location: { hostname: 'page.example', href: 'https://page.example/', pathname: '/', search: '' },
+    setTimeout: (handler, delay) => { sandbox.lastTimeout = [handler, delay]; return 42; },
+    clearTimeout: () => {},
+    requestAnimationFrame: () => 99,
+    addEventListener: () => {},
+    open: () => ({ real: true }),
+    MutationObserver: class FakeMutationObserver {
+      constructor(callback) { this.callback = callback; sandbox.observer = this; }
+      observe() {}
+      disconnect() { this.disconnected = true; }
+    }
+  };
+  sandbox.Element = class Element {
+    get innerHTML() { return this._html || ''; }
+    set innerHTML(value) { this._html = String(value); }
+  };
+  elements.forEach(element => Object.setPrototypeOf(element, sandbox.Element.prototype));
+  sandbox.document = {
+    readyState: 'complete',
+    cookie: '',
+    childNodes: elements,
+    documentElement: {},
+    querySelector: () => null,
+    querySelectorAll: selector => selector === '*'
+      ? elements : elements.filter(element => element.matches(selector)),
+    addEventListener: () => {}
+  };
+  sandbox.window = sandbox;
+  const vmContext = vm.createContext(sandbox);
+  loadScriptlets(vmContext);
+  vmContext.wildFireElements = elements;
+  return vmContext;
+}
+
+const attributeContext = scriptletDomContext();
+attributeContext.WildFireScriptlets.apply([
+  { alias: 'remove-attr', args: ['onclick', 'a', 'stay'], domains: [], isException: false },
+  { alias: 'remove-attr', args: ['data-ad'], domains: [], isException: false },
+  { alias: 'remove-class', args: ['banner', 'a'], domains: [], isException: false },
+  { alias: 'remove-class', args: ['ad'], domains: [], isException: false },
+  { alias: 'set-attr', args: ['img', 'src', '[data-src]'], domains: [], isException: false }
+]);
+assert.strictEqual(attributeContext.wildFireElements[0].getAttribute('onclick'), null,
+  'remove-attr takes the attribute before the selector');
+assert.strictEqual(attributeContext.wildFireElements[1].getAttribute('data-ad'), null,
+  'remove-attr defaults to every element');
+assert.strictEqual(attributeContext.wildFireElements[0].getAttribute('href'), '/real',
+  'remove-attr leaves unrelated attributes alone');
+assert.strictEqual(attributeContext.wildFireElements[0].classList.contains('banner'), false,
+  'remove-class takes the class before the selector');
+assert.strictEqual(attributeContext.wildFireElements[1].classList.contains('ad'), false,
+  'remove-class defaults to every element');
+assert.strictEqual(attributeContext.wildFireElements[2].getAttribute('src'), '/copy',
+  'set-attr copies a value from another attribute');
+assert.ok(attributeContext.observer, 'the stay token keeps a DOM observer active');
+
+const innerHtmlContext = scriptletDomContext();
+innerHtmlContext.wildFireElements[0]._html = 'initial';
+innerHtmlContext.WildFireScriptlets.apply([
+  { alias: 'prevent-innerHTML', args: ['a', 'blocked'], domains: [], isException: false }
+]);
+innerHtmlContext.wildFireElements[0].innerHTML = 'blocked content';
+assert.strictEqual(innerHtmlContext.wildFireElements[0].innerHTML, 'initial',
+  'prevent-innerHTML blocks a matching scoped assignment');
+innerHtmlContext.wildFireElements[1].innerHTML = 'blocked content';
+assert.strictEqual(innerHtmlContext.wildFireElements[1].innerHTML, 'blocked content',
+  'prevent-innerHTML leaves non-matching elements alone');
+
+const negatedInnerHtmlContext = scriptletDomContext();
+negatedInnerHtmlContext.WildFireScriptlets.apply([
+  { alias: 'prevent-innerHTML', args: ['div', '!safe'], domains: [], isException: false }
+]);
+negatedInnerHtmlContext.wildFireElements[1].innerHTML = 'safe';
+assert.strictEqual(negatedInnerHtmlContext.wildFireElements[1].innerHTML, 'safe',
+  'a negated innerHTML pattern keeps matching values');
+negatedInnerHtmlContext.wildFireElements[1].innerHTML = 'blocked';
+assert.strictEqual(negatedInnerHtmlContext.wildFireElements[1].innerHTML, 'safe',
+  'a negated innerHTML pattern blocks every other value');
+
+const rafContext = scriptletDomContext();
+rafContext.WildFireScriptlets.apply([
+  { alias: 'norafif', args: ['!allowed'], domains: [], isException: false }
+]);
+assert.strictEqual(rafContext.requestAnimationFrame(() => 'allowed'), 99,
+  'a negated RAF needle keeps the excluded callback');
+assert.strictEqual(rafContext.requestAnimationFrame(() => 'blocked'), 0,
+  'a negated RAF needle defuses every other callback');
+
+const textContext = scriptletDomContext();
+textContext.WildFireScriptlets.apply([
+  { alias: 'remove-node-text', args: ['#text', 'Ad', 'includes', 'sponsor'],
+    domains: [], isException: false }
+]);
+assert.strictEqual(textContext.wildFireElements[0].childNodes[0].nodeValue, '',
+  'remove-node-text honors the includes token');
+assert.strictEqual(textContext.wildFireElements[1].childNodes[0].nodeValue, 'Other Ad',
+  'remove-node-text leaves text that fails the includes token');
+
+const countContext = scriptletDomContext();
+countContext.WildFireScriptlets.apply([
+  { alias: 'rmnt', args: ['#text', 'Ad', 'sedCount', '1'], domains: [], isException: false }
+]);
+assert.strictEqual(countContext.wildFireElements[0].childNodes[0].nodeValue, '',
+  'sedCount removes the first match');
+assert.strictEqual(countContext.wildFireElements[1].childNodes[0].nodeValue, 'Other Ad',
+  'sedCount stops after the configured number of removals');
+
+const timedTextContext = scriptletDomContext();
+timedTextContext.WildFireScriptlets.apply([
+  { alias: 'remove-node-text', args: ['#text', 'Ad', 'stay', '1', 'quitAfter', '1000'],
+    domains: [], isException: false }
+]);
+assert.ok(timedTextContext.observer, 'stay keeps remove-node-text observing');
+assert.strictEqual(timedTextContext.lastTimeout[1], 1000,
+  'quitAfter schedules observer cleanup');
+
 function domScriptletContext() {
   const sandbox = {
     console,

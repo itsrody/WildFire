@@ -285,6 +285,13 @@ needles can also be negated with `!`. `prevent-window-open` matches all
 response-config argument: a response type shorthand or a JSON object limited to
 `ok`, `redirected`, `status`, `statusText`, and `type`.
 
+`remove-attr` and `remove-class` take the attribute or class list first, then an
+optional selector and `asap`, `complete`, or `stay` flags. `set-attr` copies a
+source attribute with `[data-src]`. `prevent-innerHTML` accepts an optional
+selector and a pattern that can be negated with `!`. The RAF defuser accepts
+negated callback needles, and `remove-node-text` supports `includes`,
+`excludes`, `sedCount`, `stay`, and `quitAfter` tokens.
+
 The non-trusted uBO general-purpose and defuser catalog is implemented with
 original WildFire code. Trusted-only aliases (including `replace-node-text` /
 `rpnt`) remain rejected because WildFire has no source-trust model. Updated

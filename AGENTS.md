@@ -747,7 +747,8 @@ Phase 1A, 1B and 1C are implemented: canonical short aliases, safe needles,
 property traps, eval/timer/event/window defusers, DOM/storage aliases,
 `json-prune` with wildcard paths, response transforms, JSONPath/edit aliases,
 fetch/XHR guards and the detector defusers, timer delay ranges, window decoys,
-and curated fetch response configs. All non-trusted uBO general-purpose and
+curated fetch response configs, and documented DOM argument order and tokens.
+All non-trusted uBO general-purpose and
 defuser aliases are covered. Phase 2 is implemented: AdGuard quoted
 string-only scriptlets map to WildFire canonical behaviors; safe ABP
 `#?#`/`#@?#` procedural mappings, `:upward()`, and hide exception modifiers are
