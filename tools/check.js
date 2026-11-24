@@ -179,12 +179,15 @@ if (manifest.content_scripts) {
   });
 }
 const clientTag = '<script src="../../lib/wapi/wapi-client.js"></script>';
-[['ui/popup/popup.html', '<script src="popup.js"></script>'],
-  ['ui/options/options.html', '<script src="options.js"></script>'],
-  ['ui/inspector/inspector.html', '<script src="inspector.js"></script>']].forEach(([page, localTag]) => {
+[['ui/popup/popup.html', '<script src="popup.js"></script>', ''],
+  ['ui/options/options.html', '<script src="options.js"></script>', '<script src="editor.js"></script>'],
+  ['ui/inspector/inspector.html', '<script src="inspector.js"></script>', '']].forEach(([page, localTag, helperTag]) => {
   const source = fs.readFileSync(path.join(ROOT, page), 'utf8');
   if (!source.includes(clientTag) || source.indexOf(localTag) < source.indexOf(clientTag)) {
     errors.push(page + ' must load wapi-client.js before its own script');
+  }
+  if (helperTag && (!source.includes(helperTag) || source.indexOf(helperTag) > source.indexOf(localTag))) {
+    errors.push(page + ' must load ' + helperTag + ' before its own script');
   }
 });
 

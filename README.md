@@ -73,7 +73,9 @@ npm run icons
 ## Filter syntax
 
 The bundled `filters/default.txt` is intentionally small. Add your own rules in the
-options page (one per line):
+options page (one per line). The native editor shows line numbers, caret position,
+rule coloring, unsaved changes and line-numbered validation issues from WildFire's
+own parser; `Ctrl/Cmd+S` saves.
 
 | Rule | Meaning |
 | --- | --- |

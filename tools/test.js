@@ -40,6 +40,8 @@ const SCRIPTLET_FILES = [
 ];
 /* Client-side message backbone shared by extension pages and content scripts. */
 const CLIENT_FILE = 'lib/wapi/wapi-client.js';
+/* Native Options filter editor shell. */
+const EDITOR_FILE = 'ui/options/editor.js';
 /* Background controller is a classic-script chain loaded before the bootstrap. */
 const WAPI_FILES = [
   'lib/wapi/wapi.js',
@@ -3995,6 +3997,38 @@ async function testWapiStorage() {
     'the same native storage is reachable through wapi');
 }
 
+function testOptionsEditorHelpers() {
+  const editorCtx = vm.createContext({});
+  loadFiles(editorCtx, [EDITOR_FILE]);
+  const editor = editorCtx.WildFireOptionsEditor;
+  assert.strictEqual(editor.classifyLine('! comment'), 'comment');
+  assert.strictEqual(editor.classifyLine('@@||example.test^'), 'exception');
+  assert.strictEqual(editor.classifyLine('example.test##.ad'), 'cosmetic');
+  assert.strictEqual(editor.classifyLine("example.test#%#//scriptlet('set', 'a')"), 'cosmetic');
+  assert.strictEqual(editor.classifyLine('||example.test^$script'), 'network');
+  assert.strictEqual(editor.classifyLine('   '), 'blank');
+  assert.strictEqual(editor.lineNumbers('a\nb\nc').trimEnd(), '1\n2\n3',
+    'gutter numbers match editor lines');
+  const caret = editor.cursorPosition('ab\ncd', 5);
+  assert.strictEqual(caret.line, 2, 'caret line is one-based');
+  assert.strictEqual(caret.column, 3, 'caret column is one-based');
+  const lineRange = editor.selectedLineRange('one\ntwo\nthree', 4, 8);
+  assert.strictEqual(lineRange.start, 2, 'selection starts on the selected line');
+  assert.strictEqual(lineRange.end, 2,
+    'a trailing newline does not select the next line');
+  assert.strictEqual(editor.toggleComment('one\n  two', 1, 2), '! one\n  ! two',
+    'comment preserves indentation');
+  assert.strictEqual(editor.duplicateLines('one\ntwo', 2, 2), 'one\ntwo\ntwo',
+    'duplicate repeats the selected line');
+  assert.strictEqual(editor.deleteLines('one\ntwo\nthree', 2, 2), 'one\nthree',
+    'delete removes the selected line');
+  const found = editor.findNext('abc ABC', 'ABC', 1);
+  assert.strictEqual(found.start, 4, 'find starts at the case-insensitive match');
+  assert.strictEqual(found.end, 7, 'find selects the whole match');
+  assert.strictEqual(editor.replaceLines('a\nb\nc', 2, 2, line => '[' + line + ']'),
+    'a\n[b]\nc', 'line transforms are bounded to the selected range');
+}
+
 async function testWapiClient() {
   const sent = [];
   const queried = [];
@@ -4774,13 +4808,29 @@ async function testBackgroundControllerRobustness() {
       'a healthy startup loads bundled rules');
     const actions = healthy.debug().wapiRouter.actions();
     assert.strictEqual(actions.join(','), [
-      'state', 'toggle', 'toggle-site', 'set-filters',
+      'state', 'toggle', 'toggle-site', 'set-filters', 'validate-filters',
       'set-csp-report-blocking', 'set-csp-report-allow', 'set-site-rule', 'clear-site-rules',
       'reset-stats',
       'reload', 'suggested-lists', 'list-state', 'add-list', 'remove-list',
       'update-list', 'set-list-enabled', 'set-list-auto', 'cosmetic',
       'diagnostics', 'inspect'
     ].join(','), 'router registers every wildfire action');
+    const beforeValidation = healthy.context.state.customFilters;
+    const validation = await healthy.debug().onMessage({
+      type: 'wildfire:validate-filters',
+      value: '||good.example^\n! note\n/(a+)+$/\n||bad.example^$csp=not-curated'
+    }, {});
+    assert.strictEqual(validation.ok, true, 'filter validation returns a local result');
+    assert.strictEqual(validation.validation.counts.network, 1,
+      'validation counts accepted rules without loading them');
+    assert.strictEqual(validation.validation.issues.length, 2,
+      'validation reports every rejected rule');
+    assert.strictEqual(validation.validation.issues[0].line, 3,
+      'validation reports the unsafe regex line');
+    assert.strictEqual(validation.validation.issues[1].line, 4,
+      'validation reports the unknown alias line');
+    assert.strictEqual(healthy.context.state.customFilters, beforeValidation,
+      'validation never persists custom filters');
     const unknown = await healthy.debug().onMessage({ type: 'wildfire:missing' }, {});
     assert.strictEqual(unknown.error, 'Unknown action: missing',
       'unknown actions keep the existing error shape');
@@ -5183,6 +5233,7 @@ Promise.resolve()
   .then(() => testPerSiteBadgeCounters())
   .then(() => testWapiBackbone())
   .then(() => testWapiStorage())
+  .then(() => testOptionsEditorHelpers())
   .then(() => testWapiClient())
   .then(() => testWapiBackground())
   .then(() => testWapiRouter())

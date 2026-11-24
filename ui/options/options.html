@@ -18,7 +18,29 @@
   <section class="card">
     <h2>Custom filters</h2>
     <p class="hint">One rule per line. Supports <code>||domain^</code>, <code>@@</code> exceptions, <code>$domain=</code>, <code>$script</code>, <code>$third-party</code>, curated <code>$csp=</code> headers, curated <code>$rewrite=</code> bodies, <code>##selector</code> hiding, and curated <code>##+js()</code> scriptlets.</p>
-    <textarea id="filters" spellcheck="false" rows="14" placeholder="||ads.example.com^&#10;example.org##.banner"></textarea>
+    <div class="filter-editor">
+      <div id="filter-gutter" class="editor-gutter" aria-hidden="true">1</div>
+      <div class="editor-surface">
+        <pre id="filter-highlight" class="editor-highlight" aria-hidden="true"></pre>
+        <textarea id="filters" class="editor-input" wrap="off" spellcheck="false" rows="14"
+          aria-label="Custom filter rules" aria-describedby="filter-status filter-issues"
+          placeholder="||ads.example.com^&#10;example.org##.banner"></textarea>
+      </div>
+    </div>
+    <div class="editor-toolbar" aria-label="Filter editor commands">
+      <button id="validate-filters" class="button" type="button">Validate</button>
+      <button id="comment-filters" class="button" type="button">Comment</button>
+      <button id="duplicate-filters" class="button" type="button">Duplicate line</button>
+      <button id="delete-filters" class="button" type="button">Delete line</button>
+      <input id="filter-find" type="search" placeholder="Find rule" aria-label="Find rule">
+      <button id="find-filter" class="button" type="button">Find</button>
+      <span id="filter-position" class="editor-position">Ln 1, Col 1</span>
+      <span id="filter-dirty" class="editor-dirty" hidden>Unsaved changes</span>
+    </div>
+    <p class="hint editor-help">Shortcuts: <code>Ctrl/Cmd+S</code> save, <code>Tab</code> indent,
+      <code>Ctrl/Cmd+/</code> comment, <code>Ctrl/Cmd+D</code> duplicate,
+      <code>Ctrl/Cmd+Shift+K</code> delete line.</p>
+    <ul id="filter-issues" class="filter-issues" aria-live="polite"></ul>
     <div class="actions">
       <button id="save" class="button primary" type="button">Save &amp; reload</button>
       <span id="filter-status" class="status" role="status"></span>
@@ -77,6 +99,7 @@
   </section>
 
   <script src="../../lib/wapi/wapi-client.js"></script>
+  <script src="editor.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

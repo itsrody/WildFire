@@ -442,6 +442,7 @@ Background listens for `wildfire:*` messages:
 | `toggle` | flip global `enabled` |
 | `toggle-site` | add/remove a host in `disabledSites` |
 | `set-filters` | save custom filters, reload engine, refresh cosmetics |
+| `validate-filters` | parse custom filter text with a temporary engine and return line-numbered rejections; no state change |
 | `set-csp-report-blocking` | enable or disable default-on CSP report blocking |
 | `set-csp-report-allow` | replace the allowlist of report endpoint hosts |
 | `set-site-rule` | set/clear/flip one `resourceType` rule for a site |
@@ -507,6 +508,10 @@ and fetching still requires a separate explicit step.
   note where it currently appears. The Inspector table has its own
   `ui/inspector/` window, opens from the popup, and uses the existing dark
   palette; it never exposes upstream branding.
+- The Options custom-filter editor is native: the textarea is the single source
+  of truth, `ui/options/editor.js` owns the gutter, syntax overlay, caret status,
+  line commands and `wildfire:validate-filters` presentation. No editor
+  dependency or upstream keymap/theme is bundled.
 
 ---
 

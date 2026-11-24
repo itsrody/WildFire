@@ -22,6 +22,49 @@
   let state = null;
   let lists = [];
   let suggested = [];
+  let filtersInitialized = false;
+
+  function setFilterStatus(message) {
+    filterStatus.textContent = message || '';
+    if (message) {
+      setTimeout(() => {
+        if (filterStatus.textContent === message) filterStatus.textContent = '';
+      }, 5000);
+    }
+  }
+
+  const editor = WildFireOptionsEditor.create({
+    document,
+    client,
+    textarea: filters,
+    gutter: document.getElementById('filter-gutter'),
+    overlay: document.getElementById('filter-highlight'),
+    position: document.getElementById('filter-position'),
+    dirty: document.getElementById('filter-dirty'),
+    issues: document.getElementById('filter-issues'),
+    find: document.getElementById('filter-find'),
+    findButton: document.getElementById('find-filter'),
+    validateButton: document.getElementById('validate-filters'),
+    commentButton: document.getElementById('comment-filters'),
+    duplicateButton: document.getElementById('duplicate-filters'),
+    deleteButton: document.getElementById('delete-filters'),
+    setStatus: setFilterStatus,
+    onSave: () => saveFilters()
+  });
+
+  async function saveFilters() {
+    try {
+      const result = await client.send('set-filters', { value: editor.getValue() });
+      state = result.state;
+      editor.markClean();
+      setFilterStatus('Saved · ' + result.counts.network + ' network rules, ' +
+        result.counts.cosmetic + ' cosmetic rules loaded.');
+      statsText.textContent = Number(state.blocked || 0).toLocaleString() +
+        ' requests blocked since tracking began.';
+    } catch (error) {
+      setFilterStatus('Save failed: ' + error.message);
+    }
+  }
 
   function setListStatus(message) {
     listStatus.textContent = message || '';
@@ -205,7 +248,10 @@
   }
 
   function render() {
-    filters.value = state.customFilters || '';
+    if (!filtersInitialized) {
+      editor.resetView(state.customFilters || '');
+      filtersInitialized = true;
+    }
     statsText.textContent = Number(state.blocked || 0).toLocaleString() +
       ' requests blocked since tracking began.';
     renderSites();
@@ -215,15 +261,7 @@
     renderCspReports();
   }
 
-  document.getElementById('save').addEventListener('click', async () => {
-    const result = await client.send('set-filters', { value: filters.value });
-    state = result.state;
-    filterStatus.textContent = 'Saved · ' + result.counts.network + ' network rules, ' +
-      result.counts.cosmetic + ' cosmetic rules loaded.';
-    statsText.textContent = Number(state.blocked || 0).toLocaleString() +
-      ' requests blocked since tracking began.';
-    setTimeout(() => { filterStatus.textContent = ''; }, 4000);
-  });
+  document.getElementById('save').addEventListener('click', saveFilters);
 
   siteForm.addEventListener('submit', async event => {
     event.preventDefault();

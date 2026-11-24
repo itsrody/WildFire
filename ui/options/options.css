@@ -41,6 +41,102 @@ textarea, input, select {
 }
 textarea { resize: vertical; }
 input { max-width: 260px; }
+[hidden] { display: none !important; }
+
+.filter-editor {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  height: 240px;
+  border: 1px solid #3a3f49;
+  border-radius: 7px;
+  overflow: hidden;
+  background: #121419;
+}
+.editor-gutter {
+  padding: 10px 8px 10px 0;
+  overflow: hidden;
+  border-right: 1px solid #2c3038;
+  background: #171a20;
+  color: #6d7482;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: right;
+  white-space: pre;
+  user-select: none;
+}
+.editor-surface { position: relative; overflow: hidden; }
+.editor-highlight,
+.filter-editor .editor-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 0;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  tab-size: 2;
+  white-space: pre;
+}
+.editor-highlight {
+  overflow: hidden;
+  pointer-events: none;
+  color: #d7dbe3;
+  background: transparent;
+}
+.filter-editor .editor-input {
+  z-index: 1;
+  resize: none;
+  color: transparent;
+  caret-color: #ffd257;
+  background: transparent;
+  outline: none;
+}
+.filter-editor .editor-input::selection {
+  background: rgba(226, 81, 29, 0.35);
+  color: transparent;
+}
+.filter-line--comment { color: #6d7482; }
+.filter-line--exception .filter-exception,
+.filter-marker { color: #ff8a4c; font-weight: 600; }
+.filter-domain,
+.filter-pattern { color: #d7dbe3; }
+.filter-selector { color: #8bd48a; }
+.filter-options { color: #ffd257; }
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.editor-toolbar .button { padding: 6px 10px; font-size: 12px; }
+.editor-toolbar input { max-width: 150px; padding: 6px 8px; font-size: 12px; }
+.editor-position,
+.editor-dirty { color: #9aa2b1; font-size: 11px; }
+.editor-position { margin-left: auto; }
+.editor-dirty { color: #ffd257; }
+.editor-help { margin: 8px 0 0; }
+.filter-issues { margin: 10px 0 0; padding: 0; list-style: none; }
+.filter-issues li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  color: #ffb084;
+  font-size: 12px;
+}
+.filter-issues .empty { color: #8bd48a; }
+.filter-issues .issue-line {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #ff8a4c;
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+}
 
 .actions { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
 .button {
