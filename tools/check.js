@@ -181,7 +181,7 @@ if (manifest.content_scripts) {
 const clientTag = '<script src="../../lib/wapi/wapi-client.js"></script>';
 [['ui/popup/popup.html', '<script src="popup.js"></script>', ''],
   ['ui/options/options.html', '<script src="options.js"></script>', '<script src="editor.js"></script>'],
-  ['ui/inspector/inspector.html', '<script src="inspector.js"></script>', '']].forEach(([page, localTag, helperTag]) => {
+  ['ui/inspector/inspector.html', '<script src="inspector.js"></script>', '<script src="log.js"></script>']].forEach(([page, localTag, helperTag]) => {
   const source = fs.readFileSync(path.join(ROOT, page), 'utf8');
   if (!source.includes(clientTag) || source.indexOf(localTag) < source.indexOf(clientTag)) {
     errors.push(page + ' must load wapi-client.js before its own script');

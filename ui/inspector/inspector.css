@@ -50,6 +50,7 @@ input, select {
   cursor: pointer;
 }
 .button:hover { background: #2d323d; }
+.button:disabled { opacity: 0.45; cursor: default; }
 .status { color: #8bd48a; font-size: 12px; }
 .toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .toggle input[type="checkbox"] { width: auto; max-width: none; margin: 0; accent-color: #e2511d; }
@@ -66,7 +67,12 @@ input, select {
 .inspector-table .decision { color: #ff8a4c; font-weight: 600; }
 .inspector-table .decision.allowed, .inspector-table .decision.exception { color: #8bd48a; }
 .inspector-table .decision.skipped { color: #9aa2b1; }
+.inspector-table .time { color: #6d7482; white-space: nowrap; }
+.inspector-table .phase { color: #ffd257; }
+.inspector-table .request { color: #d7dbe3; }
+.inspector-table .detail { color: #9aa2b1; }
 .inspector-table .rule { color: #ffb084; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.inspector-table .copy-rule { padding: 3px 8px; font-size: 10px; white-space: nowrap; }
 .inspector-table .empty { color: #6d7482; }
 
 .footer { margin-top: 14px; color: #6d7482; font-size: 10px; text-align: center; }

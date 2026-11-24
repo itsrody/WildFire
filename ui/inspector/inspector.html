@@ -16,7 +16,8 @@
   </header>
 
   <section class="card">
-    <p class="hint">Nothing is persisted or sent anywhere. Recording is off until you enable it.</p>
+    <p class="hint">Nothing is persisted or sent anywhere. Recording is off until you enable it.
+      Freeze view holds the current rows while recording continues; use the checkbox to pause recording.</p>
     <label class="toggle"><input id="inspector-enabled" type="checkbox"> Record request decisions</label>
     <div class="actions inspector-filters">
       <label>Decision
@@ -25,15 +26,31 @@
           <option value="blocked">Blocked</option>
           <option value="redirected">Redirected</option>
           <option value="rewritten">Rewritten</option>
+          <option value="modified">Modified</option>
           <option value="exception">Exception</option>
           <option value="allowed">Allowed</option>
           <option value="csp">CSP</option>
-          <option value="csp-report">CSP report</option>
           <option value="skipped">Skipped</option>
         </select>
       </label>
+      <label>Phase
+        <select id="inspector-phase-filter">
+          <option value="all">All</option>
+          <option value="request">Request</option>
+          <option value="removeheader">Header</option>
+          <option value="removeparam">Parameter</option>
+          <option value="rewrite">Rewrite</option>
+          <option value="report-strip">Report strip</option>
+          <option value="csp">CSP</option>
+          <option value="csp-report">CSP report</option>
+        </select>
+      </label>
+      <label>Type <input id="inspector-type-filter" type="search" placeholder="script" spellcheck="false"></label>
       <label>Site <input id="inspector-site-filter" type="search" placeholder="example.com" spellcheck="false"></label>
+      <label>Search <input id="inspector-query-filter" type="search" placeholder="URL or rule" spellcheck="false"></label>
+      <label class="toggle"><input id="inspector-rules-only" type="checkbox"> Rules only</label>
       <button id="inspector-refresh" class="button" type="button">Refresh</button>
+      <button id="inspector-freeze" class="button" type="button">Freeze view</button>
       <button id="inspector-clear" class="button" type="button">Clear</button>
       <span id="inspector-status" class="status" role="status"></span>
     </div>
@@ -41,7 +58,7 @@
     <div class="inspector-table-wrap">
       <table class="inspector-table">
         <thead>
-          <tr><th>Decision</th><th>Request</th><th>Rule</th><th>Detail</th><th>Time</th></tr>
+          <tr><th>Time</th><th>Decision</th><th>Phase</th><th>Request</th><th>Rule</th><th>Detail</th><th></th></tr>
         </thead>
         <tbody id="inspector-rows"></tbody>
       </table>
@@ -50,6 +67,7 @@
 
   <footer class="footer">WildFire · local diagnostics only</footer>
   <script src="../../lib/wapi/wapi-client.js"></script>
+  <script src="log.js"></script>
   <script src="inspector.js"></script>
 </body>
 </html>

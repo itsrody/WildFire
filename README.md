@@ -28,7 +28,7 @@ content/cosmetic.js    injects hidden-element CSS, re-applies on demand
 filters/default.txt    bundled starter rules
 ui/popup/              toolbar popup with inspector buttons
 ui/options/            custom filters + paused sites
-ui/inspector/          local-only request decision window
+ui/inspector/          local-only request decision window with log helpers
 assets/                generated PNG icons
 tools/                 icon generator, validator, XPI packager
 dist/                  build output (generated)
@@ -192,9 +192,12 @@ WildFire does not change Firefox's ETP settings or native CSP preferences.
 The popup's **Open Inspector** button opens the standalone WildFire Inspector
 window; **Recording: off/on** toggles local recording without leaving the popup.
 The window shows bounded, in-memory entries for blocked requests, exceptions,
-redirects, rewrites, CSP headers, and CSP-report cancellations. Each row shows
-the decision, request host, matching WildFire rule, detail, and duration; the
-table can be filtered by decision or site.
+redirects, rewrites, header changes, CSP headers, and CSP-report cancellations.
+Each row shows the time, decision, phase, request host, resource type, matching
+WildFire rule, reason/detail, and duration. The log can be filtered by decision,
+phase, type, site and free text, limited to rows with a rule, frozen for review
+while recording continues, and a row's **Copy rule** button copies WildFire
+domain-rule syntax to the clipboard.
 
 Internal, extension, `data:`, `blob:` and `file:` URLs are skipped before engine
 matching; with recording on they appear as `skipped` decisions and never change

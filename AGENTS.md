@@ -124,7 +124,7 @@ filters/default.txt    bundled starter rules (~85 network rules)
 ui/
   popup/               toolbar popup (status, counter, pause controls, inspector buttons)
   options/             custom filters, paused sites, remote lists, stats reset
-  inspector/           local-only request decision window
+  inspector/           local-only request decision window (log.js helpers)
 assets/                generated PNG icons (16/32/48/96/128)
 tools/                 icon generator, validator, tests, XPI packager
 dist/                  generated XPI — ignored, never reviewed or committed
@@ -473,11 +473,16 @@ or filter decisions. `onHeadersReceived` is registered while loaded rules need
 enabled.
 
 `inspect` is local-only: `lib/background/inspector.js` keeps a bounded in-memory
-ring of request, CSP and CSP-report decisions. It is disabled by default, never
-persisted, and never sent anywhere; Options uses `wapi-client` to enable it,
-refresh it, and clear it. The blocking listener records only when the inspector
-is enabled, and inspection never changes `blocked`, `blockedBySite`, or filter
-decisions.
+ring of request, CSP and CSP-report decisions with phase, source, reason,
+document scope, top-level site, request identity and duration. It is disabled by
+default, never persisted, and never sent anywhere; Options uses `wapi-client`
+to enable it, refresh it, and clear it. The structured Inspector window
+(`ui/inspector/`) filters by decision, phase, resource type, site and free text,
+freezes the current view while recording continues, and copies a matching rule
+as WildFire syntax. `ui/inspector/log.js` owns the pure filtering, summary and
+copy-rule helpers; the page owns only DOM rendering. The blocking listener
+records only when the inspector is enabled, and inspection never changes
+`blocked`, `blockedBySite`, or filter decisions.
 
 Remote lists are strictly opt-in. The bundled `lib/state/suggested-lists.js`
 catalog is inert: Options shows its URLs as shortcuts, and clicking one only

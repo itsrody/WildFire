@@ -42,6 +42,8 @@ const SCRIPTLET_FILES = [
 const CLIENT_FILE = 'lib/wapi/wapi-client.js';
 /* Native Options filter editor shell. */
 const EDITOR_FILE = 'ui/options/editor.js';
+/* Local Inspector log helpers shared by the diagnostic window. */
+const INSPECTOR_LOG_FILE = 'ui/inspector/log.js';
 /* Background controller is a classic-script chain loaded before the bootstrap. */
 const WAPI_FILES = [
   'lib/wapi/wapi.js',
@@ -3824,7 +3826,9 @@ async function testInspector() {
   const rule = { pattern: '||ads.test^', sourceKind: 'custom', hash: 'abc' };
   const item = ctx.recordInspection({
     phase: 'request', decision: 'blocked', rule, detail: 'blocked', ms: 1.2346,
-    url: 'https://ads.test/a.js?secret=1', type: 'script', tabId: 7
+    reason: 'network rule', source: 'static',
+    url: 'https://ads.test/a.js?secret=1', type: 'script', tabId: 7,
+    requestId: 'req-1', documentUrl: 'https://page.test/', topHost: 'page.test'
   });
   assert.strictEqual(item.id, 1);
   assert.strictEqual(item.host, 'ads.test');
@@ -3833,6 +3837,12 @@ async function testInspector() {
   assert.strictEqual(item.rule.text, '||ads.test^');
   assert.strictEqual(item.rule.source, 'custom');
   assert.strictEqual(item.ms, 1.235, 'durations are rounded for display');
+  assert.strictEqual(item.source, 'static', 'decision source is recorded');
+  assert.strictEqual(item.reason, 'network rule', 'decision reason is recorded');
+  assert.strictEqual(item.topHost, 'page.test', 'top-level host is recorded');
+  assert.strictEqual(item.topSite, 'page.test', 'top-level site is recorded');
+  assert.strictEqual(item.documentUrl, 'https://page.test/', 'document scope is recorded');
+  assert.strictEqual(item.requestId, 'req-1', 'request identity is recorded');
 
   const snapshot = ctx.inspector.snapshot();
   assert.strictEqual(snapshot.entries.length, 1);
@@ -3855,16 +3865,66 @@ async function testInspector() {
   assert.strictEqual(ctx.recordInspection({ url: 'https://ads.test/' }), null);
 }
 
+function testInspectorLogHelpers() {
+  const logCtx = vm.createContext({});
+  loadFiles(logCtx, [INSPECTOR_LOG_FILE]);
+  const log = logCtx.WildFireInspectorLog;
+  const entries = [
+    {
+      at: 1700000000000, ms: 1.25, decision: 'blocked', phase: 'request',
+      type: 'script', host: 'ads.test', site: 'ads.test', topSite: 'page.test',
+      url: 'https://ads.test/a.js', detail: '', reason: 'network rule',
+      rule: { text: '||ads.test^', source: 'custom' }
+    },
+    {
+      at: 1700000001000, ms: 0, decision: 'allowed', phase: 'request',
+      type: 'image', host: 'page.test', site: 'page.test', topSite: 'page.test',
+      url: 'https://page.test/logo.png', detail: '', reason: 'no matching rule',
+      rule: null
+    },
+    {
+      at: 1700000002000, ms: 0.5, decision: 'blocked', phase: 'csp',
+      type: 'document', host: 'page.test', site: 'page.test', topSite: 'page.test',
+      url: 'https://page.test/', detail: 'script-src none', reason: 'curated csp',
+      rule: { text: '||page.test^$csp=no-script', source: 'wildfire' }
+    }
+  ];
+  const blockedScripts = log.filterEntries(entries, {
+    decision: 'blocked', phase: 'request', type: 'script', site: 'ads',
+    query: 'network rule', rulesOnly: true
+  });
+  assert.strictEqual(blockedScripts.length, 1, 'log filters combine every criterion');
+  assert.strictEqual(blockedScripts[0].rule.text, '||ads.test^');
+  assert.strictEqual(log.filterEntries(entries, { query: 'nomatch' }).length, 0,
+    'free-text search narrows the log');
+  const counts = log.summarize(entries);
+  assert.strictEqual(counts.blocked, 2, 'summaries count decisions');
+  assert.strictEqual(counts.allowed, 1);
+  assert.strictEqual(log.ruleForEntry(entries[0]), '||ads.test^',
+    'copy-as-rule uses the matching rule');
+  assert.strictEqual(log.ruleForEntry({ host: 'ads.test', rule: { text: '@@||ads.test^' } }),
+    '||ads.test^', 'an exception never copies as an exception');
+  assert.strictEqual(log.ruleForEntry({ host: 'ads.test', rule: null }), '||ads.test^',
+    'a blocked host becomes a WildFire domain rule');
+  assert.strictEqual(log.ruleForEntry({ host: '', rule: null }), '',
+    'rows without a host have no copyable rule');
+  assert.ok(log.timeLabel(entries[0]).includes('1.25 ms'),
+    'time labels keep the decision duration');
+}
+
 async function testInspectorPage() {
   function element(tag) {
     let text = '';
     return {
       tag,
       title: '',
+      type: '',
       checked: false,
+      disabled: false,
       value: '',
       colSpan: 0,
       className: '',
+      attributes: {},
       children: [],
       listeners: {},
       set textContent(value) {
@@ -3872,29 +3932,58 @@ async function testInspectorPage() {
         this.children.length = 0;
       },
       get textContent() { return text; },
+      setAttribute(name, value) { this.attributes[name] = String(value); },
       addEventListener(type, handler) { this.listeners[type] = handler; },
       appendChild(child) { this.children.push(child); return child; },
       append(...items) { items.forEach(item => this.children.push(item)); }
     };
   }
   const ids = [
-    'inspector-enabled', 'inspector-decision-filter', 'inspector-site-filter',
-    'inspector-refresh', 'inspector-clear', 'inspector-status',
-    'inspector-summary', 'inspector-rows'
+    'inspector-enabled', 'inspector-decision-filter', 'inspector-phase-filter',
+    'inspector-type-filter', 'inspector-site-filter', 'inspector-query-filter',
+    'inspector-rules-only', 'inspector-refresh', 'inspector-freeze', 'inspector-clear',
+    'inspector-status', 'inspector-summary', 'inspector-rows'
   ];
   const elements = {};
   ids.forEach(id => { elements[id] = element(id); });
   const sent = [];
+  const copied = [];
+  const timers = [];
   let snapshot = {
     enabled: true,
     limit: 256,
     entries: [
-      { id: 1, at: 1700000000000, decision: 'blocked', host: 'ads.test', url: 'https://ads.test/a.js', rule: { text: '||ads.test^' }, detail: '', ms: 1.2 },
-      { id: 2, at: 1700000001000, decision: 'allowed', host: 'page.test', url: 'https://page.test/', rule: null, detail: '', ms: 0.4 }
+      {
+        id: 1, at: 1700000000000, decision: 'blocked', phase: 'request', type: 'script',
+        host: 'ads.test', site: 'ads.test', topSite: 'page.test',
+        url: 'https://ads.test/a.js', documentUrl: 'https://page.test/',
+        rule: { text: '||ads.test^', source: 'custom' }, detail: '', reason: 'network rule', ms: 1.2
+      },
+      {
+        id: 2, at: 1700000001000, decision: 'allowed', phase: 'request', type: 'image',
+        host: 'page.test', site: 'page.test', topSite: 'page.test',
+        url: 'https://page.test/logo.png', documentUrl: 'https://page.test/',
+        rule: null, detail: '', reason: 'no matching rule', ms: 0.4
+      },
+      {
+        id: 3, at: 1700000002000, decision: 'csp', phase: 'csp', type: 'document',
+        host: 'page.test', site: 'page.test', topSite: 'page.test',
+        url: 'https://page.test/', documentUrl: 'https://page.test/',
+        rule: { text: '||page.test^$csp=no-script', source: 'wildfire' },
+        detail: 'script-src none', reason: 'curated csp', ms: 0.5
+      }
     ]
   };
   const ctx = vm.createContext({
-    console, setTimeout, Date,
+    console,
+    Date,
+    setTimeout: callback => { timers.push(callback); return timers.length; },
+    clearTimeout: id => { timers[id - 1] = null; },
+    navigator: {
+      clipboard: {
+        writeText: async value => { copied.push(value); }
+      }
+    },
     document: {
       getElementById: id => elements[id],
       createElement: tag => element(tag)
@@ -3905,37 +3994,90 @@ async function testInspectorPage() {
           sent.push(message.type);
           if (typeof message.value === 'boolean') snapshot.enabled = message.value;
           if (message.reset === true) snapshot.entries = [];
-          return { ok: true, inspect: snapshot };
+          return { ok: true, inspect: JSON.parse(JSON.stringify(snapshot)) };
         }
       }
     }
   });
   loadClient(ctx);
+  loadFiles(ctx, [INSPECTOR_LOG_FILE]);
   vm.runInContext(fs.readFileSync(path.join(ROOT, 'ui/inspector/inspector.js'), 'utf8'), ctx, {
     filename: 'inspector.js'
   });
   await new Promise(resolve => setImmediate(resolve));
 
+  const rows = elements['inspector-rows'];
+  const setFilter = (id, type, value) => {
+    elements[id].value = value;
+    elements[id].listeners[type]();
+  };
   assert.strictEqual(sent[0], 'wildfire:inspect', 'inspector window loads its local log');
   assert.strictEqual(elements['inspector-enabled'].checked, true);
-  assert.strictEqual(elements['inspector-rows'].children.length, 2);
+  assert.strictEqual(rows.children.length, 3);
   assert.strictEqual(elements['inspector-summary'].textContent,
-    '2 shown · 2 of 256 decisions recorded locally in memory.');
+    '3 shown · allowed 1 · blocked 1 · csp 1 · 3 of 256 decisions recorded locally in memory.');
+  assert.strictEqual(rows.children[0].children[1].textContent, 'csp',
+    'newest decisions appear first');
 
-  elements['inspector-decision-filter'].value = 'blocked';
-  elements['inspector-decision-filter'].listeners.change();
-  assert.strictEqual(elements['inspector-rows'].children.length, 1,
-    'decision filter narrows the visible log');
-
-  elements['inspector-site-filter'].value = 'nomatch';
-  elements['inspector-site-filter'].listeners.input();
-  assert.strictEqual(elements['inspector-rows'].children.length, 1);
-  assert.strictEqual(elements['inspector-rows'].children[0].children[0].textContent,
+  setFilter('inspector-decision-filter', 'change', 'blocked');
+  assert.strictEqual(rows.children.length, 1, 'decision filter narrows the visible log');
+  setFilter('inspector-phase-filter', 'change', 'csp');
+  assert.strictEqual(rows.children[0].children[0].textContent,
+    'No decisions match these filters.', 'phase filter combines with decision');
+  setFilter('inspector-decision-filter', 'change', 'all');
+  assert.strictEqual(rows.children.length, 1, 'phase filter works on its own');
+  setFilter('inspector-type-filter', 'input', 'script');
+  assert.strictEqual(rows.children[0].children[0].textContent,
+    'No decisions match these filters.', 'resource type filter narrows the log');
+  setFilter('inspector-phase-filter', 'change', 'all');
+  setFilter('inspector-type-filter', 'input', 'script');
+  assert.strictEqual(rows.children.length, 1, 'script type filter keeps the script row');
+  setFilter('inspector-query-filter', 'input', 'network rule');
+  assert.strictEqual(rows.children.length, 1, 'free-text search finds reasons');
+  elements['inspector-rules-only'].checked = true;
+  elements['inspector-rules-only'].listeners.change();
+  assert.strictEqual(rows.children.length, 1, 'rules-only keeps rows with a rule');
+  setFilter('inspector-site-filter', 'input', 'nomatch');
+  assert.strictEqual(rows.children.length, 1);
+  assert.strictEqual(rows.children[0].children[0].textContent,
     'No decisions match these filters.');
+
+  ['inspector-decision-filter', 'inspector-phase-filter', 'inspector-type-filter',
+    'inspector-query-filter', 'inspector-site-filter'].forEach(id => setFilter(id,
+    id.includes('filter') && id !== 'inspector-decision-filter' &&
+    id !== 'inspector-phase-filter' ? 'input' : 'change', ''));
+  elements['inspector-rules-only'].checked = false;
+  elements['inspector-rules-only'].listeners.change();
+  assert.strictEqual(rows.children.length, 3, 'clearing filters restores the log');
+
+  elements['inspector-freeze'].listeners.click();
+  assert.strictEqual(elements['inspector-freeze'].textContent, 'Unfreeze view');
+  assert.strictEqual(elements['inspector-freeze'].attributes['aria-pressed'], 'true');
+  assert.ok(elements['inspector-summary'].textContent.includes('View frozen.'));
+  snapshot.entries.push({
+    id: 4, at: 1700000003000, decision: 'blocked', phase: 'request', type: 'script',
+    host: 'new.test', site: 'new.test', topSite: 'page.test', url: 'https://new.test/a.js',
+    documentUrl: 'https://page.test/', rule: { text: '||new.test^' },
+    detail: '', reason: 'network rule', ms: 0.2
+  });
+  elements['inspector-refresh'].listeners.click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(rows.children.length, 3, 'a frozen view ignores later snapshots');
+  elements['inspector-freeze'].listeners.click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(elements['inspector-freeze'].textContent, 'Freeze view');
+  assert.strictEqual(rows.children.length, 4, 'unfreezing restores live updates');
+
+  const copy = rows.children[0].children[6].children[0];
+  copy.listeners.click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(copied[0], '||new.test^', 'copy-as-rule writes WildFire syntax');
+  assert.ok(elements['inspector-status'].textContent.startsWith('Copied rule:'));
 
   elements['inspector-clear'].listeners.click();
   await new Promise(resolve => setImmediate(resolve));
   assert.strictEqual(snapshot.entries.length, 0, 'clear resets the local log');
+  assert.strictEqual(rows.children.length, 1);
   assert.strictEqual(elements['inspector-summary'].textContent,
     '0 shown · 0 of 256 decisions recorded locally in memory.');
 }
@@ -5243,6 +5385,7 @@ Promise.resolve()
   .then(() => testWapiCapabilities())
   .then(() => testWapiScripting())
   .then(() => testInspector())
+  .then(() => testInspectorLogHelpers())
   .then(() => testInspectorPage())
   .then(() => testUrlSkip())
   .then(() => testWapiContexts())
