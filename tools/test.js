@@ -2578,15 +2578,25 @@ async function testBackgroundLoadFiltersIntegration() {
   const WorkerCtor = class extends FakeWorker { constructor() { super(); workers.push(this); } };
 
   const apiHooks = {};
+  const backgroundFetches = [];
   const ctx = vm.createContext({
     console, URL, setTimeout, clearTimeout, setImmediate, Promise,
     Map, Set, Array, Object, String, RegExp, JSON, Math, Boolean, Number, Error,
     TextEncoder, TextDecoder, Uint8Array, ArrayBuffer,
     fetch: async url => {
       const u = String(url);
+      backgroundFetches.push(u);
       if (u.includes('default.compiled.json')) return { ok: true, json: async () => fakeCompiled('||bundled.example^') };
       if (u.includes('default.txt')) {
         return { ok: true, text: async () => '! Title: WildFire starter\n! Expires: 7 days\n||bundled.example^' };
+      }
+      if (u.includes('auto.test/list.txt')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => '' },
+          text: async () => '||auto.example^'
+        };
       }
       return { ok: false, status: 404, json: async () => ({}), text: async () => '' };
     }
@@ -2652,7 +2662,7 @@ async function testBackgroundLoadFiltersIntegration() {
   const builtin = listed.lists.find(entry => entry.builtin);
   assert.ok(builtin, 'the background exposes the preshipped list');
   assert.strictEqual(builtin.enabled, true, 'the preshipped list is active by default');
-  assert.strictEqual(builtin.autoUpdate, false, 'the preshipped list has no network source');
+  assert.strictEqual(builtin.autoUpdate, true, 'the preshipped list auto-updates by default');
   assert.strictEqual(builtin.metadata.title, 'WildFire starter',
     'preshipped header metadata survives storage');
   assert.strictEqual(api.engine.matchRequest('https://bundled.example/x.js', 'script',
@@ -2666,6 +2676,30 @@ async function testBackgroundLoadFiltersIntegration() {
   await new Promise(resolve => setTimeout(resolve, 20));
   assert.strictEqual(api.engine.matchRequest('https://bundled.example/x.js', 'script',
     'https://site.test/').blocked, false, 'disabling the preshipped list removes its rules');
+
+  const autoOff = await api.onMessage({
+    type: 'wildfire:set-list-auto',
+    url: WildFireBundledLists.DEFAULT_URL,
+    value: false
+  }, {});
+  assert.strictEqual(autoOff.ok, true, 'Auto can be turned off for the preshipped list');
+  assert.strictEqual(autoOff.lists.find(entry => entry.builtin).autoUpdate, false,
+    'the preshipped Auto choice is stored');
+  const autoOn = await api.onMessage({
+    type: 'wildfire:set-list-auto',
+    url: WildFireBundledLists.DEFAULT_URL,
+    value: true
+  }, {});
+  assert.strictEqual(autoOn.ok, true, 'Auto can be restored for the preshipped list');
+
+  const autoUrl = 'https://auto.test/list.txt';
+  const autoAdded = await api.onMessage({ type: 'wildfire:add-list', url: autoUrl }, {});
+  assert.strictEqual(autoAdded.ok, true, 'adding a list succeeds');
+  const autoEntry = autoAdded.lists.find(entry => entry.url === autoUrl);
+  assert.ok(autoEntry, 'the added list is registered');
+  assert.strictEqual(autoEntry.text, '||auto.example^', 'adding a list auto-fetches its rules');
+  assert.strictEqual(autoEntry.enabled, false, 'an auto-fetched list stays disabled');
+  assert.ok(backgroundFetches.includes(autoUrl), 'the initial fetch used the network');
 
   // Instrument compiler to count actual compiles
   const origCompile = api.compiler.compile.bind(api.compiler);
@@ -4233,6 +4267,7 @@ async function testRemoteLists() {
   assert.strictEqual(registered.ok, true, 'a suggested URL can be registered');
   assert.strictEqual(registered.list.enabled, false, 'suggested lists are registered disabled');
   assert.strictEqual(registered.list.text, '', 'suggested lists are registered unfetched');
+  assert.strictEqual(registered.list.autoUpdate, true, 'new lists default to automatic updates');
 
   const bundledCatalog = WildFireBundledLists.all();
   assert.strictEqual(bundledCatalog.length, 1, 'one default list is preshipped');
@@ -4298,7 +4333,7 @@ async function testRemoteLists() {
   assert.strictEqual(bundledNetworkFetches, 0, 'seeding makes no network request');
   assert.strictEqual(seeded.list.builtin, true, 'the seeded entry is built-in');
   assert.strictEqual(seeded.list.enabled, true, 'the preshipped list starts enabled');
-  assert.strictEqual(seeded.list.autoUpdate, false, 'the preshipped list never auto-fetches');
+  assert.strictEqual(seeded.list.autoUpdate, true, 'the preshipped list auto-fetches by default');
   assert.strictEqual(seeded.list.text, headerText, 'the exact preshipped text is stored');
   assert.strictEqual(seeded.list.metadata.title, 'Example Rules',
     'preshipped header metadata is stored');
@@ -4321,9 +4356,13 @@ async function testRemoteLists() {
 
   assert.strictEqual((await preshipped.remove(WildFireBundledLists.DEFAULT_URL)).ok, false,
     'the preshipped list cannot be removed');
-  const manualOnly = await preshipped.setAutoUpdate(WildFireBundledLists.DEFAULT_URL, true);
-  assert.strictEqual(manualOnly.ok, false, 'the preshipped list cannot auto-update');
-  assert.ok(/manual-only/.test(manualOnly.error), 'the manual-only rule is explained');
+  const autoOffPreshipped = await preshipped.setAutoUpdate(WildFireBundledLists.DEFAULT_URL, false);
+  assert.strictEqual(autoOffPreshipped.ok, true, 'Auto can be disabled for the preshipped list');
+  assert.strictEqual(autoOffPreshipped.list.autoUpdate, false, 'the Auto choice is stored');
+  const autoOnPreshipped = await preshipped.setAutoUpdate(WildFireBundledLists.DEFAULT_URL, true);
+  assert.strictEqual(autoOnPreshipped.list.autoUpdate, true, 'Auto can be re-enabled');
+  const preshippedReseed = await preshipped.seedBundled();
+  assert.strictEqual(preshippedReseed.list.autoUpdate, true, 'reseeding preserves the Auto choice');
   const disabledBundled = await preshipped.setEnabled(WildFireBundledLists.DEFAULT_URL, false);
   assert.strictEqual(disabledBundled.ok, true, 'the preshipped list can be disabled');
   assert.strictEqual(await preshipped.enabledText(), '',
@@ -4352,6 +4391,21 @@ async function testRemoteLists() {
     'migration preserves a manually updated default list');
   assert.strictEqual(migrated.list.enabled, false, 'migration preserves the enabled choice');
 
+  let firstClock = 1000;
+  const firstRemote = RemoteLists.create({
+    storage: memoryStorage({ [RemoteLists.KEY]: { lists: [{ url: 'https://first.example/list' }] } }),
+    fetchImpl: async () => remoteResponse('||first.example^', { 'content-type': 'text/plain' }),
+    now: () => firstClock,
+    timeoutMs: 0
+  });
+  const firstAuto = await firstRemote.updateDue();
+  assert.strictEqual(firstAuto.results.length, 1,
+    'registered lists are fetched on the first automatic pass');
+  assert.strictEqual(firstAuto.results[0].list.text, '||first.example^',
+    'the automatic first fetch stores the list text');
+  assert.strictEqual(firstAuto.results[0].list.enabled, false,
+    'automatic fetching does not silently enable a list');
+
   let metaClock = 1000;
   const metaRemote = RemoteLists.create({
     storage: memoryStorage({ [RemoteLists.KEY]: { lists: [] } }),
@@ -4363,7 +4417,8 @@ async function testRemoteLists() {
     now: () => metaClock,
     timeoutMs: 0
   });
-  await metaRemote.add('https://meta.example/list.txt');
+  const metaAdded = await metaRemote.add('https://meta.example/list.txt');
+  assert.strictEqual(metaAdded.list.autoUpdate, true, 'new external lists default to Auto on');
   const metaFetched = await metaRemote.update('https://meta.example/list.txt');
   assert.strictEqual(metaFetched.list.metadata.title, 'Remote rules',
     'remote header metadata is parsed');
@@ -4381,6 +4436,30 @@ async function testRemoteLists() {
   metaClock = 1000 + 2 * dayMs;
   assert.strictEqual((await metaRemote.updateDue()).results.length, 1,
     'metadata expiry makes the list due');
+
+  let hourlyClock = 1000;
+  const hourlyRemote = RemoteLists.create({
+    storage: memoryStorage({
+      [RemoteLists.KEY]: {
+        lists: [{
+          url: 'https://hourly.example/list',
+          enabled: true,
+          text: '||hourly.example^',
+          checkedAt: 1000,
+          metadata: { expiresMs: 60 * 60 * 1000 }
+        }]
+      }
+    }),
+    fetchImpl: async () => remoteResponse('||hourly.example^'),
+    now: () => hourlyClock,
+    timeoutMs: 0
+  });
+  hourlyClock = 1000 + 60 * 60 * 1000 - 1;
+  assert.strictEqual((await hourlyRemote.updateDue()).results.length, 0,
+    'an hourly Expires interval postpones an early check');
+  hourlyClock = 1000 + 60 * 60 * 1000;
+  assert.strictEqual((await hourlyRemote.updateDue()).results.length, 1,
+    'an hourly Expires interval triggers a check');
 
   const htmlRemote = RemoteLists.create({
     storage: memoryStorage({ [RemoteLists.KEY]: { lists: [{ url: 'https://html.example/list' }] } }),
@@ -4437,8 +4516,9 @@ async function testRemoteLists() {
   const added = await remote.add('https://fresh.example/list.txt');
   assert.strictEqual(added.ok, true, 'a valid URL can be registered');
   assert.strictEqual(added.list.enabled, false, 'registering never enables a list');
-  assert.strictEqual(added.list.text, '', 'registering never fetches a list');
-  assert.strictEqual(fetchCalls.length, 0, 'add performs no network request');
+  assert.strictEqual(added.list.text, '', 'registering never fetches a list at the store layer');
+  assert.strictEqual(added.list.autoUpdate, true, 'new lists are scheduled for automatic fetch');
+  assert.strictEqual(fetchCalls.length, 0, 'add performs no network request at the store layer');
 
   const earlyEnable = await remote.setEnabled('https://fresh.example/list.txt', true);
   assert.strictEqual(earlyEnable.ok, false, 'an unfetched list cannot be enabled');
@@ -4471,11 +4551,17 @@ async function testRemoteLists() {
     '! wildfire remote: https://fresh.example/list.txt\n||tracker.example^',
     'only enabled lists contribute filter text');
 
-  const earlyAuto = await remote.setAutoUpdate('https://list.example/rules.txt', true);
-  assert.strictEqual(earlyAuto.ok, false, 'auto-update needs an enabled fetched list');
+  const optedOutAuto = await remote.setAutoUpdate('https://fresh.example/list.txt', false);
+  assert.strictEqual(optedOutAuto.ok, true, 'Auto can be turned off');
+  assert.strictEqual(optedOutAuto.list.autoUpdate, false, 'the Auto off choice is stored');
   const auto = await remote.setAutoUpdate('https://fresh.example/list.txt', true);
-  assert.strictEqual(auto.ok, true, 'auto-update can be opted into');
+  assert.strictEqual(auto.ok, true, 'Auto can be turned back on');
   assert.strictEqual(auto.list.autoUpdate, true);
+  const optedOutSnapshot = RemoteLists.normalizeSnapshot({
+    lists: [{ url: 'https://optout.example/list', autoUpdate: false, autoUpdateChoice: true }]
+  });
+  assert.strictEqual(optedOutSnapshot.lists[0].autoUpdate, false,
+    'an explicit Auto off choice survives reload');
 
   fetchMode = '500';
   clock = 3000;
@@ -4490,7 +4576,7 @@ async function testRemoteLists() {
   const due = await remote.updateDue();
   assert.strictEqual(due.ok, true, 'due updates succeed');
   assert.strictEqual(due.changed, false, 'unchanged auto-update does not mark rules changed');
-  assert.strictEqual(due.results.length, 1, 'only auto-enabled fetched lists are due');
+  assert.strictEqual(due.results.length, 2, 'all Auto-on lists are due, including unfetched ones');
 
   const sizeStorage = memoryStorage({
     [RemoteLists.KEY]: { lists: [{ url: 'https://size.example/list' }] }

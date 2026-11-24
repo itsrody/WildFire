@@ -1,5 +1,6 @@
 ! Title: WildFire default filters
 ! Description: Starter rules bundled with WildFire.
+! Expires: 1 day
 ! WildFire default filter list
 ! ---------------------------
 ! Syntax supported by this build:

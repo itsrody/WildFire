@@ -140,18 +140,19 @@ both positive and negated hosts use parent-domain scoping. Lines starting with
 
 The preshipped `WildFire default filters` list is built in. It is seeded from
 `filters/default.txt`, shown in Options with its header metadata, loaded once,
-and refreshed with each extension update. Its URL is
-`https://raw.githubusercontent.com/itsrody/WildFire/main/filters/default.txt`;
-**Update** revalidates it manually, but it never auto-updates and cannot be
-removed. It can be disabled in Options.
+and refreshed from
+`https://raw.githubusercontent.com/itsrody/WildFire/main/filters/default.txt`.
+It auto-fetches on startup, then revalidates on its `! Expires` interval. It
+cannot be removed; **Disable** or **Auto: off** opts out.
 
 Open Options → **Suggested lists** for shortcuts to well-known community lists,
 or **Filter lists** to add any `http(s)` URL. Adding a URL — suggested or typed —
-only registers it; use **Fetch** to download it, then **Enable** to apply its
-rules. You can **Update** it later, opt into daily checks with **Auto**, or
-**Remove** it. The suggested catalog is inert: WildFire never adds, fetches, or
-enables an external list for you, and it sends no data about you — the manifest
-still declares `data_collection_permissions: ["none"]`.
+fetches it immediately but leaves it disabled; choose **Enable** to apply its
+rules. Every list then revalidates on its own `! Expires` interval; **Auto: off**
+disables automatic checks, and **Update** forces a check now. The suggested
+catalog is inert: WildFire never adds or enables an external list for you, and
+it sends no data about you — the manifest still declares
+`data_collection_permissions: ["none"]`.
 
 Fetches bypass the HTTP cache, are size-capped (including `Content-Length`
 preflight), time-limited, and support `ETag`/`Last-Modified` revalidation. A
@@ -159,8 +160,8 @@ preflight), time-limited, and support `ETag`/`Last-Modified` revalidation. A
 time. WildFire reads standard `! Title`, `! Description`, `! Version`,
 `! Homepage`, `! License`, `! Expires`, `! Checksum`, `! Diff-Path` and
 `! Last Modified` headers, stores them with the exact text, and uses `! Expires`
-to pace opted-in checks. Everything is stored under `wildfire.remote.v1`, so the
-applied rules are reproducible.
+to pace checks (default one day, minimum one minute). Everything is stored under
+`wildfire.remote.v1`, so the applied rules are reproducible.
 
 ## Dynamic site rules
 
@@ -395,10 +396,10 @@ This is deliberately a *minimal* engine, not a full uBO port:
   registration is idempotent, a failed init settles readiness with a recorded
   error, and scriptlet registrations are swapped atomically so a failed
   replacement keeps the old one.
-- The default list ships preshipped and never auto-fetches; external lists are
-  opt-in: nothing is fetched until you add a URL and explicitly fetch it, and a
-  fetched list must be enabled before its rules apply. WildFire stores the exact
-  text, a hash, and parsed header metadata for each applied list.
+- The default list ships preshipped; external lists are added only by the user.
+  Every list auto-fetches once and revalidates on its `! Expires` interval unless
+  Auto is off. Added lists must be enabled before their rules apply. WildFire
+  stores the exact text, a hash, and parsed header metadata for each list.
 - Firefox ETP is left untouched. WildFire observes ETP block errors and
   classifications only while diagnostics are enabled, and never adds them to
   WildFire's counters. Header listeners are registered when loaded rules need

@@ -218,14 +218,12 @@
       actions.append(
         actionButton(entry.enabled ? 'Disable' : 'Enable',
           () => listAction('set-list-enabled', entry.url, !entry.enabled)),
-        actionButton(entry.text ? 'Update' : 'Fetch', () => listAction('update-list', entry.url))
+        actionButton(entry.text ? 'Update' : 'Fetch', () => listAction('update-list', entry.url)),
+        actionButton(entry.autoUpdate ? 'Auto: on' : 'Auto: off',
+          () => listAction('set-list-auto', entry.url, !entry.autoUpdate))
       );
       if (!entry.builtin) {
-        actions.append(
-          actionButton(entry.autoUpdate ? 'Auto: on' : 'Auto: off',
-            () => listAction('set-list-auto', entry.url, !entry.autoUpdate)),
-          actionButton('Remove', () => listAction('remove-list', entry.url))
-        );
+        actions.append(actionButton('Remove', () => listAction('remove-list', entry.url)));
       }
       item.append(row, actions);
       listsList.appendChild(item);

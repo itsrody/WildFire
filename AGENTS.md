@@ -121,7 +121,7 @@ lib/
     rewrite-resources.js   WildFire-owned bodies for $rewrite responses
   state/
     store.js           wapi.storage.local wrapper, key wildfire.state.v1
-    bundled-lists.js   inert catalog of the preshipped default list with a manual update URL
+    bundled-lists.js   inert catalog of the preshipped default list and update URL
     remote-lists.js    preshipped + opt-in remote list store, key wildfire.remote.v1
     suggested-lists.js inert catalog of suggested list URLs (Options shortcuts)
     page-store.js      per-tab/frame document, site, popup and page cache state
@@ -482,9 +482,9 @@ updatedAt, checkedAt, hash, lastError, metadata}]}` and is owned entirely by
 `lib/state/remote-lists.js`. The preshipped default entry is seeded from
 `filters/default.txt` with parsed header metadata, starts enabled, and uses
 `https://raw.githubusercontent.com/itsrody/WildFire/main/filters/default.txt` as
-a manual-only Update source. It cannot auto-update or be removed, and can be
-disabled in Options. The old `wildfire:bundled/default.txt` sentinel is migrated
-to that URL.
+its update source. It auto-fetches on startup, then follows `! Expires`; it
+cannot be removed and can be disabled or opted out of Auto in Options. The old
+`wildfire:bundled/default.txt` sentinel is migrated to that URL.
 
 Background listens for `wildfire:*` messages:
 
@@ -504,11 +504,11 @@ Background listens for `wildfire:*` messages:
 | `reload` | rebuild from bundled + custom + enabled remote filters |
 | `list-state` | return registered remote lists |
 | `suggested-lists` | return the inert catalog of suggested list URLs |
-| `add-list` | register an http(s) list URL, disabled and unfetched |
+| `add-list` | register an http(s) list URL, fetch it once, leave it disabled |
 | `remove-list` | forget a list and stop applying its rules |
 | `update-list` | explicitly fetch/revalidate one list |
 | `set-list-enabled` | apply or stop a fetched list |
-| `set-list-auto` | opt a fetched, enabled list into daily checks |
+| `set-list-auto` | turn automatic first fetch and `! Expires` checks on or off |
 | `cosmetic` | return selectors for a URL |
 | `diagnostics` | toggle/reset in-memory request metrics, ETP observation, CSP report counts and CNAME cache counters |
 | `inspect` | enable/reset/return the bounded local request decision log |
@@ -545,25 +545,26 @@ The preshipped default list is remote-list shaped and ships with exact text.
 parses `! Title`, `! Description`, `! Version`, `! Homepage`, `! License`,
 `! Expires`, `! Checksum`, `! Diff-Path` and `! Last Modified` metadata, stores
 the exact text and hash, and loads it once before custom and external remote
-rules. It is never fetched automatically: `set-list-auto` and `remove-list`
-reject it, `update-list` is a manual opt-in revalidation, and `set-list-enabled`
-can disable it. A manual update persists across extension reseeds; the legacy
+rules. It auto-fetches on startup, then revalidates at its `! Expires` interval;
+`remove-list` rejects it, while `set-list-enabled` and `set-list-auto` can opt it
+out. A fetched update persists across extension reseeds; the legacy
 `wildfire:bundled/default.txt` sentinel migrates to the default URL while
 preserving user state.
 
-External lists remain opt-in. The bundled `lib/state/suggested-lists.js` catalog
-is inert: Options shows its URLs as shortcuts, and clicking one only sends
-`add-list`, which never fetches. A list cannot be enabled until an explicit
-`update-list` has stored text. Fetches use `cache: 'no-store'`, validator headers,
-a size cap (including `Content-Length` preflight), an `AbortController` timeout,
-final-URL and HTML-error checks, and parsed header metadata. A 304 keeps the
-stored text and metadata but refreshes the check time; an unchanged 200 keeps
-the original content time. Daily checks exist only for enabled, fetched lists
-whose owner opted in via `set-list-auto`, with `! Expires` metadata shortening
-the interval down to one day; the `alarms` permission supports that one named
-alarm. Because nothing is collected or sent about the user and no external list
-is fetched before consent, `data_collection_permissions.required` stays
-`["none"]`.
+External lists are added only by the user. The bundled
+`lib/state/suggested-lists.js` catalog is inert: Options shows its URLs as
+shortcuts, and clicking one only sends `add-list`. Every registered list,
+including the default list, auto-fetches once and then revalidates at its
+`! Expires` interval, which defaults to one day and can be as short as one
+minute. `set-list-auto` can disable this per list. Added lists stay disabled
+until the user enables them, so automatic fetching never silently applies new
+rules. Fetches use `cache: 'no-store'`, validator headers, a size cap (including
+`Content-Length` preflight), an `AbortController` timeout, final-URL and
+HTML-error checks, and parsed header metadata. A 304 keeps the stored text and
+metadata but refreshes the check time; an unchanged 200 keeps the original
+content time. The `alarms` permission supports the one named alarm, whose period
+tracks the shortest active list interval. No data about the user is collected or
+reported, so `data_collection_permissions.required` stays `["none"]`.
 
 ---
 
