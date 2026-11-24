@@ -11,6 +11,7 @@
  *                            [--firefox /path/to/firefox] [--headless]
  *                            [--video VIDEO_ID] [--navigations 3] [--run-ms 6000]
  *                            [--list-wait-ms 60000] [--timeout 180000]
+ *                            [--profile dir] [--keep-profile-changes]
  *                            [--out file] [--keep]
  */
 'use strict';
@@ -46,6 +47,8 @@ const runMs = Math.max(0, Number(argValue('--run-ms', '6000')) || 6000);
 const listWaitMs = Math.max(0, Number(argValue('--list-wait-ms', '60000')) || 60000);
 const timeoutMs = Math.max(30000, Number(argValue('--timeout', '180000')) || 180000);
 const outFile = argValue('--out', '');
+const profileDir = argValue('--profile', '');
+const keepProfileChanges = args.includes('--keep-profile-changes');
 
 function die(message) {
   console.error(message);
@@ -531,6 +534,10 @@ function runWebExt(extDir, url, logFile) {
   ];
   if (!headed) params.push('--args=-headless', '--args=--disable-gpu');
   if (firefoxBinary) params.push('--firefox', firefoxBinary);
+  if (profileDir) {
+    params.push('--firefox-profile', profileDir, '--profile-create-if-missing');
+    if (keepProfileChanges) params.push('--keep-profile-changes');
+  }
   const proc = spawn('web-ext', params, { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
   const log = fs.createWriteStream(logFile);
   proc.stdout.pipe(log);
