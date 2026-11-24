@@ -1179,15 +1179,29 @@ cspExceptionEngine.load([
   '||ads.example^$csp=no-script',
   '@@||ads.example^$script',
   '||promo.example^$csp=no-frame',
+  '||promo.example^$csp=no-script',
   '@@||promo.example^$csp=no-frame'
 ].join('\n'));
 const plainException = cspExceptionEngine.matchCsp(
   'https://ads.example/a.js', 'script', 'https://page.example/');
-assert.strictEqual(plainException.exception, true, 'a plain exception covers CSP rules');
-assert.deepStrictEqual(Array.from(plainException.directives), [], 'an exception stops CSP injection');
+assert.strictEqual(plainException.exception, false, 'a plain exception does not cover CSP rules');
+assert.deepStrictEqual(Array.from(plainException.directives), ["script-src 'none'"],
+  'a plain network exception leaves CSP injection intact');
 assert.deepStrictEqual(
   cspFor(cspExceptionEngine, 'https://promo.example/', 'document', 'https://page.example/'),
-  [], 'a $csp exception also stops CSP injection');
+  ["script-src 'none'"], 'a $csp exception suppresses only its own alias');
+
+const cspBlanketEngine = new FilterEngine(null, resolveCsp);
+cspBlanketEngine.load([
+  '||promo.example^$csp=no-frame',
+  '||promo.example^$csp=no-script',
+  '@@||promo.example^$csp'
+].join('\n'));
+const blanketException = cspBlanketEngine.matchCsp(
+  'https://promo.example/', 'document', 'https://page.example/');
+assert.strictEqual(blanketException.exception, true, 'a bare $csp exception wins');
+assert.deepStrictEqual(Array.from(blanketException.directives), [],
+  'a bare $csp exception stops every directive');
 
 const cspMultiEngine = new FilterEngine(null, resolveCsp);
 cspMultiEngine.load([
@@ -3257,6 +3271,48 @@ async function testHideExceptionModifiers() {
   assert.strictEqual(pScoped.generichide, true, 'domain-scoped generichide applies');
   const pOther = eScoped.getHidePolicy('https://other.example/', 'document', 'https://other.example/');
   assert.strictEqual(pOther.generichide, false, 'generichide domain scope respected');
+
+  const eRealm = new FilterEngine(null, resolveCsp);
+  eRealm.load([
+    '##.ad',
+    '||ads.example^$script',
+    '@@||ads.example^$generichide',
+    '||ads.example^$csp=no-script',
+    '||ads.example^$removeparam=track',
+    '||ads.example^$removeheader=response:x-ad'
+  ].join('\n'));
+  assert.strictEqual(eRealm.matchRequest('https://ads.example/a.js', 'script', 'https://page.example/').blocked,
+    true, 'a hide exception cannot unblock a script');
+  assert.deepStrictEqual(
+    Array.from(eRealm.matchCsp('https://ads.example/a.js', 'script', 'https://page.example/').directives),
+    ["script-src 'none'"], 'a hide exception cannot suppress CSP injection');
+  assert.strictEqual(eRealm.matchRemoveparam('https://ads.example/a.js?track=1', 'script', 'https://page.example/').params.length,
+    1, 'a hide exception cannot suppress removeparam');
+  assert.strictEqual(eRealm.matchRemoveheader('https://ads.example/a.js', 'script', 'https://page.example/').headers.length,
+    1, 'a hide exception cannot suppress removeheader');
+
+  const eInvalid = new FilterEngine(null, resolveCsp);
+  eInvalid.load([
+    '||ads.example^$generichide',
+    '||ads.example^$script,generichide',
+    '||ads.example^$csp',
+    '@@||ads.example^$generichide,csp=no-script'
+  ].join('\n'));
+  assert.strictEqual(eInvalid.rejectedRegex.length, 4,
+    'non-exception hide, bare csp and mixed-realm rules are rejected');
+  assert.strictEqual(eInvalid.matchRequest('https://ads.example/a.js', 'script', 'https://page.example/').blocked,
+    false, 'rejected hide rules never become blockers');
+
+  const realmBlob = eRealm.toCompiled();
+  const eRestored = new FilterEngine(null, resolveCsp);
+  assert.strictEqual(eRestored.loadCompiled(realmBlob), true, 'realm-separated compiled blob loads');
+  assert.strictEqual(eRestored.getHidePolicy('https://ads.example/', 'document', 'https://ads.example/').generichide,
+    true, 'hide realm survives compiled load');
+  assert.strictEqual(eRestored.matchRequest('https://ads.example/a.js', 'script', 'https://page.example/').blocked,
+    true, 'network realm survives compiled load');
+  assert.deepStrictEqual(
+    Array.from(eRestored.matchCsp('https://ads.example/a.js', 'script', 'https://page.example/').directives),
+    ["script-src 'none'"], 'csp realm survives compiled load');
 
   const e5 = new FilterEngine();
   e5.load([

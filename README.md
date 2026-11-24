@@ -85,9 +85,9 @@ own parser; `Ctrl/Cmd+S` saves.
 | `/ads\.example\.com\/track$/` | Regular-expression match (safe subset) |
 | `@@||ads.example.com^` | Allow requests that would otherwise be blocked |
 | `@@/keep\.example\/ad/` | Regular-expression exception |
-| `@@||tracker.net^$elemhide` | Keep all elements visible on matching documents (`ehide`) |
-| `@@||tracker.net^$generichide` | Keep generic cosmetic rules from applying (`ghide`) |
-| `@@||tracker.net^$specifichide` | Keep domain-specific cosmetic rules from applying (`shide`) |
+| `@@||tracker.net^$elemhide` | Keep all elements visible on matching documents (`ehide`, exception-only) |
+| `@@||tracker.net^$generichide` | Keep generic cosmetic rules from applying (`ghide`, exception-only) |
+| `@@||tracker.net^$specifichide` | Keep domain-specific cosmetic rules from applying (`shide`, exception-only) |
 | `||tracker.net^$script` | Only block scripts |
 | `||tracker.net^$~image` | Block everything except images |
 | `||tracker.net^$all` | Match every resource type, overriding earlier type filters |
@@ -104,6 +104,8 @@ own parser; `Ctrl/Cmd+S` saves.
 | `||tracker.net^$script,rewrite=blank-js` | Replace the response body with WildFire's empty script |
 | `/ads\.example/([^/]+)\.js/$script,rewrite-rule=tagged-js` | Fill a WildFire rewrite template from regex captures |
 | `||tracker.net^$script,csp=no-script` | Add WildFire's `script-src 'none'` CSP header to matching script responses |
+| `@@||tracker.net^$csp=no-script` | Stop only that CSP directive on matching responses |
+| `@@||tracker.net^$csp` | Stop every CSP injection on matching responses |
 | `site.example##+js(set-constant, adblockDetected, false)` | Freeze a detection flag before page scripts run |
 | `site.example#@#+js(set-constant, adblockDetected, false)` | Cancel that scriptlet on the matching site |
 | `site.example#%#//scriptlet('set-constant', 'adblockDetected', 'false')` | AdGuard-style scriptlet with the same WildFire runtime |
@@ -165,7 +167,10 @@ request, counts once, and appears in the local Inspector as a site-rule decision
 matching response. Firefox enforces each CSP header independently, so WildFire
 only **appends** directives — your site's own headers are left untouched and
 the effective policy can only get stricter. Rules can use the usual resource
-type, domain and third-party options; an `@@` exception prevents injection.
+type, domain and third-party options. `@@||host^$csp=alias` suppresses only that
+alias; bare `@@||host^$csp` suppresses every CSP injection. A plain network
+exception does not suppress CSP, and document hide exceptions never affect
+request or header decisions.
 
 Filter text can never supply a header value. Only these WildFire-owned aliases
 are accepted: `no-script`, `no-inline-script`, `no-frame`, `no-worker`,
@@ -223,8 +228,9 @@ filter and one of the separate capture aliases `tagged-js`, `tagged-json`,
 WildFire's `{{1}}`–`{{9}}` placeholders. It cannot be combined with `$rewrite`.
 Unknown aliases, malformed rules and unsupported domain patterns are rejected
 when the list loads and never turn into request blockers.
-`elemhide/generichide/specifichide` are supported as document exception modifiers;
-unsupported ABP procedural selectors are rejected safely.
+`elemhide/generichide/specifichide` are supported as exception-only document
+modifiers; non-exception or combined hide/network rules are rejected. Unsupported
+ABP procedural selectors are rejected safely.
 
 ## Removeparam / removeheader (capability-gated)
 

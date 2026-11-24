@@ -268,14 +268,20 @@ exactly once even if `tabs.remove()` loses the race.
 
 ### Engine shape
 
-`FilterEngine.load(text)` resets and rebuilds four indexes:
+`FilterEngine.load(text)` resets and rebuilds three request-rule realms —
+`network`, `csp` and `hide` — each with its own host, token and unindexed
+indexes, plus cosmetic and scriptlet indexes:
 
 - `hostRules: Map<host, rule[]>` for `||host^` rules, keyed by the pattern's
   leading host (looked up against the request hostname and all its parents).
+  `cspHostRules` and `hideHostRules` mirror it for the other realms, so hide
+  exceptions can never suppress requests and CSP exceptions can never suppress
+  blockers.
 - `tokenRules: Map<token, rule[]>` for generic rules, keyed by a few 4-character
   tokens from each required literal chunk; `unindexedRules: rule[]` holds
   patterns with no usable token. Candidates are the union of host, token and
-  fallback matches, sorted by load order before exception/blocker selection.
+  fallback matches within one realm, sorted by load order before exception/blocker
+  selection.
 - `cosmeticByDomain` / `cosmeticExceptionsByDomain: Map<domain, selector[]>`
   plus `genericCosmetic` / `genericCosmeticExceptions`.
 - `scriptletRules`/`rejectedScriptlets` for `##+js(alias, args)` rules.
@@ -322,11 +328,13 @@ curated capture alias; fixed bodies cannot be used with captures. Rewrites never
 apply to navigations and count as one filtered/blocked request. Filter text can
 never supply a response body.
 
-`matchCsp()` is the response-header counterpart: any applicable `@@` exception
-stops injection, otherwise all matching curated directives are returned once
-each. `$csp` rules are excluded from `matchRequest()` so they never cancel
-requests. `CspResources.resolve()` is the only place CSP directive values are
-defined; an unknown alias is rejected at load time into `engine.rejectedCsp`
+`matchCsp()` is the response-header counterpart in the separate `csp` realm:
+a bare `@@...$csp` exception stops all injection, `@@...$csp=alias` stops only
+that alias, and a plain network exception has no effect. Matching curated
+directives are returned once each. `$csp` rules are excluded from
+`matchRequest()` so they never cancel requests. `CspResources.resolve()` is the
+only place CSP directive values are defined; an unknown alias is rejected at
+load time into `engine.rejectedCsp`
 rather than becoming a blocker. Background calls the synchronously registered
 `webRequest.onHeadersReceived` listener with `['blocking', 'responseHeaders']`
 and appends the directives as extra enforcing `Content-Security-Policy`
