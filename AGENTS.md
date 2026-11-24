@@ -115,6 +115,18 @@ lib/
       adguard-helpers.js  AdGuard argument mapping and original helpers
       definitions.js   uBO alias catalog (validators + implementations)
       adguard-definitions.js  AdGuard alias catalog delegated to uBO twins
+      shims/           one original compatibility shim per file
+        set-constant-tokens.js  expanded constant tokens
+        replace-node-text.js    `rpnt` and AdGuard replacement behavior
+        prevent-clipboard-write.js  clipboard write defuser
+        prevent-navigation.js   uBO-style navigation bridge
+        popads-net.js           dotted `popads.net` alias
+        multiup.js              MultiUp detector stub
+        edit-object-on-setter.js  JSONPath edit on assignment
+        ubo-acis.js             AdGuard `ubo-acis.js` bridge
+        ubo-aeld.js             AdGuard `ubo-aeld.js` bridge
+        ubo-aopw.js             AdGuard `ubo-aopw.js` bridge
+        ubo-aost.js             AdGuard `ubo-aost` bridge
       api.js           canonicalization, validation, apply, public API
     csp-resources.js   curated CSP directives for $csp response headers
     redirect-resources.js  WildFire-owned data-URI redirect resources
@@ -162,7 +174,12 @@ used **only** by `tools/`.
 8. `lib/resources/csp-resources.js` → `window.CspResources`
 9. `lib/resources/scriptlets/` chain, in order: `core.js`, `runtime.js`,
    `transforms.js`, `adguard-helpers.js`, `definitions.js`,
-   `adguard-definitions.js`, `api.js` → `window.WildFireScriptlets`
+   `adguard-definitions.js`, `shims/set-constant-tokens.js`,
+   `shims/replace-node-text.js`, `shims/prevent-clipboard-write.js`,
+   `shims/prevent-navigation.js`, `shims/popads-net.js`, `shims/multiup.js`,
+   `shims/edit-object-on-setter.js`, `shims/ubo-acis.js`, `shims/ubo-aeld.js`,
+   `shims/ubo-aopw.js`, `shims/ubo-aost.js`, `api.js` →
+   `window.WildFireScriptlets`
 10. `lib/resources/rewrite-resources.js` → `window.RewriteResources`
 11. `lib/compile/compile-cache.js` → `window.WildFireCompileCache`
 12. `lib/compile/compiler.js` → `window.WildFireCompiler`

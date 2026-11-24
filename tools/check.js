@@ -80,6 +80,17 @@ const SCRIPTLET_CHAIN = [
   'lib/resources/scriptlets/adguard-helpers.js',
   'lib/resources/scriptlets/definitions.js',
   'lib/resources/scriptlets/adguard-definitions.js',
+  'lib/resources/scriptlets/shims/set-constant-tokens.js',
+  'lib/resources/scriptlets/shims/replace-node-text.js',
+  'lib/resources/scriptlets/shims/prevent-clipboard-write.js',
+  'lib/resources/scriptlets/shims/prevent-navigation.js',
+  'lib/resources/scriptlets/shims/popads-net.js',
+  'lib/resources/scriptlets/shims/multiup.js',
+  'lib/resources/scriptlets/shims/edit-object-on-setter.js',
+  'lib/resources/scriptlets/shims/ubo-acis.js',
+  'lib/resources/scriptlets/shims/ubo-aeld.js',
+  'lib/resources/scriptlets/shims/ubo-aopw.js',
+  'lib/resources/scriptlets/shims/ubo-aost.js',
   'lib/resources/scriptlets/api.js'
 ];
 
