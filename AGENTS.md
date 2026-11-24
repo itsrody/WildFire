@@ -479,14 +479,13 @@ keyed by the tab's top-level site even when the request comes from an embedded
 frame. Storage key `wildfire.remote.v1` holds
 `{lists: [{url, builtin, enabled, autoUpdate, etag, lastModified, text,
 updatedAt, checkedAt, hash, lastError, metadata}]}` and is owned entirely by
-`lib/state/remote-lists.js`. The preshipped default entry is seeded from
-`filters/default.txt` with parsed header metadata, starts enabled, and uses
-`https://raw.githubusercontent.com/itsrody/WildFire/main/filters/default.txt` as
-its update source. It auto-fetches on startup, then follows `! Expires`; it
-cannot be removed and can be disabled or opted out of Auto in Options. The old
-`wildfire:bundled/default.txt` sentinel is migrated to that URL. The store also
-preseeds the uAssets CDN filters URL as an enabled remote list fetched directly;
-that URL is not vendored into the repository.
+`lib/state/remote-lists.js`. The preshipped default entry points directly at
+`https://ublockorigin.github.io/uAssetsCDN/filters/filters.min.txt`, starts
+enabled, and auto-fetches on startup before following `! Expires`; it cannot be
+removed and can be disabled or opted out of Auto in Options. The old
+`wildfire:bundled/default.txt` sentinel and the former WildFire starter URL are
+migrated to that URL. No upstream filter text is vendored into the repository;
+`filters/default.txt` remains only an offline engine fallback.
 
 Background listens for `wildfire:*` messages:
 
@@ -540,26 +539,22 @@ continues, and copies a matching rule as WildFire syntax. The blocking listener
 records only when the logger is enabled, and inspection never changes `blocked`,
 `blockedBySite`, or filter decisions.
 
-The preshipped default list is remote-list shaped and ships with exact text.
-`lib/state/bundled-lists.js` is an inert catalog with the default update URL
-`https://raw.githubusercontent.com/itsrody/WildFire/main/filters/default.txt`;
-`lib/state/remote-lists.js` seeds the entry from `filters/default.txt` at startup,
-parses `! Title`, `! Description`, `! Version`, `! Homepage`, `! License`,
-`! Expires`, `! Checksum`, `! Diff-Path` and `! Last Modified` metadata, stores
-the exact text and hash, and loads it once before custom and external remote
-rules. It auto-fetches on startup, then revalidates at its `! Expires` interval;
+The preshipped default list is remote-list shaped and is fetched directly from
+`https://ublockorigin.github.io/uAssetsCDN/filters/filters.min.txt`.
+`lib/state/bundled-lists.js` is an inert catalog with that default URL;
+`lib/state/remote-lists.js` seeds the entry at startup, parses `! Title`,
+`! Description`, `! Version`, `! Homepage`, `! License`, `! Expires`,
+`! Checksum`, `! Diff-Path` and `! Last Modified` metadata, stores the fetched
+text and hash, and loads it once before custom and external remote rules. It
+auto-fetches on startup, then revalidates at its `! Expires` interval;
 `remove-list` rejects it, while `set-list-enabled` and `set-list-auto` can opt it
 out. A fetched update persists across extension reseeds; the legacy
-`wildfire:bundled/default.txt` sentinel migrates to the default URL while
-preserving user state.
-
-One remote list is preshipped by explicit owner decision:
-`https://ublockorigin.github.io/uAssetsCDN/filters/filters.min.txt`. It is
-registered directly from its URL, starts enabled, and is fetched into
-`wildfire.remote.v1` on startup; no upstream filter text is vendored into this
-repository. The bundled `lib/state/suggested-lists.js` catalog remains inert:
-Options shows its URLs as shortcuts, and clicking one only sends `add-list`.
-Every registered list, including the default and preshipped remote lists,
+`wildfire:bundled/default.txt` sentinel and the former WildFire starter URL
+migrate to the default URL while preserving user choices. No upstream filter
+text is vendored into this repository; `filters/default.txt` supplies offline
+fallback rules only. The bundled `lib/state/suggested-lists.js` catalog remains
+inert: Options shows its URLs as shortcuts, and clicking one only sends
+`add-list`. Every registered list, including the default list,
 auto-fetches once and then revalidates at its `! Expires` interval, which
 defaults to one day and can be as short as one minute. `set-list-auto` can
 disable this per list. User-added lists stay disabled until the user enables

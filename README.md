@@ -70,14 +70,18 @@ Run WildFire against a live site with the shipped remote lists enabled:
 
 ```sh
 npm run smoke:site
-# optional: -- --url https://www.youtube.com --firefox /path/to/firefox --run-ms 10000 --out site.json
+# optional: -- --url https://www.youtube.com --firefox /path/to/firefox --navigations 5 --run-ms 10000 --out site.json
+# fixed video: -- --url https://www.youtube.com --video kHW-UVXOcLU --out site.json
 ```
 
 The tool opens the URL in a headed Firefox window by default (use `--headless`
-to opt out), waits for the preshipped remote list to load,
-and reports navigation timing, resource totals, engine counts, diagnostic phase
-totals, Inspector decisions, cosmetic/scriptlet timings, and remote-list state.
-Scriptlet timings reflect the rules active at navigation start.
+to opt out), waits for the preshipped remote list to load, and reports navigation
+timing, resource totals, engine counts, diagnostic phase totals, Inspector
+decisions, cosmetic/scriptlet timings, and remote-list state. On YouTube it
+follows randomly chosen watch links for `--navigations` pages (default 3) and
+reports per-page deltas. Pass `--video VIDEO_ID` to navigate from the starting
+page to one fixed watch URL in the same tab. Scriptlet timings reflect the
+rules active at each navigation start.
 
 ## Counters
 
@@ -105,10 +109,10 @@ npm run icons
 
 ## Filter syntax
 
-The bundled `filters/default.txt` is intentionally small. Add your own rules in the
-options page (one per line). The native editor shows line numbers, caret position,
-rule coloring, unsaved changes and line-numbered validation issues from WildFire's
-own parser; `Ctrl/Cmd+S` saves.
+The bundled `filters/default.txt` is an offline fallback, not the registered
+default list. Add your own rules in the options page (one per line). The native
+editor shows line numbers, caret position, rule coloring, unsaved changes and
+line-numbered validation issues from WildFire's own parser; `Ctrl/Cmd+S` saves.
 
 | Rule | Meaning |
 | --- | --- |
@@ -171,17 +175,13 @@ both positive and negated hosts use parent-domain scoping. Lines starting with
 
 ## Filter lists
 
-The preshipped `WildFire default filters` list is built in. It is seeded from
-`filters/default.txt`, shown in Options with its header metadata, loaded once,
-and refreshed from
-`https://raw.githubusercontent.com/itsrody/WildFire/main/filters/default.txt`.
-It auto-fetches on startup, then revalidates on its `! Expires` interval. It
-cannot be removed; **Disable** or **Auto: off** opts out.
-
-WildFire also preships a remote list directly from
+The preshipped `WildFire default filters` list points directly at
 `https://ublockorigin.github.io/uAssetsCDN/filters/filters.min.txt`. It starts
-enabled and is fetched into storage on startup; no upstream filter text is
-vendored into this repository.
+enabled, is fetched into storage on startup, and then revalidates on its
+`! Expires` interval. It cannot be removed; **Disable** or **Auto: off** opts
+out. No upstream filter text is vendored into this repository:
+`filters/default.txt` only supplies offline fallback rules until the default
+list is fetched.
 
 Open Options → **Suggested lists** for shortcuts to well-known community lists,
 or **Filter lists** to add any `http(s)` URL. Adding a URL — suggested or typed —

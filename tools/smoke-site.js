@@ -3,13 +3,15 @@
  * Builds a temporary WildFire copy with local instrumentation, opens a real
  * URL through web-ext, and reports navigation timing, resource counts, engine
  * counts, remote-list state, diagnostic phase totals, cosmetic apply timing,
- * and per-request Inspector durations from the loaded page.
+ * and per-request Inspector durations from each loaded page. On YouTube it
+ * follows randomly chosen watch links and reports deltas between pages.
  *
  * Usage:
  *   node tools/smoke-site.js [--url https://www.youtube.com]
  *                            [--firefox /path/to/firefox] [--headless]
- *                            [--run-ms 6000] [--list-wait-ms 60000]
- *                            [--timeout 180000] [--out file] [--keep]
+ *                            [--video VIDEO_ID] [--navigations 3] [--run-ms 6000]
+ *                            [--list-wait-ms 60000] [--timeout 180000]
+ *                            [--out file] [--keep]
  */
 'use strict';
 
@@ -32,6 +34,14 @@ const siteUrl = argValue('--url', 'https://www.youtube.com');
 const firefoxBinary = argValue('--firefox', '');
 const keep = args.includes('--keep');
 const headed = args.includes('--headed') || !args.includes('--headless');
+const videoArg = argValue('--video', '');
+const fixedVideoId = /^[A-Za-z0-9_-]{11}$/.test(videoArg) ? videoArg : '';
+const fixedVideoUrl = fixedVideoId
+  ? 'https://www.youtube.com/watch?v=' + fixedVideoId : '';
+const navigations = Math.max(
+  fixedVideoId ? 2 : 1,
+  Number(argValue('--navigations', fixedVideoId ? '2' : '3')) || (fixedVideoId ? 2 : 3)
+);
 const runMs = Math.max(0, Number(argValue('--run-ms', '6000')) || 6000);
 const listWaitMs = Math.max(0, Number(argValue('--list-wait-ms', '60000')) || 60000);
 const timeoutMs = Math.max(30000, Number(argValue('--timeout', '180000')) || 180000);
@@ -101,6 +111,15 @@ function instrumentBackground(extDir) {
         capabilities: ctx.wapiCapabilities.snapshot(),
         startupLoad: ctx.smokeStartupLoad || null
       }),
+      'smoke-navigate': (message, sender) => {
+        const tabId = sender && sender.tab ? sender.tab.id : null;
+        const url = String(message.url || '');
+        const safe = url.startsWith('https://') || url.startsWith('http://');
+        if (tabId !== null && tabId !== undefined && safe) {
+          browser.tabs.update(tabId, { url });
+        }
+        return { ok: true };
+      },
       'smoke-report': message => {
         try {
           fetch(String(message.endpoint || ''), {
@@ -155,7 +174,7 @@ function instrumentScriptlets(extDir) {
     'scriptlet apply timing');
 }
 
-function siteScript(endpoint) {
+function siteScript(endpoint, navigationCount, videoUrl) {
   return `(function () {
   'use strict';
   if (window.__wildFireSiteSmoke) return;
@@ -163,8 +182,13 @@ function siteScript(endpoint) {
 
   var ENDPOINT = ${JSON.stringify(endpoint)};
   var LIST_URL = ${JSON.stringify(PRESHIPPED_URL)};
+  var NAVIGATIONS = ${Number(navigationCount)};
+  var FIXED_VIDEO_URL = ${JSON.stringify(videoUrl)};
   var RUN_MS = ${Number(runMs)};
   var LIST_WAIT_MS = ${Number(listWaitMs)};
+  var ROTATE = NAVIGATIONS > 1 &&
+    (location.hostname === 'www.youtube.com' ||
+      location.hostname === 'youtube.com' || location.hostname === 'm.youtube.com');
 
   function ask(type, payload) {
     var message = Object.assign({}, payload || {}, { type: 'wildfire:' + type });
@@ -191,13 +215,27 @@ function siteScript(endpoint) {
     return document.documentElement ? document.documentElement.getAttribute(name) || '' : '';
   }
 
+  function sessionGet(name) {
+    try { return sessionStorage.getItem(name) || ''; } catch (error) { return ''; }
+  }
+
+  function sessionSet(name, value) {
+    try { sessionStorage.setItem(name, value); } catch (error) {}
+  }
+
+  function nextSequence() {
+    var value = Number(sessionGet('wildfire-site-smoke-sequence') || 0) + 1;
+    sessionSet('wildfire-site-smoke-sequence', String(value));
+    return value;
+  }
+
   function listReady(snapshot) {
     var lists = snapshot && Array.isArray(snapshot.lists) ? snapshot.lists : [];
     return lists.some(function (entry) { return entry.url === LIST_URL && Boolean(entry.text); });
   }
 
-  function waitForList() {
-    var deadline = Date.now() + LIST_WAIT_MS;
+  function waitForList(limit) {
+    var deadline = Date.now() + limit;
     return (function poll() {
       return askWithTimeout('list-state', {}, 10000).then(function (snapshot) {
         if (snapshot && snapshot.__timeout) {
@@ -263,20 +301,112 @@ function siteScript(endpoint) {
     });
   }
 
+  var FALLBACK_VIDEO_IDS = ${JSON.stringify([
+    'dQw4w9WgXcQ', '9bZkp7q19f0', 'jfKfPfyJRdk', 'aqz-KE-bpKQ',
+    'kJQP7kiw5Fk', 'ysz5S6PUM-U', 'M7lc1UVf-VE'
+  ])};
+  var VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/;
+
+  function addVideoId(id, ids) {
+    var value = String(id || '');
+    if (VIDEO_ID_RE.test(value) && ids.size < 24) ids.add(value);
+  }
+
+  function collectVideoIds(value, ids, depth) {
+    if (!value || typeof value !== 'object' || depth > 8 || ids.size >= 24) return;
+    if (Array.isArray(value)) {
+      value.slice(0, 250).forEach(item => collectVideoIds(item, ids, depth + 1));
+      return;
+    }
+    Object.keys(value).slice(0, 120).forEach(key => {
+      var child = value[key];
+      if ((key === 'videoId' || key === 'video_id') && typeof child === 'string') {
+        addVideoId(child, ids);
+      }
+      if (child && typeof child === 'object') collectVideoIds(child, ids, depth + 1);
+    });
+  }
+
+  function discoveredVideoIds() {
+    var ids = new Set();
+    Array.from(document.querySelectorAll('a[href*="watch?v="]'))
+      .map(link => {
+        try { return new URL(link.href, location.href); } catch (error) { return null; }
+      })
+      .filter(url => url && url.pathname === '/watch' &&
+        (url.hostname === 'www.youtube.com' || url.hostname === 'youtube.com' ||
+          url.hostname === 'm.youtube.com'))
+      .forEach(url => addVideoId(url.searchParams.get('v'), ids));
+    var scripts = Array.from(document.querySelectorAll('script'))
+      .map(node => node.textContent || '')
+      .join('\\n');
+    ['"videoId"', "'videoId'"].forEach(marker => {
+      scripts.split(marker).slice(1).forEach(part => {
+        var match = /^[^A-Za-z0-9_-]{0,12}([A-Za-z0-9_-]{11})/.exec(part.slice(0, 32));
+        if (match) addVideoId(match[1], ids);
+      });
+    });
+    [window.ytInitialData, window.ytInitialPlayerResponse]
+      .forEach(value => {
+        try { collectVideoIds(value, ids, 0); } catch (error) {}
+      });
+    return ids;
+  }
+
+  function videoCandidates() {
+    var ids = discoveredVideoIds();
+    var source = ids.size ? 'page' : 'fallback';
+    if (!ids.size) FALLBACK_VIDEO_IDS.forEach(id => addVideoId(id, ids));
+    return {
+      source: source,
+      urls: Array.from(ids).map(id => 'https://www.youtube.com/watch?v=' + id)
+    };
+  }
+
+  function nextVideo(current, found) {
+    var stored = [];
+    try { stored = JSON.parse(sessionGet('wildfire-site-smoke-videos') || '[]'); } catch (error) {}
+    var visited = [];
+    try { visited = JSON.parse(sessionGet('wildfire-site-smoke-visited') || '[]'); } catch (error) {}
+    var unique = Array.from(new Set((found || []).concat(stored)));
+    var unseen = unique.filter(url => url !== current && !visited.includes(url));
+    var pool = unseen.length ? unseen : unique.filter(url => url !== current);
+    if (!pool.length) return 'https://www.youtube.com/';
+    var target = pool[Math.floor(Math.random() * pool.length)];
+    sessionSet('wildfire-site-smoke-visited',
+      JSON.stringify(visited.concat([target]).slice(-16)));
+    return target;
+  }
+
   async function collect() {
+    var sequence = nextSequence();
     try {
-      var listSnapshot = await waitForList();
+      var listSnapshot = await waitForList(sequence === 1 ? LIST_WAIT_MS : 10000);
       var state = await askWithTimeout('state', {}, 15000);
       var smokeState = await askWithTimeout('smoke-state', {}, 15000);
       var diagnostics = await askWithTimeout('diagnostics', {}, 15000);
       var inspection = await askWithTimeout('inspect', {}, 15000);
+      var candidates = videoCandidates();
+      var nextUrl = '';
+      if (ROTATE && sequence < NAVIGATIONS) {
+        nextUrl = FIXED_VIDEO_URL && sequence === 1
+          ? FIXED_VIDEO_URL : nextVideo(location.href, candidates.urls);
+      }
+      var videos = {
+        source: FIXED_VIDEO_URL && sequence === 1 ? 'fixed' : candidates.source,
+        found: candidates.urls.length,
+        sample: candidates.urls.slice(0, 3),
+        nextUrl: nextUrl
+      };
       var report = {
+        sequence: sequence,
         url: location.href,
         host: location.hostname,
         title: document.title,
         userAgent: navigator.userAgent,
         measuredAt: Date.now(),
         navigation: navigationTiming(),
+        videos: videos,
         resources: resourceStats(),
         dom: {
           readyState: document.readyState,
@@ -308,12 +438,17 @@ function siteScript(endpoint) {
           applied: Number(attr('data-wf-perf-scriptlet-count') || 0)
         }
       };
-      await ask('smoke-report', { endpoint: ENDPOINT, report: report });
+      await sendReport(report);
     } catch (error) {
-      await ask('smoke-report', {
-        endpoint: ENDPOINT,
-        report: { url: location.href, error: String(error && error.message || error) }
-      }).catch(function () {});
+      await sendReport({
+        sequence: sequence,
+        url: location.href,
+        error: String(error && error.message || error)
+      });
+    }
+    if (nextUrl) {
+      sessionSet('wildfire-site-smoke-videos', JSON.stringify(candidates.urls));
+      try { await askWithTimeout('smoke-navigate', { url: nextUrl }, 10000); } catch (error) {}
     }
   }
 
@@ -329,7 +464,8 @@ function prepareExtension(extDir, endpoint) {
   instrumentBackground(extDir);
   instrumentCosmetic(extDir);
   instrumentScriptlets(extDir);
-  writeFile(path.join(extDir, 'perf-site.js'), siteScript(endpoint));
+  writeFile(path.join(extDir, 'perf-site.js'),
+    siteScript(endpoint, navigations, fixedVideoUrl));
   const manifestFile = path.join(extDir, 'manifest.json');
   const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
   manifest.content_scripts.unshift({
@@ -367,14 +503,12 @@ function startServer(reports) {
   });
 }
 
-function waitForReport(reports, limit) {
+function waitForReports(reports, count, limit) {
   const started = Date.now();
   return (function poll() {
-    const full = reports.find(report => report && report.wildfire);
-    if (full) return Promise.resolve(full);
-    if (Date.now() - started > limit) {
-      return Promise.resolve(reports.length ? reports[reports.length - 1] : null);
-    }
+    const full = reports.filter(report => report && report.sequence);
+    if (full.length >= count) return Promise.resolve(full);
+    if (Date.now() - started > limit) return Promise.resolve(full);
     return sleep(500).then(poll);
   })();
 }
@@ -404,33 +538,156 @@ function runWebExt(extDir, url, logFile) {
   return proc;
 }
 
-function summarize(report, meta) {
-  if (!report) return Object.assign({ ok: false, error: 'no report received' }, meta);
-  if (report.error) return Object.assign({ ok: false, error: report.error, url: report.url }, meta);
+function activePhases(report) {
   const phases = report.diagnostics && report.diagnostics.phases
     ? report.diagnostics.phases : {};
-  const activePhases = Object.keys(phases).reduce((result, name) => {
+  return Object.keys(phases).reduce((result, name) => {
     if (phases[name] && phases[name].calls) result[name] = phases[name];
     return result;
   }, {});
+}
+
+function pageSummary(report) {
   const entries = report.inspect && Array.isArray(report.inspect.entries)
     ? report.inspect.entries : [];
-  const ok = report.wildfire && report.wildfire.enabled !== false &&
-    Boolean(report.navigation && typeof report.navigation.loadMs === 'number');
-  return Object.assign({
-    ok,
-    stage: report.stage || '',
+  return {
+    sequence: report.sequence,
     url: report.url,
     host: report.host,
     title: report.title,
     navigation: report.navigation,
+    videos: report.videos,
     resources: report.resources,
     dom: report.dom,
-    wildfire: report.wildfire,
-    phases: activePhases,
+    blocked: report.wildfire ? report.wildfire.blocked : 0,
+    counters: report.wildfire ? report.wildfire.counts : {},
+    phases: activePhases(report),
     inspectCount: entries.length,
     cosmetic: report.cosmetic,
     scriptlet: report.scriptlet
+  };
+}
+
+function numberDelta(current, previous) {
+  const value = Number(current) - Number(previous);
+  return Number.isFinite(value) ? Number(value.toFixed(3)) : 0;
+}
+
+function objectDelta(current, previous) {
+  const names = Array.from(new Set(Object.keys(current || {}).concat(Object.keys(previous || {}))));
+  return names.reduce((result, name) => {
+    result[name] = numberDelta((current || {})[name], (previous || {})[name]);
+    return result;
+  }, {});
+}
+
+function phaseDeltas(current, previous) {
+  const names = Array.from(new Set(Object.keys(current).concat(Object.keys(previous))));
+  return names.reduce((result, name) => {
+    const now = current[name] || {};
+    const before = previous[name] || {};
+    const calls = numberDelta(now.calls, before.calls);
+    const totalMs = numberDelta(now.totalMs, before.totalMs);
+    result[name] = {
+      calls,
+      totalMs,
+      avgMs: calls > 0 ? Number((totalMs / calls).toFixed(3)) : 0,
+      maxMs: Number(now.maxMs) || 0
+    };
+    return result;
+  }, {});
+}
+
+function isYouTubeSite(url) {
+  try {
+    return ['www.youtube.com', 'youtube.com', 'm.youtube.com']
+      .includes(new URL(String(url || '')).hostname);
+  } catch (error) {
+    return false;
+  }
+}
+
+function isYouTubeWatch(url) {
+  try {
+    const parsed = new URL(String(url || ''));
+    return parsed.pathname === '/watch' && Boolean(parsed.searchParams.get('v')) &&
+      ['www.youtube.com', 'youtube.com', 'm.youtube.com'].includes(parsed.hostname);
+  } catch (error) {
+    return false;
+  }
+}
+
+function videoId(url) {
+  try {
+    return new URL(String(url || '')).searchParams.get('v') || '';
+  } catch (error) {
+    return '';
+  }
+}
+
+function summarize(reports, meta) {
+  const pages = reports.slice().sort((left, right) => left.sequence - right.sequence)
+    .map(pageSummary);
+  if (!pages.length) return Object.assign({ ok: false, error: 'no report received' }, meta);
+  const lastReport = reports[reports.length - 1];
+  const lastWildfire = lastReport.wildfire || {};
+  const errors = reports.filter(report => report && report.error)
+    .map(report => ({ sequence: report.sequence, url: report.url, error: report.error }));
+  const deltas = pages.slice(1).map((page, index) => ({
+    from: pages[index].sequence,
+    to: page.sequence,
+    fromUrl: pages[index].url,
+    toUrl: page.url,
+    blockedDelta: numberDelta(page.blocked, pages[index].blocked),
+    loadMsDelta: numberDelta(page.navigation && page.navigation.loadMs,
+      pages[index].navigation && pages[index].navigation.loadMs),
+    resourceDelta: numberDelta(page.resources && page.resources.count,
+      pages[index].resources && pages[index].resources.count),
+    transferDelta: numberDelta(page.resources && page.resources.transferSize,
+      pages[index].resources && pages[index].resources.transferSize),
+    inspectDelta: numberDelta(page.inspectCount, pages[index].inspectCount),
+    cosmeticMsDelta: numberDelta(page.cosmetic && page.cosmetic.applyMs,
+      pages[index].cosmetic && pages[index].cosmetic.applyMs),
+    scriptletMsDelta: numberDelta(page.scriptlet && page.scriptlet.applyMs,
+      pages[index].scriptlet && page.scriptlet.applyMs),
+    counters: objectDelta(page.counters, pages[index].counters),
+    phases: phaseDeltas(page.phases, pages[index].phases)
+  }));
+  const rotate = meta.navigations > 1 && isYouTubeSite(meta.siteUrl);
+  const watchPages = rotate ? pages.filter(page => isYouTubeWatch(page.url)) : [];
+  const uniqueVideos = Array.from(new Set(watchPages.map(page => videoId(page.url))))
+    .filter(Boolean);
+  const expectedWatch = isYouTubeWatch(meta.siteUrl) ? meta.navigations
+    : Math.max(0, meta.navigations - 1);
+  const fixedOk = !meta.fixedVideoId ||
+    (isYouTubeWatch(pages[pages.length - 1].url) &&
+      videoId(pages[pages.length - 1].url) === meta.fixedVideoId);
+  const rotationOk = !rotate || (meta.fixedVideoId ? fixedOk
+    : uniqueVideos.length >= expectedWatch);
+  const ok = pages.length >= meta.navigations && pages.every(page =>
+    page.title && typeof page.navigation.loadMs === 'number') && rotationOk;
+  return Object.assign({
+    ok,
+    pageCount: pages.length,
+    url: pages[pages.length - 1].url,
+    host: pages[pages.length - 1].host,
+    rotate,
+    fixedVideoId: meta.fixedVideoId || '',
+    watchPages: watchPages.length,
+    uniqueVideos,
+    pages,
+    deltas,
+    errors,
+    wildfire: {
+      enabled: lastWildfire.enabled,
+      blocked: lastWildfire.blocked,
+      blockedBySite: lastWildfire.blockedBySite,
+      counts: lastWildfire.counts,
+      compiler: lastWildfire.compiler,
+      startupLoad: lastWildfire.startupLoad,
+      capabilities: lastWildfire.capabilities,
+      lists: lastWildfire.lists
+    }
   }, meta);
 }
 
@@ -446,11 +703,13 @@ async function main() {
     prepareExtension(extDir, endpoint);
     const logFile = path.join(tmpDir, 'web-ext.log');
     const proc = runWebExt(extDir, siteUrl, logFile);
-    const report = await waitForReport(reports, timeoutMs);
+    const collected = await waitForReports(reports, navigations, timeoutMs);
     await stopProcess(proc);
-    output = summarize(report, {
+    output = summarize(collected, {
       siteUrl,
       firefox: firefoxBinary || 'default',
+      navigations,
+      fixedVideoId,
       stages: reports.map(item => item && (item.stage || 'full') || 'unknown'),
       logFile,
       tmpDir

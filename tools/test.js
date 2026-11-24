@@ -2688,13 +2688,13 @@ async function testBackgroundLoadFiltersIntegration() {
   assert.ok(builtin, 'the background exposes the preshipped list');
   assert.strictEqual(builtin.enabled, true, 'the preshipped list is active by default');
   assert.strictEqual(builtin.autoUpdate, true, 'the preshipped list auto-updates by default');
-  assert.strictEqual(builtin.metadata.title, 'WildFire starter',
-    'preshipped header metadata survives storage');
+  assert.strictEqual(builtin.metadata.title, 'uBlock filters',
+    'fetched default list metadata survives storage');
   assert.strictEqual(api.engine.matchRequest('https://bundled.example/x.js', 'script',
-    'https://site.test/').blocked, true, 'preshipped rules are loaded once');
+    'https://site.test/').blocked, false, 'the offline starter is not the default list');
   const preshippedRemoteList = listed.lists
     .find(entry => entry.url === RemoteLists.PRESHIPPED_REMOTE_URL);
-  assert.ok(preshippedRemoteList, 'the uAssets CDN list is preshipped as a remote list');
+  assert.ok(preshippedRemoteList, 'the uAssets CDN URL is the default list');
   assert.strictEqual(preshippedRemoteList.enabled, true,
     'the preshipped remote list is active by default');
   assert.ok(preshippedRemoteList.text.includes('||ubo.example^'),
@@ -4307,8 +4307,8 @@ async function testRemoteLists() {
   assert.strictEqual(bundledCatalog.length, 1, 'one default list is preshipped');
   assert.strictEqual(bundledCatalog[0].builtin, true, 'the preshipped list is marked built-in');
   assert.strictEqual(WildFireBundledLists.DEFAULT_URL,
-    'https://raw.githubusercontent.com/itsrody/WildFire/main/filters/default.txt',
-    'the default list points at the WildFire repository');
+    'https://ublockorigin.github.io/uAssetsCDN/filters/filters.min.txt',
+    'the default list points at the uAssets CDN');
   bundledCatalog[0].url = 'https://changed.example/';
   assert.strictEqual(WildFireBundledLists.all()[0].url, WildFireBundledLists.DEFAULT_URL,
     'the bundled catalog cannot be mutated by callers');
@@ -4320,6 +4320,10 @@ async function testRemoteLists() {
     RemoteLists.normalizeUrl(WildFireBundledLists.LEGACY_URL, { allowBuiltin: true }),
     WildFireBundledLists.DEFAULT_URL,
     'the legacy sentinel migrates to the default list URL');
+  assert.strictEqual(
+    RemoteLists.normalizeUrl(WildFireBundledLists.STARTER_URL, { allowBuiltin: true }),
+    WildFireBundledLists.DEFAULT_URL,
+    'the old WildFire starter URL migrates to the default list URL');
 
   const dayMs = 24 * 60 * 60 * 1000;
   const headerText = '\uFEFF! Title: Example Rules\r\n' +
@@ -4349,7 +4353,6 @@ async function testRemoteLists() {
   assert.strictEqual(RemoteLists.parseDuration('90 days'), 0,
     'unreasonable expiry durations are ignored');
 
-  let bundledFetches = 0;
   let bundledNetworkFetches = 0;
   const preshipped = RemoteLists.create({
     storage: memoryStorage({ [RemoteLists.KEY]: { lists: [] } }),
@@ -4357,31 +4360,28 @@ async function testRemoteLists() {
       bundledNetworkFetches += 1;
       return remoteResponse('! Title: Updated rules\n||fresh.example^', { etag: '"v2"' });
     },
-    bundledTextLoader: async () => { bundledFetches += 1; return headerText; },
     now: () => 1000,
     timeoutMs: 0
   });
   const seeded = await preshipped.seedBundled();
-  assert.strictEqual(seeded.ok, true, 'the preshipped list is seeded locally');
-  assert.strictEqual(bundledFetches, 1, 'seeding reads bundled text without a network request');
+  assert.strictEqual(seeded.ok, true, 'the default list is seeded locally');
   assert.strictEqual(bundledNetworkFetches, 0, 'seeding makes no network request');
   assert.strictEqual(seeded.list.builtin, true, 'the seeded entry is built-in');
-  assert.strictEqual(seeded.list.enabled, true, 'the preshipped list starts enabled');
-  assert.strictEqual(seeded.list.autoUpdate, true, 'the preshipped list auto-fetches by default');
-  assert.strictEqual(seeded.list.text, headerText, 'the exact preshipped text is stored');
-  assert.strictEqual(seeded.list.metadata.title, 'Example Rules',
-    'preshipped header metadata is stored');
-  assert.ok((await preshipped.enabledText()).includes('! wildfire bundled: '),
-    'the preshipped entry contributes bundled filter text');
+  assert.strictEqual(seeded.list.enabled, true, 'the default list starts enabled');
+  assert.strictEqual(seeded.list.autoUpdate, true, 'the default list auto-fetches by default');
+  assert.strictEqual(seeded.list.text, '', 'no upstream filter text is vendored');
+  assert.strictEqual(seeded.list.metadata.title, '', 'no upstream metadata is vendored');
+  assert.strictEqual(await preshipped.enabledText(), '',
+    'the default list contributes no rules until it is fetched');
   const seededUbo = seeded.snapshot.lists
     .find(entry => entry.url === RemoteLists.PRESHIPPED_REMOTE_URL);
-  assert.ok(seededUbo, 'the uAssets CDN URL is registered as a remote list');
+  assert.ok(seededUbo, 'the uAssets CDN URL is the default list');
   assert.strictEqual(RemoteLists.PRESHIPPED_REMOTE_URL,
     'https://ublockorigin.github.io/uAssetsCDN/filters/filters.min.txt',
-    'the preshipped remote URL points at the uAssets CDN');
-  assert.strictEqual(seededUbo.text, '', 'the preshipped remote list starts unfetched');
-  assert.strictEqual(seededUbo.enabled, true, 'the preshipped remote list starts enabled');
-  assert.strictEqual(seededUbo.autoUpdate, true, 'the preshipped remote list auto-fetches');
+    'the default URL points at the uAssets CDN');
+  assert.strictEqual(seededUbo.text, '', 'the default list starts unfetched');
+  assert.strictEqual(seededUbo.enabled, true, 'the default list starts enabled');
+  assert.strictEqual(seededUbo.autoUpdate, true, 'the default list auto-fetches');
 
   const updatedBundled = await preshipped.update(WildFireBundledLists.DEFAULT_URL);
   assert.strictEqual(updatedBundled.ok, true, 'an explicit Update fetches the default URL');
@@ -4433,6 +4433,29 @@ async function testRemoteLists() {
   assert.strictEqual(migrated.list.text, '||legacy.example^',
     'migration preserves a manually updated default list');
   assert.strictEqual(migrated.list.enabled, false, 'migration preserves the enabled choice');
+
+  const starterRemote = RemoteLists.create({
+    storage: memoryStorage({
+      [RemoteLists.KEY]: {
+        lists: [{
+          url: WildFireBundledLists.STARTER_URL,
+          enabled: false,
+          text: '||starter.example^',
+          updatedAt: 100
+        }]
+      }
+    }),
+    fetchImpl: async () => { throw new Error('starter migration must not fetch'); },
+    now: () => 1000,
+    timeoutMs: 0
+  });
+  const starterMigrated = await starterRemote.seedBundled();
+  assert.strictEqual(starterMigrated.list.url, WildFireBundledLists.DEFAULT_URL,
+    'the former starter URL migrates to the default URL');
+  assert.strictEqual(starterMigrated.list.text, '||starter.example^',
+    'starter migration preserves a manually updated default list');
+  assert.strictEqual(starterMigrated.list.enabled, false,
+    'starter migration preserves the enabled choice');
 
   let firstClock = 1000;
   const firstRemote = RemoteLists.create({
