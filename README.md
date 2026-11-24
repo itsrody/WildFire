@@ -344,18 +344,20 @@ Implemented uBO-compatible alias families:
 | Property traps | `set-constant` (`set`), `abort-on-property-read` (`aopr`), `abort-on-property-write` (`aopw`), `abort-on-stack-trace` (`aost`) |
 | Script guards | `abort-current-script` (`acs`), `noeval`, `noeval-silent`, `noeval-if` |
 | Timer / event defusers | `prevent-setTimeout`, `prevent-setInterval`, `adjust-setTimeout`, `adjust-setInterval`, `addEventListener-defuser`, `prevent-requestAnimationFrame`, `prevent-refresh` |
-| Window / browser defusers | `prevent-window-open`, `close-window`, `window.name-defuser`, `nowebrtc`, `webrtc-if`, `no-floc`, `alert-buster`, `prevent-dialog` |
-| DOM / style | `remove-attr` (`ra`), `remove-class` (`rc`), `set-attr`, `remove-node-text` (`rmnt`), `disable-newtab-links`, `href-sanitizer`, `overlay-buster`, `spoof-css`, `prevent-canvas` |
+| Window / browser defusers | `prevent-window-open`, `close-window`, `window.name-defuser`, `nowebrtc`, `webrtc-if`, `no-floc`, `alert-buster`, `prevent-dialog`, `prevent-navigation`, `prevent-clipboard-write` |
+| DOM / style | `remove-attr` (`ra`), `remove-class` (`rc`), `set-attr`, `remove-node-text` (`rmnt`), `replace-node-text` (`rpnt`), `disable-newtab-links`, `href-sanitizer`, `overlay-buster`, `spoof-css`, `prevent-canvas` |
 | Cookies / storage | `set-cookie`, `set-cookie-reload`, `remove-cookie`, `set-local-storage-item`, `set-session-storage-item` |
 | Data | `json-prune`, `evaldata-prune`, `prevent-fetch`, `prevent-xhr` |
 | Response transforms | `json-prune-fetch-response`, `json-prune-xhr-response`, `xml-prune`, `m3u-prune` |
-| Object / JSONPath edits | `json-edit`, `json-edit-fetch/xhr-request`, `json-edit-fetch/xhr-response`, `jsonl-edit-fetch/xhr-response`, `edit-outbound-object`, `edit-inbound-object`, `edit-this-object`, `edit-element-object` |
-| Detectors | `nobab`, `nobab2`, `nofab`, `fingerprint2`, `fingerprint3`, `popads`, `popads-dummy`, `prebid-ads`, `ampproject_v0` |
+| Object / JSONPath edits | `json-edit`, `json-edit-fetch/xhr-request`, `json-edit-fetch/xhr-response`, `jsonl-edit-fetch/xhr-response`, `edit-outbound-object`, `edit-inbound-object`, `edit-this-object`, `edit-object-on-setter`, `edit-element-object` |
+| Detectors | `nobab`, `nobab2`, `nofab`, `fingerprint2`, `fingerprint3`, `popads` (`popads.net`), `popads-dummy`, `multiup`, `prebid-ads`, `ampproject_v0` |
 
 Constants include `true`, `false`, `null`, `undefined`, `0`, `1`, `emptyObj`,
-`emptyArr` and `emptyStr`. Needles can be case-insensitive literals or a
-conservative `/regex/` with `i`, `m`, `s` or `u` flags; unsafe patterns are
-rejected at load time and never reach a page. Properties are plain dotted paths,
+`emptyArr`, `emptyStr`, `''`, `{}`, `[]`, bounded integers, and WildFire-owned
+function tokens such as `noopFunc`, `trueFunc`, `falseFunc` and `throwFunc`.
+Needles can be case-insensitive literals or a conservative `/regex/` with `i`,
+`m`, `s` or `u` flags; balanced parentheses are plain needle data. Unsafe
+patterns are rejected at load time and never reach a page. Properties are plain dotted paths,
 and prototype paths such as `__proto__` are rejected. Every alias is validated
 again before it runs. `trusted-*` aliases stay rejected until WildFire has an
 explicit source-trust model.
@@ -373,14 +375,19 @@ optional selector and `asap`, `complete`, or `stay` flags. `set-attr` copies a
 source attribute with `[data-src]`. `prevent-innerHTML` accepts an optional
 selector and a pattern that can be negated with `!`. The RAF defuser accepts
 negated callback needles, and `remove-node-text` supports `includes`,
-`excludes`, `sedCount`, `stay`, and `quitAfter` tokens.
+`excludes`, `sedCount`, `stay`, and `quitAfter` tokens. `replace-node-text`
+uses the same needle/token data, inserts the replacement as literal text, and
+skips `script`, `style`, `noscript`, and `template` subtrees so filter text can
+never become executable page code.
 
 The non-trusted uBO general-purpose and defuser catalog is implemented with
-original WildFire code. Trusted-only aliases (including `replace-node-text` /
-`rpnt`) remain rejected because WildFire has no source-trust model. Updated
-scriptlets apply to pages opened after the change. A validated, data-only
-scriptlet snapshot is restored before async startup work, so a previously
-fetched list also applies on the first page after a restart.
+original WildFire code, including WildFire-owned bridges for `rpnt`,
+`edit-object-on-setter`, `prevent-clipboard-write`, `prevent-navigation`,
+`popads.net`, and `multiup`. Trusted-only aliases remain rejected because
+WildFire has no source-trust model. Updated scriptlets apply to pages opened
+after the change. A validated, data-only scriptlet snapshot is restored before
+async startup work, so a previously fetched list also applies on the first page
+after a restart.
 
 AdGuard scriptlets are also accepted with
 `[domains]#%#//scriptlet('alias', 'arg', ...)`; `#@%#//scriptlet(...)`
@@ -396,6 +403,7 @@ The catalog covers the documented untrusted AdGuard aliases, including:
 | DOM / requests | `hide-in-shadow-dom`, `remove-in-shadow-dom`, `inject-css-in-shadow-dom`, `remove-request-query-parameter`, `prevent-innerHTML` |
 | Analytics / detector stubs | `google-analytics`, `matomo`, `metrika-yandex-tag`, `prebid`, `scorecardresearch-beacon`, `set-popads-dummy` |
 | Introspection | `log`, `log-eval`, `log-addEventListener`, `dir-string` |
+| uBO bridges | `ubo-acis.js`, `ubo-aeld.js`, `ubo-aopw.js`, `ubo-aost` |
 
 AdGuard aliases documented as debug-only or trusted-only are rejected. Filter
 text still never supplies code: values such as `trueFunc` map to WildFire-owned

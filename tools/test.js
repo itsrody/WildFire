@@ -1505,6 +1505,31 @@ assert.strictEqual(expandedContext.wildFireEmptyStr, '', 'emptyStr freezes an em
 assert.strictEqual(expandedContext.wildFireUndefined, undefined,
   'undefined is a supported constant token');
 
+assert.strictEqual(WildFireScriptlets.validate('set-constant', ['flag', 'noopFunc']), '',
+  'WildFire-owned function constants validate');
+assert.strictEqual(WildFireScriptlets.validate('set-constant', ['flag', '{}']), '',
+  'literal container tokens validate');
+assert.strictEqual(WildFireScriptlets.validate('set-constant', ['flag', '-42']), '',
+  'bounded integer tokens validate');
+assert.notStrictEqual(WildFireScriptlets.validate('set-constant', ['flag', 'alert(1)']), '',
+  'filter-supplied code is still rejected as a constant');
+
+const constantContext = scriptletContext('page.example');
+constantContext.WildFireScriptlets.apply([
+  { alias: 'set', args: ['wildFireNoop', 'noopFunc'], domains: [], isException: false },
+  { alias: 'set', args: ['wildFireTrueFn', 'trueFunc'], domains: [], isException: false },
+  { alias: 'set', args: ['wildFireObject', '{}'], domains: [], isException: false },
+  { alias: 'set', args: ['wildFireNegative', '-42'], domains: [], isException: false }
+]);
+assert.strictEqual(constantContext.wildFireNoop(), undefined,
+  'noopFunc maps to a WildFire-owned no-op');
+assert.strictEqual(constantContext.wildFireTrueFn(), true,
+  'trueFunc maps to a WildFire-owned true-returning function');
+assert.deepStrictEqual(Object.keys(constantContext.wildFireObject), [],
+  '{} creates a fresh empty object');
+assert.strictEqual(constantContext.wildFireNegative, -42,
+  'bounded integers become numeric constants');
+
 const scopeContext = scriptletContext('skip.page.example');
 scopeContext.WildFireScriptlets.apply([
   { alias: 'set-constant', args: ['wildFireScopedFlag', 'true'],
@@ -1723,6 +1748,28 @@ assert.deepStrictEqual(needlePayload[0], {
 assert.deepStrictEqual(needlePayload[1], {
   alias: 'set-constant', args: ['wildFireQuoted', 'false']
 }, 'quoted arguments are unquoted before validation');
+
+const parenEngine = new FilterEngine(null, null, WildFireScriptlets);
+parenEngine.load([
+  'page.example##+js(aeld, load, (!o))',
+  'page.example##+js(rpnt, div, Ad, Deal)'
+].join('\n'));
+assert.strictEqual(parenEngine.rejectedScriptlets.length, 0,
+  'balanced parentheses inside scriptlet needles are plain argument data');
+const parenPayload = Array.from(parenEngine.getScriptletPayload(), rule => ({
+  alias: rule.alias, args: Array.from(rule.args)
+}));
+assert.deepStrictEqual(parenPayload[0], {
+  alias: 'aeld', args: ['load', '(!o)']
+}, 'parenthesized needles survive parsing without becoming nested rules');
+assert.strictEqual(WildFireScriptlets.canonical('rpnt'), 'replace-node-text',
+  'rpnt canonicalizes to the WildFire replace-node-text shim');
+assert.strictEqual(WildFireScriptlets.canonical('popads.net'), 'popads',
+  'the dotted popads alias shares the WildFire detector stub');
+assert.strictEqual(WildFireScriptlets.validate('prevent-navigation', ['ads.example']), '',
+  'the uBO-style navigation bridge validates as plain data');
+assert.strictEqual(WildFireScriptlets.validate('multiup', []), '',
+  'the multiup detector stub is a curated no-argument alias');
 
 assert.strictEqual(WildFireScriptlets.canonical('ra'), 'remove-attr',
   'ra canonicalizes to remove-attr');
@@ -1950,6 +1997,22 @@ assert.strictEqual(countContext.wildFireElements[0].childNodes[0].nodeValue, '',
 assert.strictEqual(countContext.wildFireElements[1].childNodes[0].nodeValue, 'Other Ad',
   'sedCount stops after the configured number of removals');
 
+const replaceContext = scriptletDomContext();
+const replaceScript = scriptletElement('script', {}, [], 'Ad');
+replaceScript.childNodes.forEach(child => { child.parentNode = replaceScript; });
+replaceContext.wildFireElements.push(replaceScript);
+replaceContext.WildFireScriptlets.apply([
+  { alias: 'rpnt', args: ['#text', 'Ad', 'Deal'], domains: [], isException: false }
+]);
+assert.strictEqual(replaceContext.wildFireElements[0].childNodes[0].nodeValue, 'sponsor Deal',
+  'rpnt replaces matching text with a literal value');
+assert.strictEqual(replaceContext.wildFireElements[1].childNodes[0].nodeValue, 'Other Deal',
+  'rpnt replaces every matching text node');
+assert.strictEqual(replaceContext.wildFireElements[3].childNodes[0].nodeValue, 'Ad',
+  'rpnt never rewrites script text into executable page code');
+assert.notStrictEqual(WildFireScriptlets.validate('rpnt', ['#text', '/(a+)+/', 'x']), '',
+  'unsafe regex needles stay rejected in replace-node-text');
+
 const timedTextContext = scriptletDomContext();
 timedTextContext.WildFireScriptlets.apply([
   { alias: 'remove-node-text', args: ['#text', 'Ad', 'stay', '1', 'quitAfter', '1000'],
@@ -1958,6 +2021,44 @@ timedTextContext.WildFireScriptlets.apply([
 assert.ok(timedTextContext.observer, 'stay keeps remove-node-text observing');
 assert.strictEqual(timedTextContext.lastTimeout[1], 1000,
   'quitAfter schedules observer cleanup');
+
+const clipboardContext = scriptletDomContext();
+clipboardContext.Promise = Promise;
+clipboardContext.alert = message => { clipboardContext.alerted = message; };
+clipboardContext.navigator = {
+  clipboard: {
+    writeText: text => { clipboardContext.written = text; return 'original'; }
+  }
+};
+clipboardContext.WildFireScriptlets.apply([
+  { alias: 'prevent-clipboard-write', args: ['ads.example', 'Copy blocked'],
+    domains: [], isException: false }
+]);
+const blockedCopy = clipboardContext.navigator.clipboard.writeText('https://ads.example/x');
+assert.strictEqual(blockedCopy instanceof Promise, true,
+  'prevent-clipboard-write returns a resolved promise instead of copying');
+assert.strictEqual(clipboardContext.written, undefined,
+  'a matching clipboard write never reaches the page API');
+assert.strictEqual(clipboardContext.alerted, 'Copy blocked',
+  'the bounded alert message is plain data');
+assert.strictEqual(clipboardContext.navigator.clipboard.writeText('safe'), 'original',
+  'non-matching clipboard writes pass through');
+assert.strictEqual(clipboardContext.written, 'safe',
+  'the original clipboard API receives non-matching text');
+
+const setterContext = scriptletDomContext();
+setterContext.wildFireConfig = { advertising: { id: 1 } };
+setterContext.WildFireScriptlets.apply([
+  { alias: 'edit-object-on-setter', args: ['wildFireConfig', '.advertising'],
+    domains: [], isException: false }
+]);
+setterContext.wildFireConfig = { advertising: { id: 2 } };
+assert.strictEqual(setterContext.wildFireConfig.advertising, undefined,
+  'edit-object-on-setter prunes an object as it is assigned');
+assert.strictEqual(WildFireScriptlets.validate('edit-object-on-setter',
+  ['config', '.ads']), '', 'edit-object-on-setter accepts a bounded JSONPath');
+assert.notStrictEqual(WildFireScriptlets.validate('edit-object-on-setter',
+  ['config', 'eval(1)']), '', 'JSONPath arguments cannot contain filter code');
 
 function domScriptletContext() {
   const sandbox = {
@@ -2145,7 +2246,7 @@ assert.strictEqual(WildFireScriptlets.validate('json-edit-fetch-response', ['$.a
   'edit aliases accept a simple JSONPath query');
 assert.notStrictEqual(WildFireScriptlets.validate('json-edit', ['eval(1)']), '',
   'JSONPath queries cannot contain filter-supplied code');
-assert.notStrictEqual(WildFireScriptlets.validate('replace-node-text', ['a', 'x']), '',
+assert.notStrictEqual(WildFireScriptlets.validate('trusted-replace-node-text', ['a', 'x']), '',
   'trusted-only aliases stay rejected through their short names');
 assert.strictEqual(WildFireScriptlets.canonical('no-floc'), 'no-floc',
   'the deprecated no-floc alias is still accepted safely');
@@ -2281,6 +2382,21 @@ assert.strictEqual(adguardPayload[3].args[1], '/ads\\.example/',
   'regex backslashes inside quoted AdGuard arguments are preserved');
 assert.strictEqual(WildFireScriptlets.canonical('abort-current-inline-script', 'adguard'),
   'abort-current-script', 'AdGuard aliases share WildFire canonical behaviors');
+assert.strictEqual(WildFireScriptlets.canonical('ubo-aeld.js', 'adguard'),
+  'addeventlistener-defuser', 'AdGuard bridges recognize WildFire uBO aliases');
+assert.strictEqual(WildFireScriptlets.validate('ubo-aopw.js', ['guarded'], 'adguard'), '',
+  'AdGuard ubo-* exception aliases validate through the shared registry');
+const bridgedContext = scriptletContext('page.example');
+bridgedContext.guardedWrite = { flag: 1 };
+WildFireScriptlets.apply([
+  { alias: 'abort-on-property-write', args: ['guardedWrite.flag'],
+    domains: [], isException: false },
+  { alias: 'ubo-aopw.js', args: ['guardedWrite.flag'],
+    domains: [], isException: true, syntax: 'adguard' }
+]);
+bridgedContext.guardedWrite.flag = 2;
+assert.strictEqual(bridgedContext.guardedWrite.flag, 2,
+  'an AdGuard ubo-* exception cancels the equivalent uBO scriptlet');
 assert.strictEqual(WildFireScriptlets.validate('set-constant', ['flag', 'false'], 'adguard'), '',
   'AdGuard set-constant validates as string data');
 assert.ok(/must be strings/.test(WildFireScriptlets.validate('set-constant', ['flag', 1], 'adguard')),
