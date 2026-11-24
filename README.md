@@ -111,9 +111,11 @@ own parser; `Ctrl/Cmd+S` saves.
 | `site.example#%#//scriptlet('set-constant', 'adblockDetected', 'false')` | AdGuard-style scriptlet with the same WildFire runtime |
 | `site.example#@%#//scriptlet('set-constant', 'adblockDetected', 'false')` | Cancel that AdGuard-style scriptlet |
 | `example.com##.promo` | Hide `.promo` on example.com |
+| `example.com,~ads.example.com##.promo` | Hide on example.com except on ads.example.com |
 | `example.com#@#.promo` | Keep `.promo` on example.com |
 | `##.ad-container` | Hide everywhere (generic cosmetic rule) |
 | `example.com##.ad:has-text("Buy now")` | Hide `.ad` when its text contains the phrase |
+| `example.com##.promo:matches-path(deals)` | Hide `.promo` only on paths containing `deals` |
 | `example.com##.promo:matches-path(/deals/)` | Hide `.promo` only on matching URL paths |
 | `example.com##.box:has(.inner)` | Hide `.box` when it contains `.inner` |
 | `example.com##.ad:contains("Buy now")` | Hide `.ad` when its own text or a descendant's text matches |
@@ -130,7 +132,9 @@ own parser; `Ctrl/Cmd+S` saves.
 | `example.com#?#div:-abp-has(.ad)` | ABP procedural form, mapped safely to `:has()` |
 | `example.com#?#div:-abp-contains(Ad)` | ABP procedural form, mapped safely to `:has-text()` |
 
-Lines starting with `!` are comments.
+Cosmetic host lists accept comma-separated domains and `~domain` exclusions;
+both positive and negated hosts use parent-domain scoping. Lines starting with
+`!` are comments.
 
 ## Remote filter lists
 
@@ -381,13 +385,17 @@ This is deliberately a *minimal* engine, not a full uBO port:
   `:has()`, `:nth-ancestor()`, `:matches-attr()`, `:matches-css()`, `:xpath()`,
   `:not()`, `:matches-media()`) use Firefox-native CSS wherever possible: plain `:has()` rules and
   `:matches-attr(name)`/`=(name="literal")` are compiled into the cosmetic
-  stylesheet, and `:matches-path()` is checked once per page. Only
-  text/regex/ancestor/computed-style-dependent rules are evaluated in
+  stylesheet, and `:matches-path()` is checked once per page. Generic
+  JS-evaluated procedural rules need a domain scope; generic path-only and
+  fully native-compilable rules are kept, and generic procedural exceptions
+  still apply. Only text/regex/ancestor/computed-style-dependent rules are
+  evaluated in
   WildFire's DOM code, using native `:has()`/attribute prefilters and one query
   per shared selector. `:has-text()` checks an element's own text;
   `:contains()` also searches descendants. `:nth-ancestor(n)`/`:upward(n|selector)` hides an ancestor
   parent of a match. `:matches-css(prop: value|/re/)` reads Gecko's computed
-  style (read-only), with `-before`/`-after` variants for pseudo-elements.
+  style (read-only); literal values must match exactly (CSS string quotes are
+  ignored), with `-before`/`-after` variants for pseudo-elements.
   `:xpath(expr)` delegates to Gecko's native XPath engine (`document.evaluate`),
   read-only and bounded (expression length capped, element node-set capped per
   base match); it hides every element result, and later steps filter that set. A

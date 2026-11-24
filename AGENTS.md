@@ -282,8 +282,11 @@ indexes, plus cosmetic and scriptlet indexes:
   patterns with no usable token. Candidates are the union of host, token and
   fallback matches within one realm, sorted by load order before exception/blocker
   selection.
-- `cosmeticByDomain` / `cosmeticExceptionsByDomain: Map<domain, selector[]>`
-  plus `genericCosmetic` / `genericCosmeticExceptions`.
+- `cosmeticByDomain` / `cosmeticExceptionsByDomain: Map<domain, entry[]>` plus
+  `genericCosmetic` / `genericCosmeticExceptions`. Each entry carries a selector
+  and `include`/`exclude` host scopes; negated (`~host`) targets are preserved
+  and resolved with parent-domain scoping. Procedural maps use the same entry
+  shape with a parsed tree instead of a plain selector.
 - `scriptletRules`/`rejectedScriptlets` for `##+js(alias, args)` rules.
 - `counts: {network, exceptions, cosmetic, csp, scriptlets, rewrite}` for the UI.
 
@@ -384,13 +387,17 @@ Procedural selectors (`:has-text()`, `:contains()`, `:matches-path()`, `:has()`,
 `lib/engine/filter/parse-procedural.js` into trees with `base` plus ordered `steps`; malformed or
 unsafe ones are recorded in `engine.rejectedCosmetic` and never sent to pages.
 `getProcedural(host, policy)` merges generic and domain trees and subtracts
-`#@#` exceptions and hide modifiers. Background sends them in the same
-`wildfire:apply` message as CSS.
+`#@#` exceptions and hide modifiers. Generic JS-evaluated procedural rules are
+rejected at load time; only generic path-only and fully native-compilable trees
+are delivered everywhere, while generic exceptions remain valid. Background
+sends the result in the same `wildfire:apply` message as CSS and caches the
+payload per host/hide-policy within one filter generation.
 
 `WildFireProcedural.classify()` picks the cheapest Firefox-native route per
-rule. `:matches-path()` is a page constant, so it is matched once per apply and
-dropped from the node steps; non-matching rules are skipped entirely. Plain
-`:has()` steps and `:matches-attr(name)`/`=(name="literal")` are compiled to CSS
+rule. `:matches-path(text|/re/)` is a page constant, so it is matched once per
+apply and dropped from the node steps; non-matching rules are skipped entirely.
+Plain text is a case-insensitive substring. Native `:has()` steps and
+`:matches-attr(name)`/`=(name="literal")` are compiled to CSS
 and validated with `CSS.supports`, so Gecko handles them in
 `#wildfire-cosmetic-procedural` with no JS re-evaluation. When dynamic steps
 remain, every native-safe fragment (`:has()` base, attribute presence/literal)
@@ -399,7 +406,8 @@ groups rules sharing a base (or prefilter) into one query pass instead of one
 per rule. Only the remaining text/regex/ancestor/computed-style-dependent rules
 hide nodes via `data-wildfire-hidden`, and the attribute is diffed so unchanged
 nodes are never touched. `:matches-css(prop: value|/re/)` reads Gecko's computed
-style read-only (with `-before`/`-after` pseudo variants) and stays JS-evaluated.
+style read-only; literal values must match exactly (CSS string quotes are
+ignored), and `-before`/`-after` pseudo variants stay JS-evaluated.
 `:xpath(expr)` is a transforming step that calls Gecko's native
 `document.evaluate` (read-only, `ORDERED_NODE_SNAPSHOT_TYPE`) with the current
 node as context and expands the target set to every element result (bounded);
@@ -550,8 +558,8 @@ and fetching still requires a separate explicit step.
 | `$csp=alias` (curated aliases only) | |
 | `$removeparam`, `$removeheader` (capability-gated) | |
 | `/regex/` filters (`i`, `m`, `s`, `u` flags only) | |
-| `##selector`, `#@#selector` | |
-| `##sel:has-text("…")`, `##sel:matches-path(/re/)`, `##sel:has(sel)` | |
+| `##selector`, `#@#selector`, `host,~host##selector` | |
+| `##sel:has-text("…")`, `##sel:matches-path(text|/re/)`, `##sel:has(sel)` | |
 | `##sel:contains("…")`, `##sel:nth-ancestor(n)`, `##sel:upward(n|sel)`, `##sel:min-text-length(n)`, `##sel:matches-attr(name[=value|/re/])`, `##sel:matches-css[-before|-after](prop: value|/re/)`, `##sel:xpath(expr)` (bounded, read-only, all results), `##sel:not(<procedural>)`, `##sel:matches-media(query)` | |
 | `#?#` / `#@?#` with safe `:-abp-has()`/`:-abp-contains()` | unsupported ABP action/procedural selectors rejected |
 | `domain##+js(alias, args)` (curated aliases only) | |
@@ -620,14 +628,17 @@ supply script text.
 Procedural cosmetic rules are parsed into a base selector plus ordered steps.
 `:has-text()` and `:contains()` accept a quoted literal (case-insensitive) or a
 `/regex/` with the same safe subset as network regexes; `:contains()` also
-searches descendants. `:matches-path()` takes a `/regex/` checked against
-`location.pathname + location.search`; `:has()` accepts another plain or
+searches descendants. `:matches-path()` takes plain text (case-insensitive
+substring) or a `/regex/` checked against `location.pathname + location.search`;
+`:has()` accepts another plain or
 procedural selector and can be nested up to eight levels; `:nth-ancestor(n)`
 accepts 1–8 and hides the nth parent of a match. `:min-text-length(n)` accepts
 1–16384. `:matches-attr(name)`, `=(name="literal")` or `=(name=/re/)` tests an
 attribute (presence/literal compile to native CSS). `:matches-css(prop: value|/re/)`
-(and `-before`/`-after`) reads computed style read-only; the property must be a
-plain CSS identifier and the value a bounded literal or safe regex. `:xpath(expr)`
+(and `-before`/`-after`) reads computed style read-only; literal values must
+match exactly (CSS string quotes are ignored) and regex values search. The
+property must be a plain CSS identifier and the value a bounded literal or safe
+regex. `:xpath(expr)`
 is bounded data, never code: the expression is capped at 512 chars, must have
 paired quotes/brackets, and is evaluated read-only by Gecko's `document.evaluate`
 (`ORDERED_NODE_SNAPSHOT_TYPE`). It hides every element result, capped at 256 per
@@ -641,7 +652,9 @@ the native CSS base. `:matches-media(query)` is answered read-only by Gecko's
 native `matchMedia`; the query is bounded data (≤256 chars, no control chars) and
 Gecko validates its syntax at runtime, so an invalid query never matches. It is
 viewport-dependent, so `content/cosmetic.js` re-applies on `resize` while such a
-rule is live. Invalid rules land in `engine.rejectedCosmetic`. Evaluation
+rule is live. Invalid rules land in `engine.rejectedCosmetic`. Generic
+JS-evaluated procedural rules also land there unless they carry a domain scope;
+generic path-only and fully native-compilable trees are kept. Evaluation
 lives entirely in the `lib/engine/procedural/` chain and `content/cosmetic.js` —
 never in injected script.
 

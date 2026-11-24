@@ -691,7 +691,7 @@ procEngine.load([
   'example.com##.box:has(.inner)',
   'example.com##.deep:has(.child:has-text("x"))',
   'example.com##.also:has-text(/SALE/i):has(.tag)',
-  '##.generic:has-text("hi")',
+  'example.com##.generic:has-text("hi")',
   'example.com##.bad:has-text("unclosed',
   'example.com##.bad:matches-path(/(a+)+/)',
   'example.com#@#.ad:has-text("Buy now")'
@@ -700,17 +700,17 @@ assert.strictEqual(procEngine.counts.cosmetic, 7, 'valid procedural rules are co
 assert.strictEqual(procEngine.rejectedCosmetic.length, 2, 'malformed procedural rules are rejected');
 assert.ok(procEngine.rejectedCosmetic.some(entry => entry.reason === 'unbalanced procedural selector'),
   'unbalanced procedural selector is rejected');
-assert.ok(procEngine.rejectedCosmetic.some(entry => entry.reason === 'invalid :matches-path regex'),
+assert.ok(procEngine.rejectedCosmetic.some(entry => entry.reason === 'invalid :matches-path argument'),
   'unsafe procedural regex is rejected');
 
 const procOnExample = procEngine.getProcedural('example.com');
 assert.strictEqual(procOnExample.length, 5, 'domain exception removes one procedural rule');
 assert.deepStrictEqual(Array.from(procOnExample, rule => rule.base),
-  ['.generic', '.promo', '.box', '.deep', '.also'], 'generic rules merge with domain rules');
+  ['.promo', '.box', '.deep', '.also', '.generic'], 'domain rules merge in load order');
 assert.deepStrictEqual(Array.from(procEngine.getCosmetic('example.com')), [],
   'procedural rules are not injected as CSS');
-assert.deepStrictEqual(Array.from(procEngine.getProcedural('other.net'), rule => rule.base), ['.generic'],
-  'generic procedural rules apply to every host');
+assert.deepStrictEqual(Array.from(procEngine.getProcedural('other.net')), [],
+  'no generic JS-evaluated rules are delivered to unrelated hosts');
 
 const promoRule = procOnExample.find(rule => rule.base === '.promo');
 assert.strictEqual(promoRule.steps[0].op, 'matches-path', 'matches-path is parsed');
@@ -721,6 +721,40 @@ assert.strictEqual(hasRule.steps[0].op, 'has', ':has is parsed');
 assert.strictEqual(hasRule.steps[0].inner.base, '.child', ':has stores its inner tree');
 assert.strictEqual(hasRule.steps[0].inner.steps[0].op, 'has-text',
   'nested procedural selectors are parsed');
+
+// Cosmetic domain negation and the generic procedural cost gate.
+const cosmeticScopeEngine = new FilterEngine();
+cosmeticScopeEngine.load([
+  '##.everywhere',
+  '~skip.example.com##.wide',
+  'example.com,~ads.example.com##.scoped',
+  'example.com,~ads.example.com#@#.everywhere',
+  '##.path:matches-path(deals)',
+  '##.native:has(.child)',
+  '##.dynamic:has-text("ad")'
+].join('\n'));
+const sortedSelectors = host => Array.from(cosmeticScopeEngine.getCosmetic(host)).sort();
+assert.deepStrictEqual(sortedSelectors('example.com'), ['.scoped', '.wide'],
+  'negated cosmetic exception removes the generic selector on included hosts');
+assert.deepStrictEqual(sortedSelectors('ads.example.com'), ['.everywhere', '.wide'],
+  'negated include host does not receive the scoped rule or exception');
+assert.deepStrictEqual(sortedSelectors('other.net'), ['.everywhere', '.wide'],
+  'a negated-only rule applies everywhere except its excluded host');
+assert.deepStrictEqual(
+  Array.from(cosmeticScopeEngine.getProcedural('other.net'), rule => rule.base).sort(),
+  ['.native', '.path'], 'generic path and native rules are kept');
+assert.ok(cosmeticScopeEngine.rejectedCosmetic.some(entry =>
+  entry.reason === 'generic procedural rules need domain scope'),
+  'generic JS-evaluated procedural rules are rejected');
+const cosmeticScopeBlob = cosmeticScopeEngine.toCompiled();
+const cosmeticScopeReload = new FilterEngine();
+assert.strictEqual(cosmeticScopeReload.loadCompiled(cosmeticScopeBlob), true,
+  'scoped cosmetic rules survive compiled load');
+assert.deepStrictEqual(
+  Array.from(cosmeticScopeReload.getCosmetic('example.com')).sort(),
+  sortedSelectors('example.com'), 'compiled cosmetic scopes are preserved');
+assert.ok(!cosmeticScopeReload.getProcedural('other.net').some(rule => rule.base === '.dynamic'),
+  'compiled input cannot reintroduce generic dynamic rules');
 
 function stubDescendants(nodes) {
   return nodes.reduce((all, node) => {
@@ -772,6 +806,15 @@ assert.strictEqual(selected('.promo', '/deals/list')[0], promoNode,
   'matches-path uses the current location path');
 assert.strictEqual(selected('.promo', '/nothing').length, 0,
   'matches-path rejects a non-matching path');
+const textPathEngine = new FilterEngine();
+textPathEngine.load('example.com##.promo:matches-path(deals)');
+const textPathRule = textPathEngine.getProcedural('example.com')[0];
+assert.strictEqual(textPathRule.steps[0].matcher.type, 'text',
+  ':matches-path accepts plain text');
+assert.strictEqual(WildFireProcedural.select(procRoot, textPathRule, '/deals/list')[0], promoNode,
+  'plain :matches-path matches a case-insensitive substring');
+assert.strictEqual(WildFireProcedural.select(procRoot, textPathRule, '/other').length, 0,
+  'plain :matches-path rejects a non-matching path');
 assert.strictEqual(selected('.box', '/')[0], boxNode, ':has checks descendants');
 assert.strictEqual(selected('.deep', '/')[0], deepNode,
   'nested procedural :has selectors are evaluated');
@@ -976,6 +1019,11 @@ assert.strictEqual(classify(nthRule, '/').mode, 'js', ':nth-ancestor stays in th
   assert.strictEqual(WildFireProcedural.select(cssRoot, fixedRule, '/').length, 1, 'matches-css literal selects fixed node');
   assert.strictEqual(WildFireProcedural.select(cssRoot, fixedRule, '/')[0], fixedNode, 'matches-css hides the matching node');
   assert.strictEqual(WildFireProcedural.select(cssRoot, colorRule, '/').length, 1, 'matches-css regex selects red node');
+  const exactCssEngine = new FilterEngine();
+  exactCssEngine.load('example.com##div:matches-css(position: FIXED)');
+  const exactCssRule = exactCssEngine.getProcedural('example.com')[0];
+  assert.strictEqual(WildFireProcedural.select(cssRoot, exactCssRule, '/').length, 0,
+    'matches-css literals are exact, not substring matches');
   const cssClass = WildFireProcedural.classify(fixedRule, '/');
   assert.strictEqual(cssClass.mode, 'js', 'matches-css stays JS (dynamic computed style)');
   const beforeNode = styledNode('div', {}, { content: '"ad"' });
@@ -3228,6 +3276,57 @@ async function testPhase1AAliases() {
   assert.strictEqual(e2.loadCompiled(blob), true, 'compiled alias rules load');
   assert.strictEqual(e2.matchRequest('https://c.example/x', 'xmlhttprequest', 'https://site.test/').blocked, true, 'compiled xhr alias');
   assert.ok(e2.getCapabilities() & FilterEngine.CAP.GENERICHIDE, 'compiled ghide capability');
+}
+
+async function testCosmeticPayloadCache() {
+  const core = context.WildFireBackgroundCore;
+  assert.ok(core && typeof core.createCosmeticPayloadCache === 'function',
+    'a cosmetic payload cache helper is exposed');
+  const cache = core.createCosmeticPayloadCache(2);
+  cache.setGeneration(1);
+  const first = { value: 'first' };
+  assert.strictEqual(cache.set('a', first), first, 'cache set returns the payload');
+  assert.strictEqual(cache.get('a'), first, 'cache hit returns the same payload');
+  cache.set('b', { value: 'second' });
+  cache.set('c', { value: 'third' });
+  assert.strictEqual(cache.get('a'), null, 'the cache is bounded');
+  cache.setGeneration(2);
+  assert.strictEqual(cache.get('b'), null, 'a new filter generation clears the cache');
+
+  const calls = { policy: 0, cosmetic: 0, procedural: 0 };
+  const sent = [];
+  const fakeCtx = {
+    globals: context,
+    filterGeneration: 1,
+    safeHost: url => new URL(String(url)).hostname,
+    engine: {
+      getHidePolicy: () => {
+        calls.policy++;
+        return { generichide: false, elemhide: false, specifichide: false };
+      },
+      getCosmetic: host => { calls.cosmetic++; return ['.ad-' + host]; },
+      getProcedural: () => { calls.procedural++; return []; }
+    },
+    pageStore: { setCosmetic() {} },
+    wapiContexts: { find: () => null, framesForTab: () => [] },
+    wapi: {
+      tabs: {
+        query: async () => [],
+        send: async (tabId, payload) => { sent.push(payload); }
+      }
+    }
+  };
+  const host = core.createEngineHost(fakeCtx);
+  await host.sendCosmetic(1, 'https://example.com/page');
+  await host.sendCosmetic(2, 'https://example.com/page');
+  assert.strictEqual(calls.policy, 1, 'the same URL reuses its hide policy');
+  assert.strictEqual(calls.cosmetic, 1, 'same-host frames reuse cosmetic selectors');
+  assert.strictEqual(calls.procedural, 1, 'same-host frames reuse procedural trees');
+  assert.strictEqual(sent.length, 2, 'each frame still receives the payload');
+  await host.sendCosmetic(3, 'https://example.com/other');
+  assert.strictEqual(calls.policy, 2, 'a new URL computes its own hide policy');
+  assert.strictEqual(calls.cosmetic, 1, 'the same host and policy still reuse selectors');
+  assert.strictEqual(sent.length, 3, 'the new frame also receives the payload');
 }
 
 async function testHideExceptionModifiers() {
@@ -5853,6 +5952,7 @@ async function testTrafficPathRegressions() {
 Promise.resolve()
   .then(() => testPhase0Foundation())
   .then(() => testPhase1AAliases())
+  .then(() => testCosmeticPayloadCache())
   .then(() => testHideExceptionModifiers())
   .then(() => testPhase1BBadfilter())
   .then(() => testPhase1CRemoveModifiers())

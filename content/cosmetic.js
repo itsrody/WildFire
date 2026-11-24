@@ -31,6 +31,8 @@
   function needsText(step) {
     if (!step) return false;
     if (step.op === 'has-text' || step.op === 'contains' || step.op === 'min-text-length') return true;
+    // XPath predicates may depend on text nodes, not only attributes.
+    if (step.op === 'xpath') return true;
     if ((step.op === 'has' || step.op === 'not') && step.inner && Array.isArray(step.inner.steps)) {
       return step.inner.steps.some(needsText);
     }
