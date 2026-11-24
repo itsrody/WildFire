@@ -17,13 +17,16 @@ That sentence is the constitution of this repo. Unpack it:
   filtering with exceptions, domain/wildcard matching, element hiding, a
   counter, per-site controls — in original code. This is **not** a fork,
   repackaging, minified copy, port, or adaptation of uBO source. Behavior comes
-  from public filter-syntax docs, Gecko/WebExtensions docs, and our own tests;
-  architecture, names, registries, assets, and code are WildFire's. If a
-  behavior is needed, specify it here and write it here.
-- **Clean-room discipline.** Do not fetch, vendor, translate, adapt, or paste
-  upstream uBO/AdGuard source, engines, build scripts, or assets. Reading public
-  syntax documentation is fine; copying an implementation is not. A feature is
-  complete only when it has WildFire-owned code, tests, and docs.
+  from public filter-syntax docs, Gecko/WebExtensions docs, our own tests, and
+  reading upstream implementations for inspiration; architecture, names,
+  registries, assets, and code are WildFire's. If a behavior is needed, specify
+  it here and write it here.
+- **Inspiration allowed, cloning not.** Reading individual upstream
+  uBO/AdGuard source files to understand an approach is allowed. Do not clone
+  or download repositories into the workspace, vendor files, or copy,
+  translate, adapt, minify, or paste upstream code, engines, build scripts, or
+  assets. Do not import upstream modules. A feature is complete only when it
+  has WildFire-owned code, tests, and docs.
 - **100% Firefox native.** Firefox is the only target. The manifest uses
   Firefox's `browser_specific_settings`, runtime code uses the promise-based
   `browser.*` API through thin WildFire `wapi` modules, and there is no Chrome
@@ -646,9 +649,9 @@ gets a syntax-table row when the feature is user-visible.
    wrappers, no polyfills, no "cross-browser" conditional code.
 2. **Zero runtime dependencies.** Adding a package means it must be dev-only
    and justified; the extension itself stays dependency-free.
-3. **No upstream code.** Do not fetch, vendor, adapt, or paste uBO source.
-   Reading public filter-list syntax docs is fine; copying implementations is
-   not.
+3. **Inspiration allowed, no cloning.** Reading upstream source for ideas is
+   fine; cloning repositories, vendoring files, or copying/adapting upstream
+   implementations is not. Write every implementation here.
 4. **Floor is 153.0 / MV2.** Treat the manifest's gecko block as pinned.
 5. **Keep the blocking listener synchronous.**
 6. **Validate selectors before injecting CSS.** A malformed cosmetic rule must
@@ -700,8 +703,9 @@ The scriptlet catalog covers both uBO `##+js()` and AdGuard
 `lib/resources/scriptlets/` chain; every alias lands with a validator, an original
 implementation, tests, and a README row. Keep these load-bearing rules:
 
-- **No upstream code.** Public syntax docs are fine; copying or adapting uBO or
-  AdGuard source is not. Write every implementation here.
+- **Inspiration allowed, no cloning.** Reading upstream source for ideas is
+  fine; copying or adapting uBO or AdGuard source is not. Write every
+  implementation here.
 - **No code from filter text.** No `eval`, no `Function`, no filter-supplied
   script. Alias arguments are validated data only.
 - **No `trusted-*` yet.** Trusted-only aliases are rejected into

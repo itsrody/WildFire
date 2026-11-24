@@ -1,11 +1,11 @@
 # WildFire
 
 A minimal, **uBO-inspired** content blocker built from scratch for Firefox using a
-clean-room approach: public filter-syntax docs and Gecko/WebExtensions docs define
-the behavior, while the architecture, code, registries, and assets are WildFire's.
-No upstream uBlock Origin source, no npm dependencies, no cross-browser shim, and
-no build framework — just Firefox-native WebExtensions APIs and a small filter
-engine.
+clean-room approach: public filter-syntax docs, Gecko/WebExtensions docs, and
+upstream source read for inspiration inform the behavior, while the architecture,
+code, registries, and assets are WildFire's. No vendored upstream source, no npm
+dependencies, no cross-browser shim, and no build framework — just Firefox-native
+WebExtensions APIs and a small filter engine.
 
 - **Manifest:** MV2 (`manifest_version: 2`)
 - **Firefox floor:** `strict_min_version: "153.0"` (current ESR line)
