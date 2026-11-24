@@ -140,8 +140,10 @@ both positive and negated hosts use parent-domain scoping. Lines starting with
 
 The preshipped `WildFire default filters` list is built in. It is seeded from
 `filters/default.txt`, shown in Options with its header metadata, loaded once,
-and refreshed with each extension update. It has no network source: it is never
-fetched, cannot be updated or removed, and can only be disabled.
+and refreshed with each extension update. Its URL is
+`https://raw.githubusercontent.com/itsrody/WildFire/main/filters/default.txt`;
+**Update** revalidates it manually, but it never auto-updates and cannot be
+removed. It can be disabled in Options.
 
 Open Options → **Suggested lists** for shortcuts to well-known community lists,
 or **Filter lists** to add any `http(s)` URL. Adding a URL — suggested or typed —
@@ -393,10 +395,10 @@ This is deliberately a *minimal* engine, not a full uBO port:
   registration is idempotent, a failed init settles readiness with a recorded
   error, and scriptlet registrations are swapped atomically so a failed
   replacement keeps the old one.
-- The default list is preshipped and local-only; external lists are opt-in:
-  nothing is fetched until you add a URL and explicitly fetch it, and a fetched
-  list must be enabled before its rules apply. WildFire stores the exact text,
-  a hash, and parsed header metadata for each applied list.
+- The default list ships preshipped and never auto-fetches; external lists are
+  opt-in: nothing is fetched until you add a URL and explicitly fetch it, and a
+  fetched list must be enabled before its rules apply. WildFire stores the exact
+  text, a hash, and parsed header metadata for each applied list.
 - Firefox ETP is left untouched. WildFire observes ETP block errors and
   classifications only while diagnostics are enabled, and never adds them to
   WildFire's counters. Header listeners are registered when loaded rules need

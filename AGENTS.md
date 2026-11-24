@@ -121,7 +121,7 @@ lib/
     rewrite-resources.js   WildFire-owned bodies for $rewrite responses
   state/
     store.js           wapi.storage.local wrapper, key wildfire.state.v1
-    bundled-lists.js   inert catalog of the preshipped local-only default list
+    bundled-lists.js   inert catalog of the preshipped default list with a manual update URL
     remote-lists.js    preshipped + opt-in remote list store, key wildfire.remote.v1
     suggested-lists.js inert catalog of suggested list URLs (Options shortcuts)
     page-store.js      per-tab/frame document, site, popup and page cache state
@@ -479,9 +479,12 @@ keyed by the tab's top-level site even when the request comes from an embedded
 frame. Storage key `wildfire.remote.v1` holds
 `{lists: [{url, builtin, enabled, autoUpdate, etag, lastModified, text,
 updatedAt, checkedAt, hash, lastError, metadata}]}` and is owned entirely by
-`lib/state/remote-lists.js`. The preshipped `wildfire:bundled/default.txt` entry
-is seeded from `filters/default.txt` with parsed header metadata, starts enabled,
-cannot be fetched or removed, and can only be disabled in Options.
+`lib/state/remote-lists.js`. The preshipped default entry is seeded from
+`filters/default.txt` with parsed header metadata, starts enabled, and uses
+`https://raw.githubusercontent.com/itsrody/WildFire/main/filters/default.txt` as
+a manual-only Update source. It cannot auto-update or be removed, and can be
+disabled in Options. The old `wildfire:bundled/default.txt` sentinel is migrated
+to that URL.
 
 Background listens for `wildfire:*` messages:
 
@@ -535,16 +538,18 @@ continues, and copies a matching rule as WildFire syntax. The blocking listener
 records only when the logger is enabled, and inspection never changes `blocked`,
 `blockedBySite`, or filter decisions.
 
-The preshipped default list is remote-list shaped but strictly local.
-`lib/state/bundled-lists.js` is an inert catalog with a `wildfire:bundled/default.txt`
-sentinel; `lib/state/remote-lists.js` seeds that entry from `filters/default.txt`
-at startup, parses `! Title`, `! Description`, `! Version`, `! Homepage`,
-`! License`, `! Expires`, `! Checksum`, `! Diff-Path` and `! Last Modified`
-metadata, stores the exact text and hash, and loads it once before custom and
-external remote rules. The sentinel has no update source: `update-list`,
-`set-list-auto` and `remove-list` reject it, and `set-list-enabled` can only
-disable it. Extension updates refresh the preshipped text while preserving the
-user's enabled choice.
+The preshipped default list is remote-list shaped and ships with exact text.
+`lib/state/bundled-lists.js` is an inert catalog with the default update URL
+`https://raw.githubusercontent.com/itsrody/WildFire/main/filters/default.txt`;
+`lib/state/remote-lists.js` seeds the entry from `filters/default.txt` at startup,
+parses `! Title`, `! Description`, `! Version`, `! Homepage`, `! License`,
+`! Expires`, `! Checksum`, `! Diff-Path` and `! Last Modified` metadata, stores
+the exact text and hash, and loads it once before custom and external remote
+rules. It is never fetched automatically: `set-list-auto` and `remove-list`
+reject it, `update-list` is a manual opt-in revalidation, and `set-list-enabled`
+can disable it. A manual update persists across extension reseeds; the legacy
+`wildfire:bundled/default.txt` sentinel migrates to the default URL while
+preserving user state.
 
 External lists remain opt-in. The bundled `lib/state/suggested-lists.js` catalog
 is inert: Options shows its URLs as shortcuts, and clicking one only sends
