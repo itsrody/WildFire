@@ -277,6 +277,14 @@ and prototype paths such as `__proto__` are rejected. Every alias is validated
 again before it runs. `trusted-*` aliases stay rejected until WildFire has an
 explicit source-trust model.
 
+Timer defusers accept an optional delay matcher: an exact value, `min-max`,
+`min-`, `-max`, `!value` for negation, and `-0` for negative delays. Callback
+needles can also be negated with `!`. `prevent-window-open` matches all
+`window.open()` arguments and accepts an optional decoy lifetime in seconds plus
+`obj` or `blank` replacement. `prevent-fetch` accepts a curated third
+response-config argument: a response type shorthand or a JSON object limited to
+`ok`, `redirected`, `status`, `statusText`, and `type`.
+
 The non-trusted uBO general-purpose and defuser catalog is implemented with
 original WildFire code. Trusted-only aliases (including `replace-node-text` /
 `rpnt`) remain rejected because WildFire has no source-trust model. Updated

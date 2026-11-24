@@ -1380,6 +1380,178 @@ assert.strictEqual(runtimeContext.WildFireScriptlets.validate('abort-current-scr
   ['wildFireProbe', '/page code/i', '/ad\\.js/i']), '',
   'abort-current-script accepts literals and regex needles');
 
+assert.strictEqual(WildFireScriptlets.validate('prevent-settimeout', ['blocked', '20-50']), '',
+  'timer defusers accept a delay range');
+assert.strictEqual(WildFireScriptlets.validate('prevent-setinterval', ['blocked', '30-']), '',
+  'timer defusers accept an open-ended delay range');
+assert.strictEqual(WildFireScriptlets.validate('prevent-settimeout', ['blocked', '-100']), '',
+  'timer defusers accept a maximum delay');
+assert.strictEqual(WildFireScriptlets.validate('prevent-settimeout', ['blocked', '!300']), '',
+  'timer defusers accept a negated delay');
+assert.strictEqual(WildFireScriptlets.validate('prevent-settimeout', ['blocked', '-0']), '',
+  'timer defusers accept the negative-delay sentinel');
+assert.notStrictEqual(WildFireScriptlets.validate('prevent-settimeout', ['blocked', 'soon']), '',
+  'timer defusers reject an unbounded delay token');
+assert.notStrictEqual(WildFireScriptlets.validate('prevent-settimeout', ['blocked', '50-20']), '',
+  'timer defusers reject an inverted delay range');
+assert.strictEqual(WildFireScriptlets.validate('prevent-settimeout',
+  ['!showAd', '20-50'], 'adguard'), '',
+  'adguard timer defusers accept a negated needle and delay range');
+
+const delayContext = domScriptletContext();
+let delayPassThroughCalls = 0;
+const originalDelayTimer = delayContext.setTimeout;
+delayContext.setTimeout = (...args) => {
+  delayPassThroughCalls += 1;
+  return originalDelayTimer(...args);
+};
+delayContext.WildFireScriptlets.apply([
+  { alias: 'prevent-settimeout', args: ['', '20-50'], domains: [], isException: false }
+]);
+assert.strictEqual(delayContext.setTimeout(() => {}, 30), 0,
+  'a matching delay range is defused');
+assert.strictEqual(delayPassThroughCalls, 0, 'defused timers never reach the page timer');
+assert.strictEqual(delayContext.setTimeout(() => {}, 60), 42,
+  'a delay outside the range passes through');
+assert.strictEqual(delayPassThroughCalls, 1, 'pass-through timers reach the page timer');
+
+const negatedDelayContext = domScriptletContext();
+let negatedPassThroughCalls = 0;
+const negatedOriginalTimer = negatedDelayContext.setTimeout;
+negatedDelayContext.setTimeout = (...args) => {
+  negatedPassThroughCalls += 1;
+  return negatedOriginalTimer(...args);
+};
+negatedDelayContext.WildFireScriptlets.apply([
+  { alias: 'prevent-settimeout', args: ['blocked', '!300'], domains: [], isException: false }
+]);
+assert.strictEqual(negatedDelayContext.setTimeout(() => {}, 300, 'blocked'), 42,
+  'a negated delay keeps the excluded timer');
+assert.strictEqual(negatedDelayContext.setTimeout(() => {}, 400, 'blocked'), 0,
+  'a negated delay defuses every other timer');
+assert.strictEqual(negatedPassThroughCalls, 1, 'only the excluded timer passes through');
+
+const negativeDelayContext = domScriptletContext();
+let negativePassThroughCalls = 0;
+const negativeOriginalTimer = negativeDelayContext.setTimeout;
+negativeDelayContext.setTimeout = (...args) => {
+  negativePassThroughCalls += 1;
+  return negativeOriginalTimer(...args);
+};
+negativeDelayContext.WildFireScriptlets.apply([
+  { alias: 'prevent-settimeout', args: ['', '-0'], domains: [], isException: false }
+]);
+assert.strictEqual(negativeDelayContext.setTimeout(() => {}, -10), 0,
+  'the -0 sentinel defuses negative delays');
+assert.strictEqual(negativeDelayContext.setTimeout(() => {}, 0), 42,
+  'the -0 sentinel keeps a plain zero delay');
+assert.strictEqual(negativePassThroughCalls, 1, 'plain zero timers pass through');
+
+const negatedNeedleContext = domScriptletContext();
+negatedNeedleContext.WildFireScriptlets.apply([
+  { alias: 'prevent-settimeout', args: ['!showAd'], domains: [], isException: false }
+]);
+assert.strictEqual(negatedNeedleContext.setTimeout(() => {}, 100), 0,
+  'a negated callback needle defuses non-matching callbacks');
+assert.strictEqual(negatedNeedleContext.setTimeout(() => { /* showAd */ }, 100), 42,
+  'a negated callback needle keeps matching callbacks');
+
+function decoyWindowContext() {
+  const sandbox = {
+    console,
+    location: { hostname: 'page.example' },
+    document: {
+      body: {
+        appendChild(element) {
+          sandbox.appended = element;
+          element.parentNode = this;
+        },
+        removeChild(element) {
+          sandbox.removed = element;
+          element.parentNode = null;
+        }
+      },
+      createElement(tag) {
+        return {
+          tagName: String(tag).toUpperCase(),
+          parentNode: null,
+          attributes: {},
+          setAttribute(name, value) { this.attributes[name] = value; },
+          contentWindow: {
+            document: {},
+            location: { href: 'about:blank' },
+            focus() { sandbox.focused = true; },
+            blur() { sandbox.blurred = true; },
+            postMessage() { sandbox.posted = true; }
+          }
+        };
+      }
+    },
+    setTimeout: (handler, delay) => { sandbox.cleanup = [handler, delay]; return 99; },
+    open: (...args) => { sandbox.opened = args; return { real: true }; },
+    addEventListener: () => {}
+  };
+  sandbox.window = sandbox;
+  const vmContext = vm.createContext(sandbox);
+  loadScriptlets(vmContext);
+  return vmContext;
+}
+
+assert.strictEqual(WildFireScriptlets.validate('prevent-window-open', ['blocked', '2', 'obj']), '',
+  'window defusers accept a decoy lifetime and replacement');
+assert.strictEqual(WildFireScriptlets.validate('prevent-window-open',
+  ['blocked', '2', 'obj'], 'adguard'), '',
+  'adguard window defusers accept the same decoy arguments');
+assert.notStrictEqual(WildFireScriptlets.validate('prevent-window-open', ['blocked', 'soon']), '',
+  'window defusers reject a non-numeric decoy lifetime');
+assert.notStrictEqual(WildFireScriptlets.validate('prevent-window-open', ['blocked', '2', 'eval(1)']), '',
+  'window defusers reject an unknown replacement');
+
+const allArgsWindowContext = decoyWindowContext();
+allArgsWindowContext.WildFireScriptlets.apply([
+  { alias: 'prevent-window-open', args: ['popupFeature'], domains: [], isException: false }
+]);
+assert.strictEqual(allArgsWindowContext.open('https://ads.example/', ' popup', 'popupFeature'), null,
+  'window defusers match all arguments, not only the URL');
+assert.strictEqual(allArgsWindowContext.opened, undefined,
+  'a matching popup never reaches the page opener');
+
+const negatedWindowContext = decoyWindowContext();
+negatedWindowContext.WildFireScriptlets.apply([
+  { alias: 'prevent-window-open', args: ['!allowed.example'], domains: [], isException: false }
+]);
+assert.strictEqual(negatedWindowContext.open('https://allowed.example/').real, true,
+  'a negated window needle keeps excluded URLs');
+assert.strictEqual(negatedWindowContext.open('https://ads.example/'), null,
+  'a negated window needle defuses other URLs');
+
+const decoyWindowOpenContext = decoyWindowContext();
+decoyWindowOpenContext.WildFireScriptlets.apply([
+  { alias: 'prevent-window-open', args: ['blocked', '2', 'obj'], domains: [], isException: false }
+]);
+const decoyWindow = decoyWindowOpenContext.open('https://ads.example/blocked');
+assert.strictEqual(decoyWindow.closed, false, 'the decoy starts open');
+assert.strictEqual(decoyWindowOpenContext.appended.tagName, 'OBJECT',
+  'obj replacement creates an object decoy');
+assert.strictEqual(decoyWindowOpenContext.cleanup[1], 2000,
+  'the decoy lifetime is scheduled in milliseconds');
+decoyWindow.focus();
+assert.strictEqual(decoyWindowOpenContext.focused, true,
+  'the decoy forwards window methods');
+decoyWindow.close();
+assert.strictEqual(decoyWindow.closed, true, 'closing invalidates the decoy');
+assert.strictEqual(decoyWindowOpenContext.removed, decoyWindowOpenContext.appended,
+  'closing removes the decoy element');
+
+const blankWindowContext = decoyWindowContext();
+blankWindowContext.WildFireScriptlets.apply([
+  { alias: 'prevent-window-open', args: ['blocked', '', 'blank'], domains: [], isException: false }
+]);
+assert.deepStrictEqual(blankWindowContext.open('https://ads.example/blocked'), { real: true },
+  'blank replacement still returns the opener result');
+assert.deepStrictEqual(blankWindowContext.opened, ['about:blank'],
+  'blank replacement strips the popup URL');
+
 const needleEngine = new FilterEngine(null, null, WildFireScriptlets);
 needleEngine.load([
   'page.example##+js(prevent-setTimeout, /foo{2,3},bar/)',
@@ -1559,6 +1731,26 @@ assert.strictEqual(fetchContext.fetch('https://page.example/data.json'), 'origin
   'prevent-fetch passes through non-matching URLs');
 assert.strictEqual(fetchContext.fetched, 'https://page.example/data.json',
   'the original fetch sees non-matching URLs');
+
+assert.strictEqual(WildFireScriptlets.validate('prevent-fetch',
+  ['ads.example', 'emptyObj', 'opaque']), '',
+  'prevent-fetch accepts a curated response type');
+assert.strictEqual(WildFireScriptlets.validate('prevent-fetch',
+  ['ads.example', 'emptyObj', '{"status":404,"statusText":"Not Found","ok":false,"type":"opaque"}']), '',
+  'prevent-fetch accepts validated response properties');
+assert.strictEqual(WildFireScriptlets.validate('prevent-fetch',
+  ['*', '', 'opaque'], 'adguard'), '',
+  'AdGuard prevent-fetch accepts a curated response type');
+assert.notStrictEqual(WildFireScriptlets.validate('prevent-fetch',
+  ['ads.example', 'emptyObj', '{"status":999}']), '',
+  'prevent-fetch rejects an invalid status');
+assert.notStrictEqual(WildFireScriptlets.validate('prevent-fetch',
+  ['ads.example', 'emptyObj', '{"evil":true}']), '',
+  'prevent-fetch rejects unknown response properties');
+assert.notStrictEqual(WildFireScriptlets.validate('prevent-fetch',
+  ['ads.example', 'emptyObj', 'eval(1)']), '',
+  'prevent-fetch never accepts filter-supplied code as a response config');
+
 
 const detectorContext = dataScriptletContext();
 detectorContext.BlockAdblock = () => true;
@@ -3803,6 +3995,40 @@ async function testWapiScripting() {
   assert.strictEqual(await unsupported.replace('x', makeDetails()), false);
 }
 
+async function testPreventFetchResponseConfig() {
+  const configuredFetchContext = dataScriptletContext();
+  configuredFetchContext.WildFireScriptlets.apply([
+    {
+      alias: 'prevent-fetch',
+      args: ['ads.example', 'emptyObj',
+        '{"status":404,"statusText":"Not Found","ok":false,"type":"opaque"}'],
+      domains: [], isException: false
+    }
+  ]);
+  const configuredResponse = await configuredFetchContext.fetch('https://ads.example/x.js');
+  assert.strictEqual(configuredResponse.status, 404,
+    'the curated status is applied to the synthetic response');
+  assert.strictEqual(configuredResponse.statusText, 'Not Found',
+    'the curated status text is applied to the synthetic response');
+  assert.strictEqual(configuredResponse.ok, false,
+    'the curated ok flag is applied to the synthetic response');
+  assert.strictEqual(configuredResponse.type, 'opaque',
+    'the curated response type is applied to the synthetic response');
+  assert.strictEqual(configuredFetchContext.fetched, undefined,
+    'a configured response never calls the original fetch');
+
+  const adguardFetchContext = dataScriptletContext();
+  adguardFetchContext.WildFireScriptlets.apply([
+    {
+      alias: 'prevent-fetch', syntax: 'adguard',
+      args: ['*', '{}', 'opaque'], domains: [], isException: false
+    }
+  ]);
+  const adguardResponse = await adguardFetchContext.fetch('https://ads.example/x.js');
+  assert.strictEqual(adguardResponse.type, 'opaque',
+    'AdGuard response config reuses the WildFire synthetic response');
+}
+
 async function testBackgroundLogger() {
   const ctx = {
     loggerEnabled: false,
@@ -5384,6 +5610,7 @@ Promise.resolve()
   .then(() => testWapiAction())
   .then(() => testWapiCapabilities())
   .then(() => testWapiScripting())
+  .then(() => testPreventFetchResponseConfig())
   .then(() => testBackgroundLogger())
   .then(() => testInspectorUiHelpers())
   .then(() => testInspectorPage())
