@@ -1,0 +1,371 @@
+/* WildFire compatibility corpus: WildFire-authored rule-family matrix.
+ * No upstream filter text, resource bytes, or generated list data is stored here.
+ * Every rule is a synthetic behavioral probe used by tools/test.js. */
+'use strict';
+
+const repeatText = (prefix, unit, count, suffix) => prefix + unit.repeat(count) + suffix;
+
+const request = (url, type, documentUrl, blocked, extra) =>
+  Object.assign({ kind: 'network', url, type, documentUrl, blocked }, extra || {});
+const popup = (url, sourceUrl, blocked) =>
+  ({ kind: 'popup', url, sourceUrl, blocked });
+const cosmeticCheck = (host, includes, excludes) =>
+  ({ kind: 'cosmetic', host, includes: includes || [], excludes: excludes || [] });
+const proceduralCheck = (host, count) => ({ kind: 'procedural', host, count });
+const scriptletCheck = (count, alias, isException) =>
+  ({ kind: 'scriptlet', count, alias: alias || '', isException: Boolean(isException) });
+const capabilityCheck = (name, reason) =>
+  ({ kind: 'capability', name, reason: reason || 'capability enabled' });
+const cspCheck = (url, type, documentUrl, includes, exception) =>
+  ({ kind: 'csp', url, type, documentUrl, includes: includes || [], exception: Boolean(exception) });
+const removeparamCheck = (url, type, documentUrl, values, exception) =>
+  ({ kind: 'removeparam', url, type, documentUrl, values: values || [], exception: Boolean(exception) });
+const removeheaderCheck = (url, type, documentUrl, names, phase, exception) =>
+  ({ kind: 'removeheader', url, type, documentUrl, names: names || [], phase: phase || 'request', exception: Boolean(exception) });
+
+const accepted = (id, family, rule, decision, inspectorReason, checks, engineOptions) => ({
+  id, family, rule, outcome: 'accepted', decision, inspectorReason,
+  checks: Array.isArray(checks) ? checks : [checks],
+  engineOptions: engineOptions || {}
+});
+const rejected = (id, family, rule, rejection, reason, engineOptions) => ({
+  id, family, rule, outcome: 'rejected', decision: 'rejected',
+  rejection, reason, inspectorReason: reason,
+  checks: [], engineOptions: engineOptions || {}
+});
+
+const families = [
+  'network.comment', 'network.plain', 'network.wildcard', 'network.host',
+  'network.anchors', 'network.regex', 'network.exception', 'network.types',
+  'network.party', 'network.domain', 'network.document', 'network.popup',
+  'network.important', 'network.badfilter', 'network.redirect', 'network.rewrite',
+  'network.csp', 'network.removeparam', 'network.removeheader',
+  'network.hide-modifier', 'cname.scope', 'cosmetic.plain', 'cosmetic.scope',
+  'cosmetic.exception', 'cosmetic.abp', 'procedural.text', 'procedural.path', 'procedural.has',
+  'procedural.ancestor', 'procedural.attr', 'procedural.css', 'procedural.xpath',
+  'procedural.not', 'procedural.media', 'scriptlet.ubo', 'scriptlet.adguard',
+  'scriptlet.exception'
+].map(id => ({ id }));
+
+const rejectionClasses = [
+  { id: 'network.domain.invalid', match: 'invalid domain option:' },
+  { id: 'network.hide-modifier.non-exception', match: 'hide modifiers require an exception' },
+  { id: 'network.hide-modifier.mixed', match: 'hide modifiers cannot be combined with network actions' },
+  { id: 'network.csp.bare', match: 'bare csp requires an exception' },
+  { id: 'network.rewrite.mixed', match: 'rewrite and rewrite-rule cannot be combined' },
+  { id: 'network.rewrite.non-regex', match: 'rewrite-rule requires a regex filter' },
+  { id: 'network.removeparam.invalid', match: 'invalid removeparam value' },
+  { id: 'network.removeparam.regex', match: 'invalid removeparam regex:' },
+  { id: 'network.removeheader.invalid', match: 'invalid removeheader value' },
+  { id: 'regex.invalid', match: 'invalid regex:' },
+  { id: 'regex.flag', match: 'unsupported regex flag' },
+  { id: 'regex.length', match: 'regex pattern too long' },
+  { id: 'regex.groups', match: 'too many groups' },
+  { id: 'regex.quantifiers', match: 'too many quantifiers' },
+  { id: 'regex.nested', match: 'nested or alternated quantifier' },
+  { id: 'regex.backreference', match: 'backreferences are not allowed' },
+  { id: 'cosmetic.abp-action', match: 'unsupported ABP action selector' },
+  { id: 'cosmetic.abp-procedural', match: 'unsupported ABP procedural selector' },
+  { id: 'cosmetic.abp-missing-operator', match: 'ABP procedural selector missing procedural operator' },
+  { id: 'cosmetic.empty-negated', match: 'empty negated cosmetic domain' },
+  { id: 'cosmetic.generic-procedural', match: 'generic procedural rules need domain scope' },
+  { id: 'procedural.unbalanced', match: 'unbalanced procedural selector' },
+  { id: 'procedural.has-empty', match: 'empty :has argument' },
+  { id: 'procedural.has-text-empty', match: 'empty :has-text argument' },
+  { id: 'procedural.regex', match: 'invalid :matches-path argument' },
+  { id: 'procedural.depth', match: 'procedural selector too deep' },
+  { id: 'procedural.nth', match: 'invalid :nth-ancestor argument' },
+  { id: 'procedural.upward', match: 'invalid :upward argument' },
+  { id: 'procedural.min-text', match: 'invalid :min-text-length argument' },
+  { id: 'procedural.attr', match: 'invalid :matches-attr argument' },
+  { id: 'procedural.css', match: 'invalid :matches-css regex' },
+  { id: 'procedural.css-invalid', match: 'invalid :matches-css argument' },
+  { id: 'procedural.xpath', match: ':xpath expression too long' },
+  { id: 'procedural.xpath-empty', match: 'empty :xpath argument' },
+  { id: 'procedural.xpath-unbalanced', match: 'unbalanced :xpath argument' },
+  { id: 'procedural.media', match: 'empty :matches-media argument' },
+  { id: 'procedural.media-invalid', match: 'invalid :matches-media argument' },
+  { id: 'procedural.not-inner', match: 'empty :has-text argument' },
+  { id: 'scriptlet.trusted', match: 'trusted scriptlets require a trusted source' },
+  { id: 'scriptlet.unknown', match: 'unknown scriptlet alias:' },
+  { id: 'scriptlet.arity', match: 'wrong argument count' },
+  { id: 'scriptlet.property', match: 'invalid scriptlet property' },
+  { id: 'scriptlet.regex-nested', match: 'nested or alternated regex quantifier' },
+  { id: 'scriptlet.regex-flag', match: 'unsupported scriptlet regex flag' },
+  { id: 'scriptlet.unterminated-rule', match: 'unterminated +js rule' },
+  { id: 'scriptlet.unterminated-arg', match: 'unterminated +js argument' },
+  { id: 'scriptlet.unbalanced', match: 'unbalanced +js argument' },
+  { id: 'scriptlet.empty-alias', match: 'empty scriptlet alias' },
+  { id: 'scriptlet.code', match: 'unsupported constant value' },
+  { id: 'adguard.debug', match: 'debug scriptlets are not allowed in production filters' },
+  { id: 'adguard.alias-unknown', match: 'unknown AdGuard scriptlet alias:' },
+  { id: 'adguard.unterminated', match: 'unterminated AdGuard scriptlet rule' },
+  { id: 'adguard.empty-alias', match: 'empty AdGuard scriptlet alias' },
+  { id: 'csp.alias', match: 'unknown CSP alias:' },
+  { id: 'rewrite.alias', match: 'unknown rewrite alias:' },
+  { id: 'registry.rewrite', match: 'unknown rewrite alias:' },
+  { id: 'registry.scriptlet', match: 'scriptlet registry unavailable' }
+];
+
+const longRegex = repeatText('/', 'a', 513, '/');
+const manyGroups = '/' + Array.from({ length: 17 }, () => '(a)').join('') + '/';
+const manyQuantifiers = '/' + Array.from({ length: 17 }, () => 'a+').join('') + '/';
+const deepHas = 'example.com##.x' + ':has(.y'.repeat(12) + ')'.repeat(12);
+
+const rules = [
+  accepted('network.comment.accepted', 'network.comment', '! WildFire-authored probe',
+    'ignored', 'comment ignored', { kind: 'ignored' }),
+  accepted('network.plain.accepted', 'network.plain', 'example.com/banner.gif',
+    'blocked', 'network rule', request('https://example.com/banner.gif', 'image', 'https://site.test/', true)),
+  accepted('network.wildcard.accepted', 'network.wildcard', 'example.com*promo.gif',
+    'blocked', 'network rule', request('https://example.com/a/promo.gif', 'image', 'https://site.test/', true)),
+  accepted('network.host.accepted', 'network.host', '||ads.example^',
+    'blocked', 'network rule', request('https://cdn.ads.example/a.js', 'script', 'https://site.test/', true)),
+  accepted('network.anchors.accepted', 'network.anchors', '|https://exact.example/ad.js|',
+    'blocked', 'network rule', [
+      request('https://exact.example/ad.js', 'script', 'https://site.test/', true),
+      request('https://exact.example/ad.js?x=1', 'script', 'https://site.test/', false,
+        { decision: 'allowed', inspectorReason: 'no matching rule' })
+    ]),
+  accepted('network.regex.accepted', 'network.regex', '/ads\\.example\\/promo/iu',
+    'blocked', 'network rule', request('https://ads.example/PROMO', 'script', 'https://site.test/', true)),
+  accepted('network.exception.accepted', 'network.exception', ['||ads.example^', '@@||ads.example/keep.js^'],
+    'blocked', 'network rule', [
+      request('https://ads.example/keep.js', 'script', 'https://site.test/', false,
+        { decision: 'exception', inspectorReason: 'exception wins' }),
+      request('https://ads.example/drop.js', 'script', 'https://site.test/', true)
+    ]),
+  accepted('network.types.accepted', 'network.types', '||asset.example^$image,~font',
+    'blocked', 'network rule', [
+      request('https://asset.example/a.png', 'image', 'https://site.test/', true),
+      request('https://asset.example/a.woff', 'font', 'https://site.test/', false,
+        { decision: 'allowed', inspectorReason: 'no matching rule' })
+    ]),
+  accepted('network.party.accepted', 'network.party', ['||third.example^$3p', '||first.example^$1p'],
+    'blocked', 'network rule', [
+      request('https://third.example/a.js', 'script', 'https://site.test/', true),
+      request('https://third.example/a.js', 'script', 'https://third.example/', false,
+        { decision: 'allowed', inspectorReason: 'no matching rule' }),
+      request('https://first.example/a.js', 'script', 'https://first.example/', true)
+    ]),
+  accepted('network.not-party.accepted', 'network.party', '||same.example^$~third-party',
+    'blocked', 'network rule', [
+      request('https://same.example/a.js', 'script', 'https://same.example/', true),
+      request('https://same.example/a.js', 'script', 'https://site.test/', false,
+        { decision: 'allowed', inspectorReason: 'no matching rule' })
+    ]),
+  accepted('network.domain.accepted', 'network.domain', '||scope.example^$domain=site.test|~skip.site.test',
+    'blocked', 'network rule', [
+      request('https://scope.example/a.js', 'script', 'https://site.test/', true),
+      request('https://scope.example/a.js', 'script', 'https://skip.site.test/', false,
+        { decision: 'allowed', inspectorReason: 'no matching rule' })
+    ]),
+  accepted('network.domain-wildcard.accepted', 'network.domain', '||wild.example^$domain=site.*|~skip.site.*',
+    'blocked', 'network rule', [
+      request('https://wild.example/a.js', 'script', 'https://site.test/', true),
+      request('https://wild.example/a.js', 'script', 'https://skip.site.test/', false,
+        { decision: 'allowed', inspectorReason: 'no matching rule' })
+    ]),
+  accepted('network.domain-from.accepted', 'network.domain', '||from.example^$from=site.test',
+    'blocked', 'network rule', request('https://from.example/a.js', 'script', 'https://site.test/', true)),
+  accepted('network.document.accepted', 'network.document', '||nav.example^$document',
+    'blocked', '$document', request('https://nav.example/page', 'document', 'https://site.test/', true)),
+  accepted('network.popup.accepted', 'network.popup', '||popup.example^$popup',
+    'blocked', '$popup', popup('https://popup.example/page', 'https://site.test/', true)),
+  accepted('network.important.accepted', 'network.important', ['@@||important.example^$script', '||important.example^$script,important'],
+    'blocked', 'network rule', request('https://important.example/a.js', 'script', 'https://site.test/', true, { important: true })),
+  accepted('network.badfilter.accepted', 'network.badfilter', ['||gone.example^', '||gone.example^$badfilter', '||keep.example^'],
+    'blocked', 'network rule', [
+      request('https://gone.example/a.js', 'script', 'https://site.test/', false,
+        { decision: 'allowed', inspectorReason: 'no matching rule' }),
+      request('https://keep.example/a.js', 'script', 'https://site.test/', true)
+    ]),
+  accepted('network.redirect.accepted', 'network.redirect', '||redirect.example^$redirect=noopjs',
+    'redirected', 'noopjs', request('https://redirect.example/a.js', 'script', 'https://site.test/', true, { redirectAlias: 'noopjs' })),
+  accepted('network.redirect-fallback.accepted', 'network.redirect', '||redirect.example^$redirect=not-curated',
+    'blocked', 'unknown redirect alias', request('https://redirect.example/b.js', 'script', 'https://site.test/', true, { redirectAlias: 'not-curated', redirectFallback: true })),
+  accepted('network.redirect-rule.accepted', 'network.redirect', '/promo-(\\d+)\\.js/$redirect-rule=1x1.gif',
+    'redirected', '1x1.gif', request('https://asset.example/promo-7.js', 'script', 'https://site.test/', true, { redirectAlias: '1x1.gif' })),
+  accepted('network.rewrite.accepted', 'network.rewrite', '||fixed.example^$rewrite=blank-js',
+    'rewritten', 'blank-js', request('https://fixed.example/a.js', 'script', 'https://site.test/', true, { rewriteAlias: 'blank-js' })),
+  accepted('network.rewrite-rule.accepted', 'network.rewrite', '/tag-([a-z]+)\\.js/$rewrite-rule=tagged-js',
+    'rewritten', 'tagged-js', request('https://asset.example/tag-promo.js', 'script', 'https://site.test/', true, { rewriteAlias: 'tagged-js' })),
+  accepted('network.csp.accepted', 'network.csp', ['||frame.example^$csp=no-frame', '@@||allow.example^$csp'],
+    'csp', 'extra enforcing directives', [
+      cspCheck('https://frame.example/embed', 'subdocument', 'https://site.test/', ["frame-src 'none'"], false),
+      Object.assign(
+        cspCheck('https://allow.example/embed', 'subdocument', 'https://site.test/', [], true),
+        { decision: 'exception', inspectorReason: 'exception wins' }
+      )
+    ]),
+  accepted('network.removeparam.accepted', 'network.removeparam', ['||track.example^$removeparam=utm_source', '@@||track.example/keep$removeparam=utm_source'],
+    'removeparam', 'utm_source', [
+      removeparamCheck('https://track.example/p?utm_source=x', 'image', 'https://site.test/', ['utm_source'], false),
+      Object.assign(
+        removeparamCheck('https://track.example/keep?utm_source=x', 'image', 'https://site.test/', [], true),
+        { decision: 'exception', inspectorReason: 'exception wins' }
+      )
+    ]),
+  accepted('network.removeparam-regex.accepted', 'network.removeparam', '||regex-track.example^$removeparam=/^x=/',
+    'removeparam', '/^x=/', removeparamCheck('https://regex-track.example/r?x=1', 'image', 'https://site.test/', ['/^x=/'])),
+  accepted('network.removeheader.accepted', 'network.removeheader', '||api.example^$removeheader=request:x-track',
+    'removeheader-request', 'request headers', removeheaderCheck('https://api.example/data', 'script', 'https://site.test/', ['request:x-track'], 'request')),
+  accepted('network.removeheader-response.accepted', 'network.removeheader', '||api.example^$removeheader=response:x-track',
+    'removeheader-response', 'response headers', removeheaderCheck('https://api.example/data', 'script', 'https://site.test/', ['response:x-track'], 'response')),
+  accepted('network.hide-modifier.accepted', 'network.hide-modifier', '@@||example.com^$generichide',
+    'accepted', 'hide exception stored', capabilityCheck('GENERICHIDE', 'hide exception stored')),
+  accepted('network.elemhide.accepted', 'network.hide-modifier', '@@||hide.example^$elemhide',
+    'accepted', 'hide exception stored', capabilityCheck('ELEMHIDE', 'hide exception stored')),
+  accepted('network.specifichide.accepted', 'network.hide-modifier', '@@||hide.example^$specifichide',
+    'accepted', 'hide exception stored', capabilityCheck('SPECIFICHIDE', 'hide exception stored')),
+  accepted('cname.scope.accepted', 'cname.scope', '||canonical.example^$script',
+    'blocked', 'network rule', request('https://alias.example/a.js', 'script', 'https://site.test/', true, {
+      hosts: { target: ['alias.example', 'canonical.example'], document: ['site.test'] }
+    })),
+  accepted('cosmetic.plain.accepted', 'cosmetic.plain', 'example.com##.promo',
+    'cosmetic', 'cosmetic selector', cosmeticCheck('example.com', ['.promo'])),
+  accepted('cosmetic.scope.accepted', 'cosmetic.scope', ['example.com,~sub.example.com##.scoped', '##.everywhere'],
+    'cosmetic', 'cosmetic selector', [
+      cosmeticCheck('example.com', ['.scoped', '.everywhere']),
+      cosmeticCheck('sub.example.com', ['.everywhere'], ['.scoped'])
+    ]),
+  accepted('cosmetic.exception.accepted', 'cosmetic.exception', ['example.com##.gone', 'example.com#@#.gone'],
+    'cosmetic', 'cosmetic selector', cosmeticCheck('example.com', [], ['.gone'])),
+  accepted('cosmetic.abp.accepted', 'cosmetic.abp', ['example.com#?#div:-abp-has(.ad)', 'example.com#@?#div:-abp-has(.ad)'],
+    'procedural', 'procedural selector', proceduralCheck('example.com', 0)),
+  accepted('procedural.text.accepted', 'procedural.text', [
+    'example.com##.ad:has-text("Buy")',
+    'example.com##.box:contains(/SALE/i)',
+    'example.com##.long:min-text-length(10)'
+  ], 'procedural', 'procedural selector', proceduralCheck('example.com', 3)),
+  accepted('procedural.path.accepted', 'procedural.path', 'example.com##.promo:matches-path(/deals/)',
+    'procedural', 'procedural selector', proceduralCheck('example.com', 1)),
+  accepted('procedural.has.accepted', 'procedural.has', 'example.com##.deep:has(.child:has-text("x"))',
+    'procedural', 'procedural selector', proceduralCheck('example.com', 1)),
+  accepted('procedural.ancestor.accepted', 'procedural.ancestor', [
+    'example.com##.a:nth-ancestor(2)',
+    'example.com##.b:upward(.wrap)',
+    'example.com##.c:upward(2)'
+  ], 'procedural', 'procedural selector', proceduralCheck('example.com', 3)),
+  accepted('procedural.attr.accepted', 'procedural.attr', [
+    'example.com##.a:matches-attr(data-ad)',
+    'example.com##.b:matches-attr(data-ad="1")',
+    'example.com##.c:matches-attr(data-ad=/^promo/)'
+  ], 'procedural', 'procedural selector', proceduralCheck('example.com', 3)),
+  accepted('procedural.css.accepted', 'procedural.css', [
+    'example.com##.a:matches-css(position: fixed)',
+    'example.com##.b:matches-css(color: /red/)',
+    'example.com##.c:matches-css-after(content: "x")'
+  ], 'procedural', 'procedural selector', proceduralCheck('example.com', 3)),
+  accepted('procedural.xpath.accepted', 'procedural.xpath', "example.com##.a:xpath(.//span[@class='ad'])",
+    'procedural', 'procedural selector', proceduralCheck('example.com', 1)),
+  accepted('procedural.not.accepted', 'procedural.not', 'example.com##.a:not(:has-text(Ad))',
+    'procedural', 'procedural selector', proceduralCheck('example.com', 1)),
+  accepted('procedural.media.accepted', 'procedural.media', 'example.com##.a:matches-media((max-width: 900px))',
+    'procedural', 'procedural selector', proceduralCheck('example.com', 1)),
+  accepted('scriptlet.ubo.accepted', 'scriptlet.ubo', 'example.com##+js(set-constant, flag, 1)',
+    'scriptlet', 'scriptlet payload', scriptletCheck(1, 'set-constant')),
+  accepted('scriptlet.adguard.accepted', 'scriptlet.adguard', "example.com#%#//scriptlet('set-constant', 'flag', '1')",
+    'scriptlet', 'scriptlet payload', scriptletCheck(1, 'set-constant')),
+  accepted('scriptlet.exception.accepted', 'scriptlet.exception', ['example.com##+js(set-constant, flag, 1)', 'example.com#@#+js(set, flag, 1)'],
+    'scriptlet', 'scriptlet payload', scriptletCheck(2, 'set-constant', true)),
+  accepted('scriptlet.adguard-exception.accepted', 'scriptlet.exception', [
+    "example.com#%#//scriptlet('set-constant', 'flag', '1')",
+    "example.com#@%#//scriptlet('set-constant', 'flag', '1')"
+  ], 'scriptlet', 'scriptlet payload', scriptletCheck(2, 'set-constant', true)),
+
+  rejected('network.domain.invalid.rejected', 'network.domain', '||bad.example^$domain=bad..example', 'rejectedRegex', 'invalid domain option: bad..example'),
+  rejected('network.hide-modifier.non-exception.rejected', 'network.hide-modifier', '||bad.example^$generichide', 'rejectedRegex', 'hide modifiers require an exception'),
+  rejected('network.hide-modifier.mixed.rejected', 'network.hide-modifier', '@@||bad.example^$generichide,rewrite=blank-js', 'rejectedRegex', 'hide modifiers cannot be combined with network actions'),
+  rejected('network.csp.bare.rejected', 'network.csp', '||bad.example^$csp', 'rejectedRegex', 'bare csp requires an exception'),
+  rejected('network.rewrite.mixed.rejected', 'network.rewrite', '||bad.example^$rewrite=blank-js,rewrite-rule=tagged-js', 'rejectedRegex', 'rewrite and rewrite-rule cannot be combined'),
+  rejected('network.rewrite.non-regex.rejected', 'network.rewrite', 'example.com*promo$rewrite-rule=tagged-js', 'rejectedRegex', 'rewrite-rule requires a regex filter'),
+  rejected('network.removeparam.invalid.rejected', 'network.removeparam', '||bad.example^$removeparam=\u0000', 'rejectedRegex', 'invalid removeparam value'),
+  rejected('network.removeparam.regex.rejected', 'network.removeparam', '||bad.example^$removeparam=/(a+)+/', 'rejectedRegex', 'invalid removeparam regex: nested or alternated quantifier'),
+  rejected('network.removeheader.invalid.rejected', 'network.removeheader', '||bad.example^$removeheader=request:Bad Header', 'rejectedRegex', 'invalid removeheader value'),
+  rejected('regex.invalid.rejected', 'network.regex', '/bad(/', 'rejectedRegex', 'invalid regex: '),
+  rejected('regex.flag.rejected', 'network.regex', '/x/g', 'rejectedRegex', 'unsupported regex flag'),
+  rejected('regex.length.rejected', 'network.regex', longRegex, 'rejectedRegex', 'regex pattern too long'),
+  rejected('regex.groups.rejected', 'network.regex', manyGroups, 'rejectedRegex', 'too many groups'),
+  rejected('regex.quantifiers.rejected', 'network.regex', manyQuantifiers, 'rejectedRegex', 'too many quantifiers'),
+  rejected('regex.nested.rejected', 'network.regex', '/(a+)+$/', 'rejectedRegex', 'nested or alternated quantifier'),
+  rejected('regex.backreference.rejected', 'network.regex', '/(a)\\1/', 'rejectedRegex', 'backreferences are not allowed'),
+  rejected('cosmetic.abp-action.rejected', 'cosmetic.abp', 'example.com#?#div:-abp-remove()', 'rejectedCosmetic', 'unsupported ABP action selector'),
+  rejected('cosmetic.abp-procedural.rejected', 'cosmetic.abp', 'example.com#?#div:-abp-properties(color: red)', 'rejectedCosmetic', 'unsupported ABP procedural selector'),
+  rejected('cosmetic.abp-missing-operator.rejected', 'cosmetic.abp', 'example.com#?#div', 'rejectedCosmetic', 'ABP procedural selector missing procedural operator'),
+  rejected('cosmetic.empty-negated.rejected', 'cosmetic.scope', '~,example.com##.ad', 'rejectedCosmetic', 'empty negated cosmetic domain'),
+  rejected('cosmetic.generic-procedural.rejected', 'cosmetic.scope', '##.ad:has-text("x")', 'rejectedCosmetic', 'generic procedural rules need domain scope'),
+  rejected('procedural.unbalanced.rejected', 'procedural.text', 'example.com##.bad:has-text("unclosed', 'rejectedCosmetic', 'unbalanced procedural selector'),
+  rejected('procedural.has-empty.rejected', 'procedural.has', 'example.com##.bad:has()', 'rejectedCosmetic', 'empty :has argument'),
+  rejected('procedural.has-text-empty.rejected', 'procedural.text', 'example.com##.bad:has-text()', 'rejectedCosmetic', 'empty :has-text argument'),
+  rejected('procedural.regex.rejected', 'procedural.path', 'example.com##.bad:matches-path(/(a+)+/)', 'rejectedCosmetic', 'invalid :matches-path argument'),
+  rejected('procedural.depth.rejected', 'procedural.has', deepHas, 'rejectedCosmetic', 'procedural selector too deep'),
+  rejected('procedural.nth.rejected', 'procedural.ancestor', 'example.com##.bad:nth-ancestor(99)', 'rejectedCosmetic', 'invalid :nth-ancestor argument'),
+  rejected('procedural.upward.rejected', 'procedural.ancestor', 'example.com##.bad:upward(99)', 'rejectedCosmetic', 'invalid :upward argument'),
+  rejected('procedural.min-text.rejected', 'procedural.text', 'example.com##.bad:min-text-length(0)', 'rejectedCosmetic', 'invalid :min-text-length argument'),
+  rejected('procedural.attr.rejected', 'procedural.attr', 'example.com##.bad:matches-attr()', 'rejectedCosmetic', 'invalid :matches-attr argument'),
+  rejected('procedural.css.rejected', 'procedural.css', 'example.com##.bad:matches-css(color: /(a+)+/)', 'rejectedCosmetic', 'invalid :matches-css regex'),
+  rejected('procedural.css-invalid.rejected', 'procedural.css', 'example.com##.bad:matches-css(color:)', 'rejectedCosmetic', 'invalid :matches-css argument'),
+  rejected('procedural.xpath.rejected', 'procedural.xpath', 'example.com##.bad:xpath(' + './/a'.repeat(130) + ')', 'rejectedCosmetic', ':xpath expression too long'),
+  rejected('procedural.xpath-empty.rejected', 'procedural.xpath', 'example.com##.bad:xpath()', 'rejectedCosmetic', 'empty :xpath argument'),
+  rejected('procedural.xpath-unbalanced.rejected', 'procedural.xpath', 'example.com##.bad:xpath(.//a[)', 'rejectedCosmetic', 'unbalanced :xpath argument'),
+  rejected('procedural.media.rejected', 'procedural.media', 'example.com##.bad:matches-media()', 'rejectedCosmetic', 'empty :matches-media argument'),
+  rejected('procedural.media-invalid.rejected', 'procedural.media', 'example.com##.bad:matches-media(\0)', 'rejectedCosmetic', 'invalid :matches-media argument'),
+  rejected('procedural.not.rejected', 'procedural.not', 'example.com##.bad:not(:has-text())', 'rejectedCosmetic', 'empty :has-text argument'),
+  rejected('scriptlet.trusted.rejected', 'scriptlet.ubo', 'example.com##+js(trusted-click-element, body)', 'rejectedScriptlets', 'trusted scriptlets require a trusted source'),
+  rejected('scriptlet.unknown.rejected', 'scriptlet.ubo', 'example.com##+js(made-up-alias)', 'rejectedScriptlets', 'unknown scriptlet alias: made-up-alias'),
+  rejected('scriptlet.arity.rejected', 'scriptlet.ubo', 'example.com##+js(set-constant, flag)', 'rejectedScriptlets', 'wrong argument count'),
+  rejected('scriptlet.property.rejected', 'scriptlet.ubo', 'example.com##+js(set-constant, __proto__.flag, 1)', 'rejectedScriptlets', 'invalid scriptlet property'),
+  rejected('scriptlet.regex-nested.rejected', 'scriptlet.ubo', 'example.com##+js(abort-on-stack-trace, document.cookie, /(a+)+/)', 'rejectedScriptlets', 'nested or alternated regex quantifier'),
+  rejected('scriptlet.regex-flag.rejected', 'scriptlet.ubo', 'example.com##+js(abort-on-stack-trace, document.cookie, /x/g)', 'rejectedScriptlets', 'unsupported scriptlet regex flag'),
+  rejected('scriptlet.unterminated-rule.rejected', 'scriptlet.ubo', 'example.com##+js(set-constant, flag, 1', 'rejectedScriptlets', 'unterminated +js rule'),
+  rejected('scriptlet.unterminated-arg.rejected', 'scriptlet.ubo', 'example.com##+js(set-constant, flag, "1)', 'rejectedScriptlets', 'unterminated +js argument'),
+  rejected('scriptlet.unbalanced.rejected', 'scriptlet.ubo', 'example.com##+js(set-constant, flag, 1))', 'rejectedScriptlets', 'unbalanced +js argument'),
+  rejected('scriptlet.empty-alias.rejected', 'scriptlet.ubo', 'example.com##+js()', 'rejectedScriptlets', 'empty scriptlet alias'),
+  rejected('scriptlet.code.rejected', 'scriptlet.ubo', 'example.com##+js(set-constant, flag, alert(1))', 'rejectedScriptlets', 'unsupported constant value'),
+  rejected('adguard.debug.rejected', 'scriptlet.adguard', "example.com#%#//scriptlet('debug-current-inline-script', 'x')", 'rejectedScriptlets', 'debug scriptlets are not allowed in production filters'),
+  rejected('adguard.alias-unknown.rejected', 'scriptlet.adguard', "example.com#%#//scriptlet('made-up-alias', 'x')", 'rejectedScriptlets', 'unknown AdGuard scriptlet alias: made-up-alias'),
+  rejected('adguard.unterminated.rejected', 'scriptlet.adguard', "example.com#%#//scriptlet('set-constant', 'flag', '1'", 'rejectedScriptlets', 'unterminated AdGuard scriptlet rule'),
+  rejected('adguard.empty-alias.rejected', 'scriptlet.adguard', 'example.com#%#//scriptlet()', 'rejectedScriptlets', 'empty AdGuard scriptlet alias'),
+  rejected('csp.alias.rejected', 'network.csp', '||bad.example^$csp=not-curated', 'rejectedCsp', 'unknown CSP alias: not-curated'),
+  rejected('rewrite.alias.rejected', 'network.rewrite', '||bad.example^$rewrite=not-curated', 'rejectedRewrite', 'unknown rewrite alias: not-curated'),
+  rejected('registry.rewrite.rejected', 'network.rewrite', '||bad.example^$rewrite=blank-js', 'rejectedRewrite', 'unknown rewrite alias: blank-js', { rewrite: false }),
+  rejected('registry.scriptlet.rejected', 'scriptlet.ubo', 'example.com##+js(set-constant, flag, 1)', 'rejectedScriptlets', 'scriptlet registry unavailable', { scriptlets: false })
+];
+
+const smokeScenarios = [
+  { id: 'network-core', capability: 'NETWORK', ruleIds: ['network.host.accepted', 'network.plain.accepted', 'network.types.accepted'] },
+  { id: 'network-exception', capability: 'EXCEPTION', ruleIds: ['network.exception.accepted'] },
+  { id: 'network-important', capability: 'IMPORTANT', ruleIds: ['network.important.accepted'] },
+  { id: 'network-redirect', capability: 'REDIRECT', ruleIds: ['network.redirect.accepted', 'network.redirect-rule.accepted'] },
+  { id: 'network-rewrite', capability: 'REWRITE', ruleIds: ['network.rewrite.accepted', 'network.rewrite-rule.accepted'] },
+  { id: 'network-csp', capability: 'CSP', ruleIds: ['network.csp.accepted'] },
+  { id: 'network-popup', capability: 'POPUP', ruleIds: ['network.popup.accepted'] },
+  { id: 'network-document', capability: 'DOCUMENT', ruleIds: ['network.document.accepted'] },
+  { id: 'network-party', capability: 'THIRD_PARTY', ruleIds: ['network.party.accepted', 'network.not-party.accepted'] },
+  { id: 'network-domain', capability: 'DOMAIN', ruleIds: ['network.domain.accepted', 'network.domain-wildcard.accepted', 'network.domain-from.accepted', 'cname.scope.accepted'] },
+  { id: 'network-regex', capability: 'REGEX', ruleIds: ['network.regex.accepted', 'network.redirect-rule.accepted', 'network.rewrite-rule.accepted'] },
+  { id: 'hide-generichide', capability: 'GENERICHIDE', ruleIds: ['network.hide-modifier.accepted'] },
+  { id: 'hide-elemhide', capability: 'ELEMHIDE', ruleIds: ['network.elemhide.accepted'] },
+  { id: 'hide-specifichide', capability: 'SPECIFICHIDE', ruleIds: ['network.specifichide.accepted'] },
+  { id: 'network-badfilter', capability: 'BADFILTER', ruleIds: ['network.badfilter.accepted'] },
+  { id: 'network-removeparam', capability: 'REMOVEPARAM', ruleIds: ['network.removeparam.accepted', 'network.removeparam-regex.accepted'] },
+  { id: 'network-removeheader', capability: 'REMOVEHEADER', ruleIds: ['network.removeheader.accepted', 'network.removeheader-response.accepted'] },
+  { id: 'cosmetic-core', capability: 'COSMETIC', ruleIds: ['cosmetic.plain.accepted', 'cosmetic.scope.accepted', 'cosmetic.exception.accepted', 'cosmetic.abp.accepted'] },
+  { id: 'procedural-core', capability: 'PROCEDURAL', ruleIds: ['procedural.text.accepted', 'procedural.path.accepted', 'procedural.has.accepted', 'procedural.ancestor.accepted', 'procedural.attr.accepted', 'procedural.css.accepted', 'procedural.xpath.accepted', 'procedural.not.accepted', 'procedural.media.accepted'] },
+  { id: 'scriptlet-core', capability: 'SCRIPTLET', ruleIds: ['scriptlet.ubo.accepted', 'scriptlet.adguard.accepted', 'scriptlet.exception.accepted', 'scriptlet.adguard-exception.accepted'] }
+];
+
+module.exports = {
+  version: 1,
+  provenance: {
+    owner: 'WildFire',
+    generated: false,
+    description: 'Synthetic WildFire-authored behavioral probes; no upstream filter text or resources.',
+    sources: []
+  },
+  families,
+  rejectionClasses,
+  rules,
+  smokeScenarios
+};

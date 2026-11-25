@@ -5,6 +5,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const COMPAT_CORPUS = require('./compat-corpus.js');
 
 const ROOT = path.resolve(__dirname, '..');
 /* The filter engine is a chain of classic-script modules; load order matters. */
@@ -3670,6 +3671,213 @@ async function testCompileCacheIdbLru() {
   }
 }
 
+const compatRuleLines = rule => Array.isArray(rule) ? rule.slice() : [rule];
+
+function makeCompatEngine(options) {
+  const settings = options || {};
+  return new FilterEngine(
+    null,
+    settings.csp === false ? null : alias => CspResources.resolve(alias),
+    settings.scriptlets === false ? null : WildFireScriptlets,
+    settings.rewrite === false ? null : alias => RewriteResources.hasAlias(alias),
+    alias => RewriteResources.hasCaptureAlias(alias)
+  );
+}
+
+function assertCompatCheck(engine, check, decision, reason, label, options) {
+  const strict = !options || options.strict !== false;
+  if (check.kind === 'network') {
+    const result = engine.matchRequest(check.url, mapResourceType(check.type), check.documentUrl || '', check.hosts);
+    assert.strictEqual(Boolean(result.blocked), Boolean(check.blocked), label + ': blocked state');
+    if (typeof check.important === 'boolean') {
+      assert.strictEqual(Boolean(result.important), check.important, label + ': important flag');
+    }
+    if (check.redirectAlias) {
+      assert.ok(result.redirect && result.redirect.alias === check.redirectAlias, label + ': redirect alias');
+    }
+    if (check.rewriteAlias) {
+      assert.ok(result.rewrite && result.rewrite.alias === check.rewriteAlias, label + ': rewrite alias');
+    }
+    let actualDecision;
+    let actualReason;
+    if (!result.blocked) {
+      actualDecision = result.exception ? 'exception' : 'allowed';
+      actualReason = result.exception ? 'exception wins' : 'no matching rule';
+    } else if (check.type === 'document') {
+      actualDecision = 'blocked';
+      actualReason = '$document';
+    } else if (result.rewrite) {
+      actualDecision = 'rewritten';
+      actualReason = result.rewrite.alias;
+    } else if (result.redirect) {
+      const redirect = RedirectResources.resolve(result.redirect.alias, result.redirect.captures || []);
+      actualDecision = redirect ? 'redirected' : 'blocked';
+      actualReason = redirect ? result.redirect.alias : 'unknown redirect alias';
+    } else {
+      actualDecision = 'blocked';
+      actualReason = 'network rule';
+    }
+    assert.strictEqual(actualDecision, decision, label + ': decision');
+    assert.strictEqual(actualReason, reason, label + ': inspector reason');
+    return;
+  }
+  if (check.kind === 'popup') {
+    const result = engine.matchPopup(check.url, check.sourceUrl, check.hosts);
+    assert.strictEqual(Boolean(result.blocked), Boolean(check.blocked), label + ': popup state');
+    const actualDecision = result.blocked ? 'blocked' : result.exception ? 'exception' : 'allowed';
+    const actualReason = result.blocked ? '$popup' : result.exception ? 'exception wins' : 'no matching rule';
+    assert.strictEqual(actualDecision, decision, label + ': decision');
+    assert.strictEqual(actualReason, reason, label + ': inspector reason');
+    return;
+  }
+  if (check.kind === 'csp') {
+    const result = engine.matchCsp(check.url, check.type, check.documentUrl, check.hosts);
+    check.includes.forEach(directive => assert.ok(result.directives.includes(directive), label + ': CSP directive ' + directive));
+    assert.strictEqual(Boolean(result.exception), Boolean(check.exception), label + ': CSP exception');
+    const actualDecision = result.directives.length ? 'csp' : result.exception ? 'exception' : 'allowed';
+    const actualReason = result.directives.length ? 'extra enforcing directives' : result.exception ? 'exception wins' : 'no matching rule';
+    assert.strictEqual(actualDecision, decision, label + ': decision');
+    assert.strictEqual(actualReason, reason, label + ': inspector reason');
+    return;
+  }
+  if (check.kind === 'removeparam') {
+    const result = engine.matchRemoveparam(check.url, check.type, check.documentUrl, check.hosts);
+    const values = result.params.map(param => param.regex ? String(param.regex) : param.value);
+    check.values.forEach(value => assert.ok(values.includes(value), label + ': removeparam ' + value));
+    assert.strictEqual(Boolean(result.exception), Boolean(check.exception), label + ': removeparam exception');
+    const actualDecision = values.length ? 'removeparam' : result.exception ? 'exception' : 'allowed';
+    const actualReason = values.length ? values.join(', ') : result.exception ? 'exception wins' : 'no matching rule';
+    assert.strictEqual(actualDecision, decision, label + ': decision');
+    assert.strictEqual(actualReason, reason, label + ': inspector reason');
+    return;
+  }
+  if (check.kind === 'removeheader') {
+    const result = engine.matchRemoveheader(check.url, check.type, check.documentUrl, check.hosts);
+    check.names.forEach(name => assert.ok(result.headers.includes(name), label + ': removeheader ' + name));
+    assert.strictEqual(Boolean(result.exception), Boolean(check.exception), label + ': removeheader exception');
+    const actualDecision = result.headers.length ? 'removeheader-' + check.phase : result.exception ? 'exception' : 'allowed';
+    const actualReason = result.headers.length
+      ? (check.phase === 'request' ? 'request headers' : 'response headers')
+      : result.exception ? 'exception wins' : 'no matching rule';
+    assert.strictEqual(actualDecision, decision, label + ': decision');
+    assert.strictEqual(actualReason, reason, label + ': inspector reason');
+    return;
+  }
+  if (check.kind === 'cosmetic') {
+    const selectors = engine.getCosmetic(check.host);
+    check.includes.forEach(selector => assert.ok(selectors.includes(selector), label + ': cosmetic includes ' + selector));
+    check.excludes.forEach(selector => assert.ok(!selectors.includes(selector), label + ': cosmetic excludes ' + selector));
+    assert.strictEqual(decision, 'cosmetic', label + ': decision');
+    assert.strictEqual(reason, 'cosmetic selector', label + ': inspector reason');
+    return;
+  }
+  if (check.kind === 'procedural') {
+    const proceduralCount = engine.getProcedural(check.host).length;
+    if (strict) {
+      assert.strictEqual(proceduralCount, check.count, label + ': procedural count');
+    } else {
+      assert.ok(proceduralCount >= check.count, label + ': procedural count floor');
+    }
+    assert.strictEqual(decision, 'procedural', label + ': decision');
+    assert.strictEqual(reason, 'procedural selector', label + ': inspector reason');
+    return;
+  }
+  if (check.kind === 'scriptlet') {
+    const scriptletCount = engine.scriptletRules.length;
+    if (strict) {
+      assert.strictEqual(scriptletCount, check.count, label + ': scriptlet count');
+    } else {
+      assert.ok(scriptletCount >= check.count, label + ': scriptlet count floor');
+    }
+    const found = engine.scriptletRules.some(rule =>
+      (!check.alias || WildFireScriptlets.canonical(rule.alias, rule.syntax) ===
+        WildFireScriptlets.canonical(check.alias, 'ubo')) &&
+      Boolean(rule.isException) === check.isException);
+    assert.ok(found, label + ': scriptlet payload');
+    assert.strictEqual(decision, 'scriptlet', label + ': decision');
+    assert.strictEqual(reason, 'scriptlet payload', label + ': inspector reason');
+    return;
+  }
+  if (check.kind === 'capability') {
+    assert.ok(engine.hasCapability(FilterEngine.CAP[check.name]), label + ': capability ' + check.name);
+    assert.strictEqual(decision, 'accepted', label + ': decision');
+    assert.strictEqual(reason, check.reason, label + ': inspector reason');
+    return;
+  }
+  if (check.kind === 'ignored') {
+    const total = engine.counts.network + engine.counts.cosmetic + engine.counts.scriptlets +
+      engine.counts.csp + engine.counts.rewrite;
+    assert.strictEqual(total, 0, label + ': ignored rule has no effect');
+    assert.strictEqual(decision, 'ignored', label + ': decision');
+    assert.strictEqual(reason, 'comment ignored', label + ': inspector reason');
+    return;
+  }
+  assert.fail(label + ': unknown compatibility check kind ' + check.kind);
+}
+
+function assertCompatRejected(engine, entry) {
+  const label = entry.id;
+  const bucket = engine[entry.rejection];
+  assert.ok(Array.isArray(bucket), label + ': unknown rejection bucket ' + entry.rejection);
+  assert.ok(bucket.some(item => String(item.reason).includes(entry.reason)),
+    label + ': expected rejection ' + entry.reason);
+  assert.ok(engine.getDiagnostics().some(item =>
+    item.type === 'rejected' && String(item.reason).includes(entry.reason)),
+  label + ': rejection must produce a diagnostic');
+  assert.ok(String(entry.inspectorReason).includes(entry.reason),
+    label + ': inspector reason must describe the rejection');
+}
+
+function runCompatMatrix() {
+  const seen = new Set();
+  COMPAT_CORPUS.rules.forEach(entry => {
+    assert.ok(entry.id && entry.family && entry.rule && entry.outcome && entry.decision && entry.inspectorReason,
+      'compatibility entry is missing a matrix field');
+    assert.ok(!seen.has(entry.id), 'duplicate compatibility id: ' + entry.id);
+    seen.add(entry.id);
+    const engine = makeCompatEngine(entry.engineOptions);
+    engine.load(compatRuleLines(entry.rule).join('\n'));
+    if (entry.outcome === 'rejected') {
+      assertCompatRejected(engine, entry);
+    } else {
+      const rejected = engine.rejectedRegex.length + engine.rejectedCsp.length +
+        engine.rejectedRewrite.length + engine.rejectedScriptlets.length +
+        engine.rejectedCosmetic.length;
+      assert.strictEqual(rejected, 0, entry.id + ': accepted rule must not be rejected');
+      entry.checks.forEach(check =>
+        assertCompatCheck(engine, check, check.decision || entry.decision,
+          check.inspectorReason || entry.inspectorReason, entry.id));
+      const reloaded = makeCompatEngine(entry.engineOptions);
+      assert.strictEqual(reloaded.loadCompiled(engine.toCompiled()), true,
+        entry.id + ': accepted rule survives compiled round-trip');
+    }
+  });
+}
+
+function runCompatSmokeScenarios() {
+  const byId = new Map(COMPAT_CORPUS.rules.map(entry => [entry.id, entry]));
+  COMPAT_CORPUS.smokeScenarios.forEach(scenario => {
+    const entries = scenario.ruleIds.map(id => byId.get(id));
+    assert.ok(entries.every(Boolean), scenario.id + ': scenario references unknown rule ids');
+    assert.ok(entries.every(entry => entry.outcome === 'accepted'),
+      scenario.id + ': scenarios use accepted rules only');
+    const flag = FilterEngine.CAP[scenario.capability];
+    assert.ok(flag, scenario.id + ': unknown capability ' + scenario.capability);
+    const engine = makeCompatEngine({});
+    engine.load(entries.flatMap(entry => compatRuleLines(entry.rule)).join('\n'));
+    assert.ok(engine.getCapabilities() & flag, scenario.id + ': capability ' + scenario.capability);
+    entries.forEach(entry => entry.checks.forEach(check =>
+      assertCompatCheck(engine, check, check.decision || entry.decision,
+        check.inspectorReason || entry.inspectorReason, scenario.id + '/' + entry.id,
+        { strict: false })));
+  });
+}
+
+async function testRoadmapPhase0Corpus() {
+  runCompatMatrix();
+  runCompatSmokeScenarios();
+}
+
 function runCompatibilityFixtures() {
   const fixtures = JSON.parse(fs.readFileSync(path.join(ROOT, 'tools/fixtures/compatibility.json'), 'utf8'));
   fixtures.cases.forEach(testCase => {
@@ -6959,6 +7167,7 @@ async function testTrafficPathRegressions() {
 
 Promise.resolve()
   .then(() => testPhase0Foundation())
+  .then(() => testRoadmapPhase0Corpus())
   .then(() => testPhase1AAliases())
   .then(() => testCosmeticPayloadCache())
   .then(() => testHideExceptionModifiers())

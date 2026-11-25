@@ -326,6 +326,62 @@ scripts.forEach(script => {
   }
 });
 
+const compatCorpus = require('./compat-corpus.js');
+if (compatCorpus.version !== 1 || compatCorpus.provenance.owner !== 'WildFire' ||
+  compatCorpus.provenance.generated !== false || compatCorpus.provenance.sources.length) {
+  errors.push('compatibility corpus must be WildFire-authored, versioned, and source-free');
+}
+const compatFamilies = new Set(compatCorpus.families.map(family => family.id));
+compatCorpus.families.forEach(family => {
+  if (!compatCorpus.rules.some(rule => rule.family === family.id && rule.outcome === 'accepted')) {
+    errors.push('compatibility corpus family lacks an accepted rule: ' + family.id);
+  }
+});
+compatFamilies.forEach(family => {
+  if (!compatCorpus.rules.some(rule => rule.family === family)) {
+    errors.push('compatibility corpus rule uses undeclared family: ' + family);
+  }
+});
+compatCorpus.rejectionClasses.forEach(rejection => {
+  if (!compatCorpus.rules.some(rule =>
+    rule.outcome === 'rejected' && String(rule.reason || '').includes(rejection.match))) {
+    errors.push('compatibility corpus rejection class has no rule: ' + rejection.id);
+  }
+});
+const compatIds = new Set();
+compatCorpus.rules.forEach(rule => {
+  if (!rule.id || !rule.family || !rule.rule || !rule.decision || !rule.inspectorReason) {
+    errors.push('compatibility corpus entry is incomplete: ' + String(rule.id));
+  }
+  if (compatIds.has(rule.id)) errors.push('duplicate compatibility corpus id: ' + rule.id);
+  compatIds.add(rule.id);
+  if (!compatFamilies.has(rule.family)) {
+    errors.push('compatibility corpus entry uses undeclared family: ' + String(rule.id));
+  }
+});
+const compatCapabilities = new Set(Object.keys(FilterEngineCapabilities()));
+compatCapabilities.forEach(capability => {
+  if (!compatCorpus.smokeScenarios.some(scenario => scenario.capability === capability)) {
+    errors.push('compatibility smoke lacks capability scenario: ' + capability);
+  }
+});
+compatCorpus.smokeScenarios.forEach(scenario => {
+  if (!compatCapabilities.has(scenario.capability)) {
+    errors.push('compatibility smoke uses unknown capability: ' + String(scenario.capability));
+  }
+  if (!scenario.ruleIds.every(id => compatIds.has(id))) {
+    errors.push('compatibility smoke references unknown rule: ' + String(scenario.id));
+  }
+});
+
+function FilterEngineCapabilities() {
+  const source = fs.readFileSync(path.join(ROOT, 'lib/engine/filter/constants.js'), 'utf8');
+  const block = source.match(/const CAP = \{([\s\S]*?)\};/);
+  const body = block ? block[1] : '';
+  return Array.from(body.matchAll(/([A-Z0-9_]+)\s*:/g), match => match[1])
+    .reduce((map, name) => Object.assign(map, { [name]: true }), {});
+}
+
 if (errors.length) {
   console.error('WildFire check failed:');
   errors.forEach(error => console.error(' - ' + error));
