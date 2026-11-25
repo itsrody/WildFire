@@ -161,8 +161,12 @@ line-numbered validation issues and notices from WildFire's own parser; `Ctrl/Cm
 | `site.example#@#+js(set-constant, adblockDetected, false)` | Cancel that scriptlet on the matching site |
 | `site.example#%#//scriptlet('set-constant', 'adblockDetected', 'false')` | AdGuard-style scriptlet with the same WildFire runtime |
 | `site.example#@%#//scriptlet('set-constant', 'adblockDetected', 'false')` | Cancel that AdGuard-style scriptlet |
+| `*##+js(set-constant, sharedFlag, false)` | Specific-generic scriptlet: apply only when a domain-scoped scriptlet is live |
 | `example.com##.promo` | Hide `.promo` on example.com |
 | `example.com,~ads.example.com##.promo` | Hide on example.com except on ads.example.com |
+| `example.*##.promo` | Hide on any `example` entity subdomain |
+| `/^ads[0-9]+\\.corpus\\.test$/##.promo` | Hide on hosts matching a safe regex target |
+| `*##.promo` | Specific-generic: apply only on sites with a live scoped cosmetic rule |
 | `example.com#@#.promo` | Keep `.promo` on example.com |
 | `##.ad-container` | Hide everywhere (generic cosmetic rule) |
 | `example.com##.ad:has-text("Buy now")` | Hide `.ad` when its text contains the phrase |
@@ -180,12 +184,23 @@ line-numbered validation issues and notices from WildFire's own parser; `Ctrl/Cm
 | `example.com##.box:xpath(.//span[@class="ad"])` | Hide every element returned by a bounded, read-only native XPath |
 | `example.com##.ad:not(:has-text("Sponsored"))` | Hide `.ad` only when it does NOT match the procedural operand |
 | `example.com##.side:matches-media((max-width: 1000px))` | Hide only when a native CSS media query matches the viewport |
+| `example.com##.item:matches-prop(dataset.id="42")` | Match a bounded DOM property path with a literal or `/regex/` value |
+| `example.com##.keep:others()` | Target the bounded sibling complement of the selected set |
+| `example.com##.watch:watch-attr(data-state)` | Pass-through trigger that watches named attributes for changes |
+| `example.com##.ad:remove()` | Remove a matched element (trailing action, JS-only) |
+| `example.com##.ad:style(color: red)` | Apply validated CSS declarations with `setProperty()` |
+| `example.com##.ad:remove-attr(data-ad)` / `:remove-class(old)` | Remove named attributes or classes from a matched element |
 | `example.com#?#div:-abp-has(.ad)` | ABP procedural form, mapped safely to `:has()` |
 | `example.com#?#div:-abp-contains(Ad)` | ABP procedural form, mapped safely to `:has-text()` |
 
-Cosmetic host lists accept comma-separated domains and `~domain` exclusions;
-both positive and negated hosts use parent-domain scoping. Lines starting with
-`!` are comments.
+Cosmetic and scriptlet host lists accept comma-separated literal domains,
+`~domain` exclusions, entity values (`example.*`), and safe `/regex/` values;
+literal and entity hosts use parent-domain scoping. A bare `*` marks a
+specific-generic rule: WildFire applies `*##` selectors only when a
+domain-scoped cosmetic or procedural rule is already live on the page, and
+applies `*##+js()` only when a non-excepted domain-scoped scriptlet is live on
+that host. This bounds the cost of generic DOM and scriptlet work. Lines
+starting with `!` are comments.
 
 Resource-type aliases are accepted in `$type` and `$~type` form: `css` →
 `stylesheet`, `frame` → `subdocument`, `xhr` → `xmlhttprequest`, `doc` →
@@ -461,7 +476,7 @@ execution is used.
 
 This is deliberately a scoped rewrite, not parity with every uBO feature today:
 
-- Filter compilation is event-driven (worker-backed with sync fallback) and cached by compiled schema version + content hash. The compiled schema is currently v12; any new IR field requires a version bump, and incompatible compiled data is rejected and rebuilt from text.
+- Filter compilation is event-driven (worker-backed with sync fallback) and cached by compiled schema version + content hash. The compiled schema is currently v13; any new IR field requires a version bump, and incompatible compiled data is rejected and rebuilt from text.
 
 - Regex filters use a safe subset: backreferences, nested/alternated quantifiers,
   long patterns and stateful flags are rejected when the list loads.
@@ -519,12 +534,14 @@ This is deliberately a scoped rewrite, not parity with every uBO feature today:
   aliases cancel normally.
 - Procedural cosmetic rules (`:has-text()`, `:contains()`, `:matches-path()`,
   `:has()`, `:nth-ancestor()`, `:matches-attr()`, `:matches-css()`, `:xpath()`,
-  `:not()`, `:matches-media()`) use Firefox-native CSS wherever possible: plain `:has()` rules and
+  `:not()`, `:matches-media()`, `:matches-prop()`, `:others()`,
+  `:watch-attr()`) use Firefox-native CSS wherever possible: plain `:has()` rules and
   `:matches-attr(name)`/`=(name="literal")` are compiled into the cosmetic
   stylesheet, and `:matches-path()` is checked once per page. Generic
   JS-evaluated procedural rules need a domain scope; generic path-only and
   fully native-compilable rules are kept, and generic procedural exceptions
-  still apply. Only text/regex/ancestor/computed-style-dependent rules are
+  still apply. `*##` rules use the bounded surveyor policy instead of global
+  injection. Only text/regex/ancestor/computed-style-dependent rules are
   evaluated in
   WildFire's DOM code, using native `:has()`/attribute prefilters and one query
   per shared selector. `:has-text()` checks an element's own text;
@@ -539,8 +556,18 @@ This is deliberately a scoped rewrite, not parity with every uBO feature today:
   negates a procedural operand on the node itself; a fully native operand such
   as `:not(:has(.x))` compiles to native CSS, while a plain `:not(.x)` stays in
   the native CSS base. `:matches-media(query)` asks Gecko's native `matchMedia`
-  engine (read-only) and re-applies on viewport resize. No script from a filter
-  is ever injected.
+  engine (read-only) and re-applies on viewport resize.
+  `:matches-prop(path[=value|/re/])` reads a bounded dot-separated property
+  path (blocking `__proto__`, `prototype`, and `constructor`); `:others()`
+  expands the selected set to its bounded sibling complement; and
+  `:watch-attr([name,...])` is a pass-through trigger that widens attribute
+  observation only when such a rule is live. Trailing `:remove()`, `:style()`,
+  `:remove-attr()`, and `:remove-class()` actions run on matched nodes in the
+  JS evaluator; declarations and names are validated data applied through
+  `setProperty()`/`removeAttribute()`/`classList`, never concatenated into CSS
+  or script. Bare generic action rules are rejected; `*##` actions use the same
+  surveyor policy as generic selectors. Cosmetic CSS starts at
+  `document_start`. No script from a filter is ever injected.
 
 ## Message API (internal)
 

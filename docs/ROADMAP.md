@@ -1,6 +1,7 @@
 # WildFire roadmap
 
-Status: proposed plan, reviewed 2026-11-25.
+Status: implementation plan; Phase 0, Phase 1, and Phase 3 complete, Phase 2 in
+progress; updated 2026-11-25.
 
 WildFire is a **native Firefox rewrite of uBO behavior** under the WildFire brand.
 This document maps the remaining work from today's engine to broader uBO-style
@@ -95,15 +96,15 @@ used as a source file for WildFire code.
 | --- | --- | --- |
 | Static network syntax | HOSTS-file interpretation, entity host values, regex host/domain values, `$to`, `$denyallow`, `$top`, `$strict1p`, `$strict3p`, `$header`, `$method`, `$ipaddress`, `$permissions`, `$cname` exceptions, `$empty`/`$mp4`, redirect priority and standalone directives, broader curated redirect resources, `!#if`/`!#else`/`!#endif` | Phase 2 |
 | Navigation semantics | uBO host-only entries imply strict document blocking; WildFire currently requires explicit `$document`/`$popup` | Decision gate D1 |
-| Cosmetic scope | entity targets, regex host targets, specific-generic `*##selector`, generic DOM-surveyor behavior, action operators `:remove()`, `:style()`, `:remove-attr()`, `:remove-class()` | Phase 3 |
-| Procedural selectors | `:matches-prop()`, `:others()`, `:watch-attr()`; richer mutation/attribute watching for those selectors | Phase 3 |
+| Cosmetic scope | entity targets, regex host targets, specific-generic `*##selector`, generic DOM-surveyor behavior, action operators `:remove()`, `:style()`, `:remove-attr()`, `:remove-class()` | Complete (Phase 3) |
+| Procedural selectors | `:matches-prop()`, `:others()`, `:watch-attr()`; richer mutation/attribute watching for those selectors | Complete (Phase 3) |
 | Response filtering | `example.com##^selector` HTML stream filtering and `##^responseheader(name)` header removal; encoding handling and safe stream composition | Phase 4 |
 | Dynamic filtering | global/local source-destination-type rules, `noop`, precedence, hostname-based rules, temporary vs persisted rules, plain-text “My rules”, full static override semantics | Phase 5 |
 | Filter lists | broader preshipped catalog, list categories, checksum/diff-patch updates, update status/history, asset viewer | Phase 6 |
 | UI/tools | full dashboard, per-site switches, DOM inspector, element picker/zapper, context menu, keyboard shortcuts, advanced settings, richer logger views | Phase 6 |
 | Scriptlet timing | realm-birth `set-constant` guarantees, hardened `MAIN` fallback, native exception propagation, `syncNativeScriptlets()` tests | Phase 7, gated |
 | Trust/source model | trusted aliases, `$replace`, `$uritransform`, `$urlskip`, `!#include`, raw `$csp` | Phase 7, gated |
-| Cosmetic timing | `document_idle` injection can flash unhidden content before cosmetic CSS applies | Phase 3 |
+| Cosmetic timing | `document_idle` injection can flash unhidden content before cosmetic CSS applies | Complete (Phase 3): `document_start` |
 | Performance | parser fuzzing, benchmark thresholds, long-run memory profiling (the repeatable local compatibility corpus is in place) | Continuous |
 
 Curated WildFire aliases for `$redirect`, `$rewrite`, and `$csp` are a deliberate
@@ -142,7 +143,7 @@ or upstream filter text is committed.
   every accepted form; unknown options remain forgivingly ignored.
 - Deferred-but-recognized options are no longer silent: they stay non-fatal
   blockers and produce `ignored` diagnostics plus `validate-filters` notices.
-- Compiled schema is v12; every new IR field requires a version bump, and stale
+- Compiled schema is v13; every new IR field requires a version bump, and stale
   cache entries are rejected and rebuilt from text.
 
 **Exit criteria:** documentation matches parser/engine behavior; validation
@@ -186,28 +187,38 @@ Scope, in dependency order:
 the Inspector; every rejected rule has a line-numbered validation reason; the
 blocking listener remains synchronous; all load-order registries stay in sync.
 
-### Phase 3 — Cosmetic and procedural completeness
+### Phase 3 — Cosmetic and procedural completeness (complete)
 
 **Priority:** P0/P1. **Depends on:** Phase 2 for entity/regex host scope.
 
-- Add entity and regex host targets for cosmetic/scriptlet rules.
-- Implement `*##selector` specific-generic behavior and define generic handling
-  explicitly: either bounded surveyor-style injection or unconditional
-  injection with documented performance tradeoffs.
-- Add safe action operators: `:remove()`, `:style()`, `:remove-attr()`, and
-  `:remove-class()`. Validate declarations and arguments as data; reject unsafe
-  URLs, comments, escapes, and executable values.
-- Add `:matches-prop()` (bounded dot-separated property path with optional
+- Added entity and regex host targets for cosmetic and scriptlet rules through
+  one shared host-scope parser; literal hosts stay in domain indexes and
+  entity/regex scopes use pattern buckets.
+- Implemented `*##selector` and `*##+js()` as bounded surveyor-style rules.
+  `*##` is delivered only while a non-excepted domain-scoped cosmetic or
+  procedural rule is live; the content-side scriptlet registry activates
+  `*##+js()` only while a non-excepted domain-scoped scriptlet is live on that
+  host. Exceptions remove the specific rule before the surveyor trigger is
+  evaluated, and generic/hide exceptions still win.
+- Added safe trailing action operators: `:remove()`, `:style()`,
+  `:remove-attr()`, and `:remove-class()`. Declarations and names are validated
+  data; URLs, comments, escapes, executable values, and non-trailing actions are
+  rejected. Bare generic actions stay rejected; `*##` actions use the surveyor
+  policy.
+- Added `:matches-prop()` (bounded dot-separated property path with optional
   literal/regex value), `:others()` (bounded complement of the selected set),
   and `:watch-attr()` (pass-through attribute-change trigger with an optional
   attribute list) to the procedural chain, using the same native-prefilter-first
   strategy as existing selectors.
-- Widen `MutationObserver` handling only when a live rule needs attribute or
-  watched-attribute changes; keep text observation conditional and `resize`
-  binding conditional as today.
-- Evaluate moving the cosmetic content script from `document_idle` to an earlier
-  safe phase to reduce flash-of-unhidden-content, keeping selector validation
-  and the pinned manifest/test content-script chain in sync.
+- Widened `MutationObserver` handling only when a live rule needs attribute or
+  watched-attribute changes; text observation stays conditional on live text
+  rules and `resize` binding stays conditional on `:matches-media()`.
+- Moved the cosmetic content script from `document_idle` to `document_start`,
+  with style nodes mounted as soon as `head`/`documentElement` exists. Manifest,
+  test chain, and `tools/check.js` pin the earlier timing.
+- Raised the compiled schema to v13 for surveyor and pattern buckets and added
+  WildFire-authored corpus families, unit tests, and line-numbered validation
+  coverage for every new accepted and rejected class.
 
 **Exit criteria:** selectors are validated before CSS injection or DOM action;
 malformed rules land in `engine.rejectedCosmetic`; generic exceptions and hide

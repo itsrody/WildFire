@@ -44,8 +44,9 @@ const families = [
   'network.hide-modifier', 'cname.scope', 'cosmetic.plain', 'cosmetic.scope',
   'cosmetic.exception', 'cosmetic.abp', 'procedural.text', 'procedural.path', 'procedural.has',
   'procedural.ancestor', 'procedural.attr', 'procedural.css', 'procedural.xpath',
-  'procedural.not', 'procedural.media', 'scriptlet.ubo', 'scriptlet.adguard',
-  'scriptlet.exception'
+  'procedural.not', 'procedural.media', 'procedural.action', 'procedural.prop',
+  'procedural.others', 'procedural.watch', 'scriptlet.ubo', 'scriptlet.adguard',
+  'scriptlet.exception', 'scriptlet.scope'
 ].map(id => ({ id }));
 
 const rejectionClasses = [
@@ -74,6 +75,7 @@ const rejectionClasses = [
   { id: 'cosmetic.abp-procedural', match: 'unsupported ABP procedural selector' },
   { id: 'cosmetic.abp-missing-operator', match: 'ABP procedural selector missing procedural operator' },
   { id: 'cosmetic.empty-negated', match: 'empty negated cosmetic domain' },
+  { id: 'cosmetic.domain-invalid', match: 'invalid domain:' },
   { id: 'cosmetic.generic-procedural', match: 'generic procedural rules need domain scope' },
   { id: 'procedural.unbalanced', match: 'unbalanced procedural selector' },
   { id: 'procedural.has-empty', match: 'empty :has argument' },
@@ -92,6 +94,11 @@ const rejectionClasses = [
   { id: 'procedural.media', match: 'empty :matches-media argument' },
   { id: 'procedural.media-invalid', match: 'invalid :matches-media argument' },
   { id: 'procedural.not-inner', match: 'empty :has-text argument' },
+  { id: 'procedural.style-unsafe', match: 'unsafe :style value' },
+  { id: 'procedural.action-tail', match: 'action operator must be trailing on the root selector' },
+  { id: 'procedural.prop-path', match: 'invalid :matches-prop path' },
+  { id: 'procedural.others-arg', match: 'unexpected :others argument' },
+  { id: 'procedural.watch-name', match: 'invalid :watch-attr argument' },
   { id: 'scriptlet.trusted', match: 'trusted scriptlets require a trusted source' },
   { id: 'scriptlet.unknown', match: 'unknown scriptlet alias:' },
   { id: 'scriptlet.arity', match: 'wrong argument count' },
@@ -341,6 +348,15 @@ const rules = [
     'cosmetic', 'cosmetic selector', cosmeticCheck('example.com', [], ['.gone'])),
   accepted('cosmetic.abp.accepted', 'cosmetic.abp', ['example.com#?#div:-abp-has(.ad)', 'example.com#@?#div:-abp-has(.ad)'],
     'procedural', 'procedural selector', proceduralCheck('example.com', 0)),
+  accepted('cosmetic.entity.accepted', 'cosmetic.scope', 'example.*##.entity',
+    'cosmetic', 'cosmetic selector', cosmeticCheck('shop.example.com', ['.entity'])),
+  accepted('cosmetic.regex.accepted', 'cosmetic.scope', '/^ads[0-9]+\\.corpus\\.test$/##.regex',
+    'cosmetic', 'cosmetic selector', cosmeticCheck('ads42.corpus.test', ['.regex'])),
+  accepted('cosmetic.specific-generic.accepted', 'cosmetic.scope',
+    ['##.global', 'example.*##.entity', '*##.surveyor'], 'cosmetic', 'cosmetic selector', [
+      cosmeticCheck('shop.example.com', ['.global', '.entity', '.surveyor']),
+      cosmeticCheck('unrelated.test', ['.global'], ['.surveyor'])
+    ]),
   accepted('procedural.text.accepted', 'procedural.text', [
     'example.com##.ad:has-text("Buy")',
     'example.com##.box:contains(/SALE/i)',
@@ -371,6 +387,14 @@ const rules = [
     'procedural', 'procedural selector', proceduralCheck('example.com', 1)),
   accepted('procedural.media.accepted', 'procedural.media', 'example.com##.a:matches-media((max-width: 900px))',
     'procedural', 'procedural selector', proceduralCheck('example.com', 1)),
+  accepted('procedural.action.accepted', 'procedural.action', 'example.com##.banner:remove()',
+    'procedural', 'procedural selector', proceduralCheck('example.com', 1)),
+  accepted('procedural.prop.accepted', 'procedural.prop', 'example.com##.item:matches-prop(dataset.id="42")',
+    'procedural', 'procedural selector', proceduralCheck('example.com', 1)),
+  accepted('procedural.others.accepted', 'procedural.others', 'example.com##.keep:others()',
+    'procedural', 'procedural selector', proceduralCheck('example.com', 1)),
+  accepted('procedural.watch.accepted', 'procedural.watch', 'example.com##.watch:watch-attr(data-state)',
+    'procedural', 'procedural selector', proceduralCheck('example.com', 1)),
   accepted('scriptlet.ubo.accepted', 'scriptlet.ubo', 'example.com##+js(set-constant, flag, 1)',
     'scriptlet', 'scriptlet payload', scriptletCheck(1, 'set-constant')),
   accepted('scriptlet.adguard.accepted', 'scriptlet.adguard', "example.com#%#//scriptlet('set-constant', 'flag', '1')",
@@ -381,6 +405,13 @@ const rules = [
     "example.com#%#//scriptlet('set-constant', 'flag', '1')",
     "example.com#@%#//scriptlet('set-constant', 'flag', '1')"
   ], 'scriptlet', 'scriptlet payload', scriptletCheck(2, 'set-constant', true)),
+  accepted('scriptlet.entity.accepted', 'scriptlet.scope', 'example.*##+js(set-constant, corpusEntityFlag, 1)',
+    'scriptlet', 'scriptlet payload', scriptletCheck(1, 'set-constant')),
+  accepted('scriptlet.regex.accepted', 'scriptlet.scope', '/^ads[0-9]+\\.corpus\\.test$/##+js(set-constant, corpusRegexFlag, 1)',
+    'scriptlet', 'scriptlet payload', scriptletCheck(1, 'set-constant')),
+  accepted('scriptlet.specific-generic.accepted', 'scriptlet.scope',
+    ['example.*##+js(set-constant, corpusEntityFlag, 1)', '*##+js(set-constant, corpusGlobalFlag, 1)'],
+    'scriptlet', 'scriptlet payload', scriptletCheck(2, 'set-constant')),
 
   rejected('network.domain.invalid.rejected', 'network.domain', '||bad.example^$domain=bad..example', 'rejectedRegex', 'invalid domain option: bad..example'),
   rejected('network.to.invalid.rejected', 'network.to', '||bad.example^$to=bad..example', 'rejectedRegex', 'invalid to option: bad..example'),
@@ -411,6 +442,7 @@ const rules = [
   rejected('cosmetic.abp-missing-operator.rejected', 'cosmetic.abp', 'example.com#?#div', 'rejectedCosmetic', 'ABP procedural selector missing procedural operator'),
   rejected('cosmetic.empty-negated.rejected', 'cosmetic.scope', '~,example.com##.ad', 'rejectedCosmetic', 'empty negated cosmetic domain'),
   rejected('cosmetic.generic-procedural.rejected', 'cosmetic.scope', '##.ad:has-text("x")', 'rejectedCosmetic', 'generic procedural rules need domain scope'),
+  rejected('cosmetic.domain-invalid.rejected', 'cosmetic.scope', 'bad..corpus##.ad', 'rejectedCosmetic', 'invalid domain: bad..corpus'),
   rejected('procedural.unbalanced.rejected', 'procedural.text', 'example.com##.bad:has-text("unclosed', 'rejectedCosmetic', 'unbalanced procedural selector'),
   rejected('procedural.has-empty.rejected', 'procedural.has', 'example.com##.bad:has()', 'rejectedCosmetic', 'empty :has argument'),
   rejected('procedural.has-text-empty.rejected', 'procedural.text', 'example.com##.bad:has-text()', 'rejectedCosmetic', 'empty :has-text argument'),
@@ -428,8 +460,14 @@ const rules = [
   rejected('procedural.media.rejected', 'procedural.media', 'example.com##.bad:matches-media()', 'rejectedCosmetic', 'empty :matches-media argument'),
   rejected('procedural.media-invalid.rejected', 'procedural.media', 'example.com##.bad:matches-media(\0)', 'rejectedCosmetic', 'invalid :matches-media argument'),
   rejected('procedural.not.rejected', 'procedural.not', 'example.com##.bad:not(:has-text())', 'rejectedCosmetic', 'empty :has-text argument'),
+  rejected('procedural.style-unsafe.rejected', 'procedural.action', 'example.com##.bad:style(color:url(evil))', 'rejectedCosmetic', 'unsafe :style value'),
+  rejected('procedural.action-tail.rejected', 'procedural.action', 'example.com##.bad:remove():has(.x)', 'rejectedCosmetic', 'action operator must be trailing on the root selector'),
+  rejected('procedural.prop-path.rejected', 'procedural.prop', 'example.com##.bad:matches-prop(__proto__.flag)', 'rejectedCosmetic', 'invalid :matches-prop path'),
+  rejected('procedural.others-arg.rejected', 'procedural.others', 'example.com##.bad:others(x)', 'rejectedCosmetic', 'unexpected :others argument'),
+  rejected('procedural.watch-name.rejected', 'procedural.watch', 'example.com##.bad:watch-attr(bad name)', 'rejectedCosmetic', 'invalid :watch-attr argument'),
   rejected('scriptlet.trusted.rejected', 'scriptlet.ubo', 'example.com##+js(trusted-click-element, body)', 'rejectedScriptlets', 'trusted scriptlets require a trusted source'),
   rejected('scriptlet.unknown.rejected', 'scriptlet.ubo', 'example.com##+js(made-up-alias)', 'rejectedScriptlets', 'unknown scriptlet alias: made-up-alias'),
+  rejected('scriptlet.domain-invalid.rejected', 'scriptlet.scope', 'bad..corpus##+js(set-constant, flag, 1)', 'rejectedScriptlets', 'invalid domain: bad..corpus'),
   rejected('scriptlet.arity.rejected', 'scriptlet.ubo', 'example.com##+js(set-constant, flag)', 'rejectedScriptlets', 'wrong argument count'),
   rejected('scriptlet.property.rejected', 'scriptlet.ubo', 'example.com##+js(set-constant, __proto__.flag, 1)', 'rejectedScriptlets', 'invalid scriptlet property'),
   rejected('scriptlet.regex-nested.rejected', 'scriptlet.ubo', 'example.com##+js(abort-on-stack-trace, document.cookie, /(a+)+/)', 'rejectedScriptlets', 'nested or alternated regex quantifier'),
@@ -467,9 +505,9 @@ const smokeScenarios = [
   { id: 'network-badfilter', capability: 'BADFILTER', ruleIds: ['network.badfilter.accepted'] },
   { id: 'network-removeparam', capability: 'REMOVEPARAM', ruleIds: ['network.removeparam.accepted', 'network.removeparam-regex.accepted'] },
   { id: 'network-removeheader', capability: 'REMOVEHEADER', ruleIds: ['network.removeheader.accepted', 'network.removeheader-response.accepted'] },
-  { id: 'cosmetic-core', capability: 'COSMETIC', ruleIds: ['cosmetic.plain.accepted', 'cosmetic.scope.accepted', 'cosmetic.exception.accepted', 'cosmetic.abp.accepted'] },
-  { id: 'procedural-core', capability: 'PROCEDURAL', ruleIds: ['procedural.text.accepted', 'procedural.path.accepted', 'procedural.has.accepted', 'procedural.ancestor.accepted', 'procedural.attr.accepted', 'procedural.css.accepted', 'procedural.xpath.accepted', 'procedural.not.accepted', 'procedural.media.accepted'] },
-  { id: 'scriptlet-core', capability: 'SCRIPTLET', ruleIds: ['scriptlet.ubo.accepted', 'scriptlet.adguard.accepted', 'scriptlet.exception.accepted', 'scriptlet.adguard-exception.accepted'] }
+  { id: 'cosmetic-core', capability: 'COSMETIC', ruleIds: ['cosmetic.plain.accepted', 'cosmetic.scope.accepted', 'cosmetic.exception.accepted', 'cosmetic.abp.accepted', 'cosmetic.entity.accepted', 'cosmetic.regex.accepted', 'cosmetic.specific-generic.accepted'] },
+  { id: 'procedural-core', capability: 'PROCEDURAL', ruleIds: ['procedural.text.accepted', 'procedural.path.accepted', 'procedural.has.accepted', 'procedural.ancestor.accepted', 'procedural.attr.accepted', 'procedural.css.accepted', 'procedural.xpath.accepted', 'procedural.not.accepted', 'procedural.media.accepted', 'procedural.action.accepted', 'procedural.prop.accepted', 'procedural.others.accepted', 'procedural.watch.accepted'] },
+  { id: 'scriptlet-core', capability: 'SCRIPTLET', ruleIds: ['scriptlet.ubo.accepted', 'scriptlet.adguard.accepted', 'scriptlet.exception.accepted', 'scriptlet.adguard-exception.accepted', 'scriptlet.entity.accepted', 'scriptlet.regex.accepted', 'scriptlet.specific-generic.accepted'] }
 ];
 
 module.exports = {

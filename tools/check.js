@@ -210,6 +210,9 @@ if (manifest.content_scripts) {
     if (!chainAt(files, files.indexOf(PROCEDURAL_CHAIN[0]), PROCEDURAL_CHAIN)) {
       errors.push('procedural evaluator chain out of order in manifest');
     }
+    if (cosmeticIndex !== -1 && entry.run_at !== 'document_start') {
+      errors.push('cosmetic content script must run at document_start to avoid unhidden flashes');
+    }
   });
 }
 const clientTag = '<script src="../../lib/wapi/wapi-client.js"></script>';
@@ -383,8 +386,8 @@ function FilterEngineCapabilities() {
 }
 
 const filterConstants = require('../lib/engine/filter/constants.js').WildFireFilter;
-if (filterConstants.COMPILED_VERSION !== 12) {
-  errors.push('compiled IR version must be pinned to 12; bump it for every new IR field');
+if (filterConstants.COMPILED_VERSION !== 13) {
+  errors.push('compiled IR version must be pinned to 13; bump it for every new IR field');
 }
 const EXPECTED_TYPE_ALIASES = {
   main_frame: 'document', document: 'document', doc: 'document',

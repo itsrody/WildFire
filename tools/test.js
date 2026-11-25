@@ -1307,6 +1307,300 @@ assert.strictEqual(classify(nthRule, '/').mode, 'js', ':nth-ancestor stays in th
   assert.strictEqual(mediaReload.loadCompiled(mediaBlob), true, 'matches-media compiled round-trip');
   assert.strictEqual(mediaReload.getProcedural('example.com').length, 1, 'matches-media survives compiled load');
 
+// Phase 3: entity/regex cosmetic scopes and the bounded specific-generic
+// surveyor. `*##` rules apply only when a domain-scoped rule is already live.
+const phase3ScopeEngine = new FilterEngine();
+phase3ScopeEngine.load([
+  '##.generic',
+  '*##.surveyor',
+  'example.*##.entity',
+  '/^ads[0-9]+\\.test$/##.regex',
+  'example.com##.specific',
+  'bad..com##.invalid'
+].join('\n'));
+const phase3Sorted = host => Array.from(phase3ScopeEngine.getCosmetic(host)).sort();
+assert.deepStrictEqual(phase3Sorted('shop.example.com'),
+  ['.entity', '.generic', '.specific', '.surveyor'],
+  'entity targets and specific-generic rules apply to entity domains');
+assert.deepStrictEqual(phase3Sorted('ads42.test'),
+  ['.generic', '.regex', '.surveyor'],
+  'safe regex host targets work and trigger the specific-generic surveyor');
+assert.deepStrictEqual(phase3Sorted('unrelated.net'), ['.generic'],
+  'specific-generic rules stay off pages without a domain-scoped rule');
+assert.strictEqual(phase3ScopeEngine.rejectedCosmetic.length, 1,
+  'an invalid cosmetic host target is rejected');
+assert.ok(/invalid domain/.test(phase3ScopeEngine.rejectedCosmetic[0].reason),
+  'invalid host targets carry a validation reason');
+const phase3ScopeReload = new FilterEngine();
+assert.strictEqual(phase3ScopeReload.loadCompiled(phase3ScopeEngine.toCompiled()), true,
+  'Phase 3 cosmetic scopes compile');
+assert.deepStrictEqual(Array.from(phase3ScopeReload.getCosmetic('ads42.test')).sort(),
+  phase3Sorted('ads42.test'), 'compiled pattern and surveyor buckets are restored');
+
+// A domain exception that removes the only specific rule must not leave the
+// surveyor active. The same policy must survive compiled activation.
+const phase3ExceptionEngine = new FilterEngine();
+phase3ExceptionEngine.load([
+  'example.com##.specific',
+  'example.com#@#.specific',
+  '*##.surveyor'
+].join('\n'));
+assert.deepStrictEqual(Array.from(phase3ExceptionEngine.getCosmetic('example.com')), [],
+  'excepted specific rules do not trigger specific-generic selectors');
+assert.strictEqual(phase3ExceptionEngine.rejectedCosmetic.length, 0,
+  'bare wildcard rules remain valid');
+const phase3ExceptionReload = new FilterEngine();
+assert.strictEqual(phase3ExceptionReload.loadCompiled(phase3ExceptionEngine.toCompiled()), true,
+  'surveyor exceptions compile');
+assert.deepStrictEqual(Array.from(phase3ExceptionReload.getCosmetic('example.com')), [],
+  'compiled surveyor exceptions do not trigger specific-generic selectors');
+
+// Generic exceptions still remove surveyor selectors once the surveyor is live.
+const phase3GenericExceptionEngine = new FilterEngine();
+phase3GenericExceptionEngine.load([
+  'example.com##.specific',
+  '*##.surveyor',
+  '*#@#.surveyor'
+].join('\n'));
+assert.deepStrictEqual(Array.from(phase3GenericExceptionEngine.getCosmetic('example.com')), ['.specific'],
+  'generic exceptions win over specific-generic selectors');
+
+const phase3ProceduralExceptionEngine = new FilterEngine();
+phase3ProceduralExceptionEngine.load([
+  'example.com##.specific:has-text("x")',
+  'example.com#@#.specific:has-text("x")',
+  '*##.surveyor:has-text("y")'
+].join('\n'));
+assert.strictEqual(phase3ProceduralExceptionEngine.getProcedural('example.com').length, 0,
+  'excepted procedural rules do not trigger the procedural surveyor');
+
+const phase3ScriptletScopeEngine = new FilterEngine(null, null, WildFireScriptlets);
+phase3ScriptletScopeEngine.load([
+  'example.*##+js(set-constant, phase3EntityFlag, false)',
+  '/^ads[0-9]+\\.test$/##+js(set-constant, phase3RegexFlag, false)',
+  '*##+js(set-constant, phase3GlobalFlag, false)',
+  'bad..com##+js(set-constant, phase3BadFlag, false)'
+].join('\n'));
+assert.strictEqual(phase3ScriptletScopeEngine.counts.scriptlets, 3,
+  'entity, regex and wildcard scriptlet targets load');
+assert.strictEqual(phase3ScriptletScopeEngine.rejectedScriptlets.length, 1,
+  'invalid scriptlet host targets are rejected');
+assert.strictEqual(WildFireScriptlets.domainMatches('shop.example.com', 'example.*'), true,
+  'scriptlet entity targets match in the injected registry');
+assert.strictEqual(WildFireScriptlets.domainMatches('ads42.test', '/^ads[0-9]+\\.test$/'), true,
+  'scriptlet regex targets match in the injected registry');
+assert.strictEqual(context.WildFireScriptletCore.appliesTo(
+  { domains: ['example.*'] }, 'shop.example.com'), true,
+  'scriptlet applicability resolves entity targets per host');
+const phase3ScriptletPayload = phase3ScriptletScopeEngine.getScriptletPayload();
+assert.strictEqual(phase3ScriptletPayload.find(rule => rule.domains.includes('*')).specificGeneric, true,
+  'wildcard scriptlets carry the surveyor marker');
+
+// The content-side registry applies the same bounded surveyor policy without
+// access to the filter engine.
+context.wildFireSurveyorIdle = 'idle';
+WildFireScriptlets.apply([{
+  alias: 'set-constant', args: ['wildFireSurveyorIdle', 'false'],
+  domains: ['*'], isException: false, specificGeneric: true
+}]);
+assert.strictEqual(context.wildFireSurveyorIdle, 'idle',
+  '*##+js() stays idle without a live domain-scoped scriptlet');
+WildFireScriptlets.apply([
+  {
+    alias: 'set-constant', args: ['wildFireSurveyorIdle', 'false'],
+    domains: ['*'], isException: false, specificGeneric: true
+  },
+  {
+    alias: 'set-constant', args: ['wildFireSurveyorScoped', 'false'],
+    domains: ['page.example'], isException: false, specificGeneric: false
+  }
+]);
+assert.strictEqual(context.wildFireSurveyorIdle, false,
+  '*##+js() runs when a domain-scoped scriptlet is live');
+assert.strictEqual(context.wildFireSurveyorScoped, false,
+  'the domain-scoped scriptlet still runs');
+
+context.wildFireSurveyorExcepted = 'idle';
+WildFireScriptlets.apply([
+  {
+    alias: 'set-constant', args: ['wildFireSurveyorExcepted', 'false'],
+    domains: ['*'], isException: false, specificGeneric: true
+  },
+  {
+    alias: 'set-constant', args: ['wildFireSurveyorCanceled', 'false'],
+    domains: ['page.example'], isException: false, specificGeneric: false
+  },
+  {
+    alias: 'set-constant', args: ['wildFireSurveyorCanceled', 'false'],
+    domains: ['page.example'], isException: true, specificGeneric: false
+  }
+]);
+assert.strictEqual(context.wildFireSurveyorExcepted, 'idle',
+  'an excepted scoped rule does not trigger *##+js()');
+
+// Phase 3 procedural additions: all arguments stay validated data.
+function phase3Node(selector, attributes, classes) {
+  const node = stubNode(selector, '');
+  node.attributes = Object.assign({}, attributes || {});
+  node.getAttribute = name => Object.prototype.hasOwnProperty.call(node.attributes, name)
+    ? node.attributes[name] : null;
+  node.removeAttribute = name => { delete node.attributes[name]; };
+  node.classList = {
+    values: new Set(classes || []),
+    remove(name) { this.values.delete(name); }
+  };
+  node.style = {
+    values: Object.create(null),
+    setProperty(name, value, priority) { this.values[name] = { value, priority }; }
+  };
+  node.removed = false;
+  node.remove = () => { node.removed = true; };
+  return node;
+}
+
+function phase3Tree(nodes) {
+  const root = stubNode('body', '', nodes);
+  root.children = nodes;
+  root.contains = target => nodes.some(node => node === target ||
+    (typeof node.contains === 'function' && node.contains(target)));
+  nodes.forEach(node => {
+    node.contains = target => node === target ||
+      (node.childNodes || []).some(child =>
+        typeof child.contains === 'function' && child.contains(target));
+  });
+  return root;
+}
+
+const phase3ActionEngine = new FilterEngine();
+phase3ActionEngine.load([
+  'example.com##.ad:remove()',
+  'example.com##.panel:style(color: red)',
+  'example.com##.card:remove-attr(data-x)',
+  'example.com##.tag:remove-class(old)',
+  'example.com##.bad:style(color:url(evil))',
+  'example.com##.chained:remove():has(.x)',
+  'example.com##.nested:has(.x:remove())'
+].join('\n'));
+assert.strictEqual(phase3ActionEngine.counts.cosmetic, 4,
+  'safe action operators load as procedural rules');
+assert.strictEqual(phase3ActionEngine.rejectedCosmetic.length, 3,
+  'unsafe style values, chained and nested actions are rejected');
+assert.ok(phase3ActionEngine.rejectedCosmetic.some(entry => entry.reason === 'unsafe :style value'),
+  'executable style values get a line-numbered rejection reason');
+assert.ok(phase3ActionEngine.rejectedCosmetic.some(entry =>
+  entry.reason === 'action operator must be trailing on the root selector'),
+  'action operators must terminate the root chain');
+
+const actionNodes = [
+  phase3Node('.ad'),
+  phase3Node('.panel'),
+  phase3Node('.card', { 'data-x': '1' }),
+  phase3Node('.tag', {}, ['old'])
+];
+const actionRoot = phase3Tree(actionNodes);
+const actionRules = phase3ActionEngine.getProcedural('example.com');
+assert.strictEqual(actionRules.length, 4, 'action rules are delivered for their domain');
+const classifiedActions = actionRules.map(rule => WildFireProcedural.classify(rule, '/'));
+assert.ok(classifiedActions.every(item => item.mode === 'js'),
+  'DOM actions stay in the JS evaluator, never in injected CSS');
+assert.strictEqual(WildFireProcedural.selectAll(actionRoot, classifiedActions, '/').length, 0,
+  'action rules are not treated as hide rules');
+WildFireProcedural.applyActions(actionRoot, classifiedActions, '/');
+assert.strictEqual(actionNodes[0].removed, true, ':remove() detaches the matched node');
+assert.deepStrictEqual(actionNodes[1].style.values.color,
+  { value: 'red', priority: 'important' }, ':style() applies validated declarations');
+assert.strictEqual(actionNodes[2].getAttribute('data-x'), null,
+  ':remove-attr() removes a named attribute');
+assert.strictEqual(actionNodes[3].classList.values.has('old'), false,
+  ':remove-class() removes a named class');
+const phase3ActionReload = new FilterEngine();
+assert.strictEqual(phase3ActionReload.loadCompiled(phase3ActionEngine.toCompiled()), true,
+  'action rules survive compiled load');
+assert.strictEqual(phase3ActionReload.getProcedural('example.com').length, 4,
+  'compiled action rules are restored');
+
+// Actions can mutate the DOM, so bare generic action rules stay rejected.
+// The specific-generic bucket is only sent to sites with a live scoped rule.
+const phase3ActionScopeEngine = new FilterEngine();
+phase3ActionScopeEngine.load([
+  '##.always:remove()',
+  '*##.surveyed:remove()',
+  'example.com##.scoped'
+].join('\n'));
+assert.strictEqual(phase3ActionScopeEngine.getProcedural('unrelated.test').length, 0,
+  'specific-generic actions stay off unrelated sites');
+assert.strictEqual(phase3ActionScopeEngine.getProcedural('example.com').length, 1,
+  'specific-generic actions apply next to a scoped rule');
+assert.ok(phase3ActionScopeEngine.rejectedCosmetic.some(entry =>
+  entry.reason === 'generic procedural rules need domain scope'),
+  'bare generic action rules are rejected');
+const phase3ActionScopeReload = new FilterEngine();
+assert.strictEqual(phase3ActionScopeReload.loadCompiled(phase3ActionScopeEngine.toCompiled()), true,
+  'specific-generic actions survive compiled load');
+assert.strictEqual(phase3ActionScopeReload.getProcedural('example.com').length, 1,
+  'compiled specific-generic actions are restored');
+
+const phase3StepEngine = new FilterEngine();
+phase3StepEngine.load([
+  'example.com##.item:matches-prop(dataset.id="42")',
+  'example.com##.item:matches-prop(__proto__.polluted)',
+  'example.com##.keep:others()',
+  'example.com##.watch:watch-attr(data-state)',
+  'example.com##.watch:watch-attr(bad name)'
+].join('\n'));
+assert.strictEqual(phase3StepEngine.counts.cosmetic, 3,
+  'matches-prop, others and watch-attr parse as procedural rules');
+assert.strictEqual(phase3StepEngine.rejectedCosmetic.length, 2,
+  'unsafe property paths and attribute names are rejected');
+const phase3Steps = phase3StepEngine.getProcedural('example.com');
+const propRule = phase3Steps.find(rule => rule.base === '.item');
+const othersRule = phase3Steps.find(rule => rule.base === '.keep');
+const watchRule = phase3Steps.find(rule => rule.base === '.watch');
+assert.strictEqual(propRule.steps[0].op, 'matches-prop', 'matches-prop is parsed');
+assert.strictEqual(othersRule.steps[0].op, 'others', 'others is parsed');
+assert.strictEqual(watchRule.steps[0].names[0], 'data-state',
+  'watch-attr keeps a bounded attribute list');
+
+const propNode = phase3Node('.item');
+propNode.dataset = { id: '42' };
+const keepA = phase3Node('.keep');
+const keepB = phase3Node('.keep');
+const outside = phase3Node('.outside');
+const watchNode = phase3Node('.watch');
+const phase3Root = phase3Tree([propNode, keepA, keepB, outside, watchNode]);
+assert.strictEqual(WildFireProcedural.select(phase3Root, propRule, '/')[0], propNode,
+  'matches-prop reads a bounded property path');
+assert.deepStrictEqual(Array.from(new Set(WildFireProcedural
+  .select(phase3Root, othersRule, '/').map(node => node.selector))),
+  ['.item', '.outside', '.watch'],
+  'others targets siblings outside the selected set');
+assert.strictEqual(WildFireProcedural.select(phase3Root, watchRule, '/')[0], watchNode,
+  'watch-attr is a pass-through trigger');
+assert.strictEqual(WildFireProcedural.classify(watchRule, '/').mode, 'js',
+  'watch-attr stays in the JS evaluator for attribute observation');
+
+// An action after :others() must mutate the computed sibling complement, not
+// the individual candidate that happens to seed the set transform.
+const phase3OthersActionEngine = new FilterEngine();
+phase3OthersActionEngine.load('example.com##.keep:others():remove()');
+const othersActionRule = phase3OthersActionEngine.getProcedural('example.com')[0];
+const actionKeepA = phase3Node('.keep');
+const actionKeepB = phase3Node('.keep');
+const actionOutside = phase3Node('.outside');
+const othersActionRoot = phase3Tree([actionKeepA, actionKeepB, actionOutside]);
+WildFireProcedural.applyActions(othersActionRoot,
+  [WildFireProcedural.classify(othersActionRule, '/')], '/');
+assert.strictEqual(actionOutside.removed, true,
+  ':others() actions mutate the whole sibling complement');
+assert.strictEqual(actionKeepA.removed, false, ':others() actions spare selected nodes');
+assert.strictEqual(actionKeepB.removed, false, ':others() actions spare every selected node');
+
+const phase3StepReload = new FilterEngine();
+assert.strictEqual(phase3StepReload.loadCompiled(phase3StepEngine.toCompiled()), true,
+  'new procedural steps survive compiled load');
+assert.strictEqual(phase3StepReload.getProcedural('example.com').length, 3,
+  'compiled new procedural rules are restored');
+
 const resolveCsp = alias => CspResources.resolve(alias);
 // Arrays built inside the vm realm have a different prototype than Node's.
 const cspFor = (instance, url, type, documentUrl) =>
@@ -1432,13 +1726,15 @@ const scriptletPayload = Array.from(scriptletEngine.getScriptletPayload(), rule 
   alias: rule.alias,
   args: Array.from(rule.args),
   domains: Array.from(rule.domains),
-  isException: rule.isException
+  isException: rule.isException,
+  specificGeneric: rule.specificGeneric
 }));
 assert.deepStrictEqual(scriptletPayload[0], {
   alias: 'set-constant',
   args: ['adblockDetected', 'false'],
   domains: ['page.example'],
-  isException: false
+  isException: false,
+  specificGeneric: false
 }, 'the injected payload is plain alias data');
 assert.strictEqual(scriptletPayload[3].isException, true,
   'exceptions are included so the content side can resolve them per host');
@@ -3819,11 +4115,13 @@ function assertCompatRejected(engine, entry) {
   const label = entry.id;
   const bucket = engine[entry.rejection];
   assert.ok(Array.isArray(bucket), label + ': unknown rejection bucket ' + entry.rejection);
-  assert.ok(bucket.some(item => String(item.reason).includes(entry.reason)),
-    label + ': expected rejection ' + entry.reason);
+  assert.ok(bucket.some(item => String(item.reason).includes(entry.reason) &&
+    Number(item.lineNumber) === 1),
+  label + ': expected rejection ' + entry.reason + ' with its line number');
   assert.ok(engine.getDiagnostics().some(item =>
-    item.type === 'rejected' && String(item.reason).includes(entry.reason)),
-  label + ': rejection must produce a diagnostic');
+    item.type === 'rejected' && String(item.reason).includes(entry.reason) &&
+    Number(item.lineNumber) === 1),
+  label + ': rejection must produce a line-numbered diagnostic');
   assert.ok(String(entry.inspectorReason).includes(entry.reason),
     label + ': inspector reason must describe the rejection');
 }
@@ -6959,18 +7257,24 @@ async function testBackgroundControllerRobustness() {
         '! note',
         '/(a+)+$/',
         '||bad.example^$csp=not-curated',
-        '||defer.example^$header=x-test'
+        '||defer.example^$header=x-test',
+        'example.com##.bad:style(color:url(evil))',
+        'example.com##.bad:matches-prop(__proto__.flag)'
       ].join('\n')
     }, {});
     assert.strictEqual(validation.ok, true, 'filter validation returns a local result');
     assert.strictEqual(validation.validation.counts.network, 2,
       'validation counts accepted rules without loading them');
-    assert.strictEqual(validation.validation.issues.length, 2,
+    assert.strictEqual(validation.validation.issues.length, 4,
       'validation reports every rejected rule');
     assert.strictEqual(validation.validation.issues[0].line, 3,
       'validation reports the unsafe regex line');
     assert.strictEqual(validation.validation.issues[1].line, 4,
       'validation reports the unknown alias line');
+    assert.strictEqual(validation.validation.issues[2].line, 6,
+      'validation reports unsafe action declarations with their line');
+    assert.strictEqual(validation.validation.issues[3].line, 7,
+      'validation reports unsafe property paths with their line');
     assert.strictEqual(validation.validation.notices.length, 1,
       'validation reports deferred options as notices');
     assert.strictEqual(validation.validation.notices[0].line, 5,

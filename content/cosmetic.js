@@ -17,6 +17,12 @@
   let scheduled = false;
   let resizeBound = false;
 
+  function ensureMounted(element) {
+    if (!element || element.parentNode) return;
+    const host = document.head || document.documentElement;
+    if (host) host.appendChild(element);
+  }
+
   function isSafeSelector(selector) {
     if (typeof selector !== 'string' || !selector.trim()) return false;
     try {
@@ -43,11 +49,27 @@
 
   function hasAttrStep(step) {
     if (!step) return false;
-    // matches-css reads computed style and xpath may test any attribute, so
-    // both need the same all-attributes watch as matches-attr.
-    if (step.op === 'matches-attr' || step.op === 'matches-css' || step.op === 'xpath') return true;
+    // matches-css reads computed style, xpath may test any attribute, and
+    // matches-prop may reflect an attribute-backed DOM property.
+    if (step.op === 'matches-attr' || step.op === 'matches-css' ||
+      step.op === 'matches-prop' || step.op === 'xpath' || step.op === 'watch-attr') return true;
     if ((step.op === 'has' || step.op === 'not') && step.inner && Array.isArray(step.inner.steps)) return step.inner.steps.some(hasAttrStep);
     return false;
+  }
+
+  function collectWatchAttrs(steps, state) {
+    (Array.isArray(steps) ? steps : []).forEach(step => {
+      if (!step) return;
+      if (step.op === 'watch-attr') {
+        const names = Array.isArray(step.names) ? step.names : [];
+        if (!names.length) state.all = true;
+        else names.forEach(name => state.names.add(name));
+      }
+      if ((step.op === 'has' || step.op === 'not') && step.inner) {
+        collectWatchAttrs(step.inner.steps, state);
+      }
+    });
+    return state;
   }
 
   function hasMediaStep(step) {
@@ -57,21 +79,25 @@
     return false;
   }
 
-  function observeOptions(textSensitive, attrSensitive) {
+  function observeOptions(textSensitive, attrSensitive, watched, watchAll) {
+    const filter = watchAll || attrSensitive ? undefined
+      : watched.size ? Array.from(watched)
+        : ['class', 'id'];
     return {
       childList: true,
       subtree: true,
       characterData: textSensitive,
       attributes: true,
-      attributeFilter: attrSensitive ? undefined : ['class', 'id']
+      attributeFilter: filter
     };
   }
 
-  function watch(textSensitive, attrSensitive, mediaSensitive) {
+  function watch(textSensitive, attrSensitive, mediaSensitive, watched, watchAll) {
     if (observer) {
       observer.disconnect();
       if (dynamicEntries.length) {
-        observer.observe(document.documentElement || document, observeOptions(textSensitive, attrSensitive));
+        observer.observe(document.documentElement || document,
+          observeOptions(textSensitive, attrSensitive, watched || new Set(), Boolean(watchAll)));
       }
     }
     // :matches-media() depends on the viewport, which can resize without any DOM
@@ -113,6 +139,13 @@
       .map(item => item.selector);
     dynamicEntries = classified.filter(item => item.mode === 'js');
 
+    // Action operators mutate nodes instead of merely hiding them. They run
+    // before the hide pass so a removed node is never re-marked, and Gecko's
+    // selector validation has already happened inside applyActions().
+    if (typeof WildFireProcedural !== 'undefined' && WildFireProcedural.applyActions) {
+      WildFireProcedural.applyActions(document, dynamicEntries, path);
+    }
+
     const wanted = new Set();
     if (dynamicEntries.length && typeof WildFireProcedural !== 'undefined') {
       WildFireProcedural.selectAll(document, dynamicEntries, path)
@@ -131,7 +164,7 @@
         proceduralStyle = document.createElement('style');
         proceduralStyle.id = 'wildfire-cosmetic-procedural';
         proceduralStyle.setAttribute('data-wildfire', '1');
-        (document.head || document.documentElement).appendChild(proceduralStyle);
+        ensureMounted(proceduralStyle);
       }
       proceduralStyle.textContent = [ATTRIBUTE_HIDE]
         .concat(nativeSelectors.map(selector => selector + '{display:none!important;}'))
@@ -140,7 +173,13 @@
       proceduralStyle.textContent = ATTRIBUTE_HIDE;
     }
 
-    watch(dynamicEntries.some(item => item.steps.some(needsText)), dynamicEntries.some(item => item.steps.some(hasAttrStep)), dynamicEntries.some(item => item.steps.some(hasMediaStep)));
+    const watched = dynamicEntries.reduce((state, item) =>
+      collectWatchAttrs(item.steps, state), { names: new Set(), all: false });
+    watch(
+      dynamicEntries.some(item => item.steps.some(needsText)),
+      dynamicEntries.some(item => item.steps.some(hasAttrStep)),
+      dynamicEntries.some(item => item.steps.some(hasMediaStep)),
+      watched.names, watched.all);
   }
 
   function apply(selectors, procedural) {
@@ -149,7 +188,7 @@
       styleElement = document.createElement('style');
       styleElement.id = 'wildfire-cosmetic';
       styleElement.setAttribute('data-wildfire', '1');
-      (document.head || document.documentElement).appendChild(styleElement);
+      ensureMounted(styleElement);
     }
     styleElement.textContent = safe.map(selector => selector + '{display:none!important;}').join('\n');
 
@@ -158,7 +197,7 @@
   }
 
   if (typeof MutationObserver !== 'undefined') observer = new MutationObserver(scheduleReapply);
-  watch(false, false, false);
+  watch(false, false, false, new Set(), false);
 
   client.on('apply', message => apply(message.selectors, message.procedural));
 

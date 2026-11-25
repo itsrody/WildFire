@@ -256,7 +256,10 @@ Content scripts load in this order: `lib/wapi/wapi-client.js` → `lib/engine/pr
 `nodes.js`, `native.js`, `select.js`) → `content/cosmetic.js`, so the DOM
 evaluator exists before the content script runs. The chain shares one internal
 namespace, `window.WildFireProceduralCore`; `select.js` publishes the public
-`window.WildFireProcedural` API. Load order is pinned in the manifest and in
+`window.WildFireProcedural` API. The cosmetic content script runs at
+`document_start` to avoid unhidden flashes; the style nodes are mounted into
+`document.head` or `document.documentElement` as soon as either exists and are
+re-mounted on later applies. Load order is pinned in the manifest and in
 `tools/test.js` (`PROCEDURAL_FILES`) — keep both in sync.
 
 Libraries export by attaching to `this` (the window/global in a classic
@@ -447,22 +450,40 @@ fetched list applies on the first navigation after restart or update.
 Registrations are replaced whenever the engine reloads, and only future
 navigations receive updated scriptlets.
 
-`getCosmetic(host, policy)` merges generic selectors with every parent-domain
-selector and subtracts applicable exceptions, including hide modifiers from the
-policy. `content/cosmetic.js` asks for them once
-on load via `wildfire:cosmetic` and re-applies on `wildfire:apply` broadcasts;
-it validates each selector with `CSS.supports('selector(…)')` and
-`document.querySelector` before injecting a `<style id="wildfire-cosmetic">`.
+Cosmetic and scriptlet host lists share `parseHostScopeList()`: literal hosts,
+parent domains, entity values (`example.*`, `*.example.*`), and safe `/regex/`
+values, plus `~host` exclusions and a bare `*` specific-generic marker. Entity
+and regex scopes live in pattern buckets; literal scopes stay in the domain
+indexes. `*##selector` is surveyor-style: it is delivered only when a
+domain-scoped cosmetic or procedural rule is live on that page. `*##+js()`
+uses the same bounded policy, and the content-side scriptlet registry activates
+it only when a non-excepted domain-scoped scriptlet is live on that host; the
+runtime has no access to cosmetic rules. Exceptions remove specific rules
+before the surveyor trigger is evaluated, and generic/hide exceptions still win.
+
+`getCosmetic(host, policy)` merges generic selectors with every parent-domain,
+entity, regex, and applicable specific-generic selector, then subtracts
+applicable exceptions, including hide modifiers from the policy.
+`content/cosmetic.js` asks for them once on load via `wildfire:cosmetic` and
+re-applies on `wildfire:apply` broadcasts; it validates each selector with
+`CSS.supports('selector(…)')` and `document.querySelector` before injecting a
+`<style id="wildfire-cosmetic">`.
 
 Procedural selectors (`:has-text()`, `:contains()`, `:matches-path()`, `:has()`,
 `:nth-ancestor()`, `:upward()`, `:min-text-length()`, `:matches-attr()`,
-`:matches-css()`, `:xpath()`, `:not()`, `:matches-media()`) are parsed in
+`:matches-css()`, `:xpath()`, `:not()`, `:matches-media()`, `:matches-prop()`,
+`:others()`, `:watch-attr()`, and the trailing actions `:remove()`, `:style()`,
+`:remove-attr()`, `:remove-class()`) are parsed in
 `lib/engine/filter/parse-procedural.js` into trees with `base` plus ordered `steps`; malformed or
 unsafe ones are recorded in `engine.rejectedCosmetic` and never sent to pages.
-`getProcedural(host, policy)` merges generic and domain trees and subtracts
-`#@#` exceptions and hide modifiers. Generic JS-evaluated procedural rules are
-rejected at load time; only generic path-only and fully native-compilable trees
-are delivered everywhere, while generic exceptions remain valid. Background
+Action operators must terminate the root chain; nested or chained actions are
+rejected. `:style()` declarations are bounded, must avoid URLs/comments/escapes
+and executable values, and are applied through `setProperty()` as data.
+`getProcedural(host, policy)` merges generic, domain, entity, regex, and
+applicable surveyor trees and subtracts `#@#` exceptions and hide modifiers.
+Bare generic JS-evaluated procedural rules are rejected at load time; only
+generic path-only and fully native-compilable trees are delivered everywhere,
+while generic exceptions and bounded `*##` rules remain valid. Background
 sends the result in the same `wildfire:apply` message as CSS and caches the
 payload per host/hide-policy within one filter generation.
 
@@ -495,13 +516,21 @@ the native CSS base.
 descendants. Both share the safe literal/regex matcher. `:nth-ancestor(n)` is a
 transforming step: the rule hides the nth parent of a match instead of the
 match itself, so `targetOf()` returns the final node to hide.
+`:matches-prop(path[=value|/re/])` reads a bounded dot-separated property path
+and rejects `__proto__`, `prototype`, and `constructor`; `:others()` is a set
+transform that targets the bounded sibling complement of the selected set; and
+`:watch-attr([name,...])` is a pass-through trigger rather than a hide step.
+Trailing action operators are excluded from `selectAll()` so they never mark a
+node hidden; `WildFireProcedural.applyActions()` revalidates the selector with
+`CSS.supports` and then applies validated DOM data before the hide pass.
 `content/cosmetic.js` schedules re-applies with `requestAnimationFrame` to merge
 multiple `MutationObserver` batches per frame, only observes `characterData`
-when a live rule actually depends on text, and widens the attribute watch to all
-attributes when a rule uses `:matches-attr()`, `:matches-css()` or `:xpath()`.
-A `:matches-media()` rule additionally binds a `resize` listener (the viewport
-can change without a DOM mutation) and unbinds it when no live rule needs it.
-Filter text is never executed.
+when a live rule actually depends on text, and widens the attribute watch only
+when a live rule uses `:matches-attr()`, `:matches-css()`, `:matches-prop()`,
+`:xpath()`, or `:watch-attr()`; named `:watch-attr()` values narrow the
+`attributeFilter` to those attributes. A `:matches-media()` rule additionally
+binds a `resize` listener (the viewport can change without a DOM mutation) and
+unbinds it when no live rule needs it. Filter text is never executed.
 
 ### State and messages
 
@@ -660,9 +689,11 @@ reported, so `data_collection_permissions.required` stays `["none"]`.
 | `$csp=alias` (curated aliases only) | |
 | `$removeparam`, `$removeheader` (capability-gated) | |
 | `/regex/` filters (`i`, `m`, `s`, `u` flags only) | |
-| `##selector`, `#@#selector`, `host,~host##selector` | |
+| `##selector`, `#@#selector`, `host,~host##selector`, `entity.*##selector`, `/regex/##selector`, `*##selector` (surveyor-style specific-generic) | |
 | `##sel:has-text("…")`, `##sel:matches-path(text|/re/)`, `##sel:has(sel)` | |
 | `##sel:contains("…")`, `##sel:nth-ancestor(n)`, `##sel:upward(n|sel)`, `##sel:min-text-length(n)`, `##sel:matches-attr(name[=value|/re/])`, `##sel:matches-css[-before|-after](prop: value|/re/)`, `##sel:xpath(expr)` (bounded, read-only, all results), `##sel:not(<procedural>)`, `##sel:matches-media(query)` | |
+| `##sel:matches-prop(path[=value|/re/])` (bounded, safe property path), `##sel:others()` (bounded sibling complement), `##sel:watch-attr([name,...])` (pass-through attribute trigger) | |
+| trailing `##sel:remove()`, `##sel:style(declarations)`, `##sel:remove-attr(name,...)`, `##sel:remove-class(name,...)` | nested/chained actions and executable style values rejected |
 | `#?#` / `#@?#` with safe `:-abp-has()`/`:-abp-contains()` | unsupported ABP action/procedural selectors rejected |
 | `domain##+js(alias, args)` (curated aliases only) | |
 | `domain#%#//scriptlet('alias', 'args')` (AdGuard, string-only) | AdGuard trusted/debug aliases |
@@ -691,7 +722,7 @@ later phases (`$header`, `$method`, `$ipaddress`,
 `$mp4`) are parsed as option syntax but are not actionable: they stay non-fatal
 blockers, are recorded in `engine.ignoredOptions` with `type: 'ignored'`
 diagnostics, and appear as `kind: 'notice'` entries from
-`wildfire:validate-filters`. The compiled IR is currently v12; every new IR field
+`wildfire:validate-filters`. The compiled IR is currently v13; every new IR field
 must bump `COMPILED_VERSION`, and cache entries from older schemas are rejected.
 
 Redirect rules name an alias from `lib/resources/redirect-resources.js`: `noopjs`,
