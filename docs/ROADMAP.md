@@ -1,7 +1,7 @@
 # WildFire roadmap
 
-Status: implementation plan; Phase 0, Phase 1, Phase 3, and Phase 4 complete,
-Phase 2 in progress; updated 2026-11-25.
+Status: implementation plan; Phase 0, Phase 1, Phase 2, Phase 3, Phase 4, and
+Phase 5 complete; updated 2026-11-25.
 
 WildFire is a **native Firefox rewrite of uBO behavior** under the WildFire brand.
 This document maps the remaining work from today's engine to broader uBO-style
@@ -102,7 +102,7 @@ used as a source file for WildFire code.
 | Cosmetic scope | entity targets, regex host targets, specific-generic `*##selector`, generic DOM-surveyor behavior, action operators `:remove()`, `:style()`, `:remove-attr()`, `:remove-class()` | Complete (Phase 3) |
 | Procedural selectors | `:matches-prop()`, `:others()`, `:watch-attr()`; richer mutation/attribute watching for those selectors | Complete (Phase 3) |
 | Response filtering | `example.com##^selector` HTML stream filtering and `##^responseheader(name)` header removal; encoding handling and safe stream composition | Complete (Phase 4): bounded UTF-8 simple selectors and safe header set only |
-| Dynamic filtering | global/local source-destination-type rules, `noop`, precedence, hostname-based rules, temporary vs persisted rules, plain-text “My rules”, full static override semantics | Phase 5 |
+| Dynamic filtering | global/local source-destination-type rules, `noop`, precedence, hostname-based rules, temporary vs persisted rules, plain-text “My rules”, full static override semantics | Complete (Phase 5): versioned state, one-time `siteRules` migration, distinct diagnostics phase |
 | Filter lists | broader preshipped catalog, list categories, checksum/diff-patch updates, update status/history, asset viewer | Phase 6 |
 | UI/tools | full dashboard, per-site switches, DOM inspector, element picker/zapper, context menu, keyboard shortcuts, advanced settings, richer logger views | Phase 6 |
 | Scriptlet timing | realm-birth `set-constant` guarantees, hardened `MAIN` fallback, native exception propagation, `syncNativeScriptlets()` tests | Phase 7, gated |
@@ -254,7 +254,7 @@ infrastructure.
 navigation counters and pause/site-rule semantics remain unchanged; no page code
 is derived from filter text.
 
-### Phase 5 — Dynamic filtering model
+### Phase 5 — Dynamic filtering model (complete)
 
 **Priority:** P1. **Depends on:** Phases 2–4 for override targets.
 
@@ -279,6 +279,12 @@ blocks navigation” rule.
 **Exit criteria:** precedence tests cover local/global, hostname/type, and
 `block`/`noop`/`allow`; existing `siteRules` migrate safely; dynamic `allow`
 does not accidentally re-enable filter-supplied code paths.
+
+Completed with versioned `dynamic` state in `wildfire.state.v1`, one-time
+`siteRules` migration, source/destination/type precedence, temporary popup
+rules with explicit persistence, a plain-text My rules surface in Options, and
+a distinct `dynamic` diagnostics/Inspector phase. The blocking listener remains
+synchronous and navigation rules remain ignored under decision gate D1.
 
 ### Phase 6 — Lists, catalog, and UI/tools
 

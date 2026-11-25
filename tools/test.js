@@ -4286,6 +4286,17 @@ function assertCompatCheck(engine, check, decision, reason, label, options) {
     assert.strictEqual(actualReason, reason, label + ': inspector reason');
     return;
   }
+  if (check.kind === 'dynamic') {
+    const parsed = WildFireStore.parseDynamicRules(String(check.rule));
+    assert.strictEqual(parsed.errors.length, 0, label + ': dynamic rule has no parse errors');
+    assert.strictEqual(parsed.rules.length, 1, label + ': dynamic rule is accepted');
+    assert.strictEqual(JSON.stringify(parsed.rules[0]), JSON.stringify({
+      source: check.source, destination: check.destination, type: check.type, action: check.action
+    }), label + ': dynamic rule fields');
+    assert.strictEqual(decision, 'dynamic', label + ': decision');
+    assert.strictEqual(reason, check.action, label + ': inspector reason');
+    return;
+  }
   if (check.kind === 'html') {
     const result = engine.matchHtml(check.url, mapResourceType(check.type), check.documentUrl || '', check.hosts);
     if (strict) {
@@ -4385,20 +4396,25 @@ function runCompatMatrix() {
     assert.ok(!seen.has(entry.id), 'duplicate compatibility id: ' + entry.id);
     seen.add(entry.id);
     const engine = makeCompatEngine(entry.engineOptions);
-    engine.load(compatRuleLines(entry.rule).join('\n'));
+    const isDynamic = entry.family === 'dynamic.rule';
+    if (!isDynamic) engine.load(compatRuleLines(entry.rule).join('\n'));
     if (entry.outcome === 'rejected') {
       assertCompatRejected(engine, entry);
     } else {
-      const rejected = engine.rejectedRegex.length + engine.rejectedCsp.length +
-        engine.rejectedRewrite.length + engine.rejectedScriptlets.length +
-        engine.rejectedCosmetic.length;
-      assert.strictEqual(rejected, 0, entry.id + ': accepted rule must not be rejected');
+      if (!isDynamic) {
+        const rejected = engine.rejectedRegex.length + engine.rejectedCsp.length +
+          engine.rejectedRewrite.length + engine.rejectedScriptlets.length +
+          engine.rejectedCosmetic.length;
+        assert.strictEqual(rejected, 0, entry.id + ': accepted rule must not be rejected');
+      }
       entry.checks.forEach(check =>
         assertCompatCheck(engine, check, check.decision || entry.decision,
           check.inspectorReason || entry.inspectorReason, entry.id));
-      const reloaded = makeCompatEngine(entry.engineOptions);
-      assert.strictEqual(reloaded.loadCompiled(engine.toCompiled()), true,
-        entry.id + ': accepted rule survives compiled round-trip');
+      if (!isDynamic) {
+        const reloaded = makeCompatEngine(entry.engineOptions);
+        assert.strictEqual(reloaded.loadCompiled(engine.toCompiled()), true,
+          entry.id + ': accepted rule survives compiled round-trip');
+      }
     }
   });
 }
@@ -5415,6 +5431,53 @@ async function testPerSiteBadgeCounters() {
   assert.strictEqual(Object.keys(invalidAction.state.siteRules).length, 0,
     'unknown dynamic actions are ignored');
 
+  await bgMessageHandler({ type: 'wildfire:clear-dynamic-rules', scope: 'all' });
+  const temporaryRule = await bgMessageHandler({
+    type: 'wildfire:set-dynamic-rule',
+    source: 'example.com', destination: '*', resourceType: 'script', action: 'allow'
+  });
+  assert.strictEqual(temporaryRule.ok, true, 'a new dynamic rule is accepted');
+  assert.strictEqual(temporaryRule.myRules.temporary.length, 1,
+    'new dynamic rules are temporary by default');
+  assert.strictEqual((await ctx.WildFireStore.get()).dynamic.rules.length, 0,
+    'temporary rules are not written to storage');
+  assert.strictEqual(blockOn(1, 'https://www.example.com/'), undefined,
+    'a temporary dynamic allow overrides the static blocker');
+  const persistedRules = await bgMessageHandler({ type: 'wildfire:persist-dynamic-rules' });
+  assert.strictEqual(persistedRules.myRules.persisted.length, 1,
+    'explicit persistence promotes temporary rules');
+  assert.strictEqual((await ctx.WildFireStore.get()).dynamic.rules.length, 1,
+    'persisted rules are stored');
+
+  await bgMessageHandler({ type: 'wildfire:clear-dynamic-rules', scope: 'all' });
+  await bgMessageHandler({
+    type: 'wildfire:set-dynamic-rule',
+    source: '*', destination: '*', resourceType: 'script', action: 'block', persist: true
+  });
+  assert.ok(blockOn(1, 'https://www.example.com/').cancel,
+    'a global dynamic block applies to the local site');
+  await bgMessageHandler({
+    type: 'wildfire:set-dynamic-rule',
+    source: 'example.com', destination: '*', resourceType: 'script', action: 'allow', persist: true
+  });
+  assert.strictEqual(blockOn(1, 'https://www.example.com/'), undefined,
+    'a local dynamic allow overrides a global dynamic block');
+  await bgMessageHandler({
+    type: 'wildfire:set-dynamic-rule',
+    source: 'example.com', destination: 'ads.test', resourceType: 'script', action: 'block', persist: true
+  });
+  assert.ok(blockOn(1, 'https://www.example.com/').cancel,
+    'a destination-specific rule overrides a broader local type rule');
+
+  await bgMessageHandler({ type: 'wildfire:clear-dynamic-rules', scope: 'all' });
+  await bgMessageHandler({
+    type: 'wildfire:set-dynamic-rule',
+    source: 'example.com', destination: '*', resourceType: 'script', action: 'noop', persist: true
+  });
+  assert.ok(blockOn(1, 'https://www.example.com/').cancel,
+    'noop cancels dynamic filtering only, leaving static filters active');
+  await bgMessageHandler({ type: 'wildfire:clear-dynamic-rules', scope: 'all' });
+
   await bgMessageHandler({ type: 'wildfire:reset-stats' });
   const initialDiagnostics = await bgMessageHandler({ type: 'wildfire:diagnostics' }, {});
   assert.strictEqual(initialDiagnostics.diagnostics.enabled, false,
@@ -5476,6 +5539,22 @@ async function testPerSiteBadgeCounters() {
   assert.strictEqual(cspDiagnostics.diagnostics.cspReports.requestsCancelled, 1,
     'CSP report request cancels are counted in local diagnostics');
 
+  await bgMessageHandler({ type: 'wildfire:inspect', value: true }, {});
+  await bgMessageHandler({
+    type: 'wildfire:set-dynamic-rule',
+    source: 'example.com', destination: '*', resourceType: 'script', action: 'allow', persist: true
+  });
+  blockOn(1, 'https://www.example.com/');
+  const dynamicDiagnostics = await bgMessageHandler({ type: 'wildfire:diagnostics' }, {});
+  assert.ok(dynamicDiagnostics.diagnostics.phases.dynamic.calls > 0,
+    'dynamic decisions have their own diagnostics phase');
+  const dynamicLog = await bgMessageHandler({ type: 'wildfire:inspect' }, {});
+  assert.ok(dynamicLog.inspect.entries.some(entry => entry.phase === 'dynamic' &&
+    entry.source === 'dynamic' && entry.rule && /example.com/.test(entry.rule.text)),
+  'the Inspector records dynamic rules with a copyable WildFire rule');
+  await bgMessageHandler({ type: 'wildfire:inspect', value: false }, {});
+  await bgMessageHandler({ type: 'wildfire:clear-dynamic-rules', scope: 'all' });
+
   api.setState({
     customFilters: '||ads.test^$script\n||csp.test^$csp=no-script'
   });
@@ -5489,6 +5568,62 @@ async function testPerSiteBadgeCounters() {
   await bgMessageHandler({ type: 'wildfire:set-csp-report-blocking', value: false }, {});
   assert.strictEqual(apiHooks.onHeadersReceived, undefined,
     'the header listener is removed when CSP report blocking is off and no capabilities remain');
+}
+
+async function testPhase5DynamicState() {
+  const parsed = WildFireStore.parseDynamicRules([
+    '# WildFire-authored dynamic rules',
+    '',
+    '* * script block',
+    'example.com ads.test script allow',
+    'example.com * script noop',
+    'example.com * script allow',
+    'example.com * script allow',
+    'example.com * badtype block',
+    'example.com * script reject'
+  ].join('\n'));
+  assert.strictEqual(parsed.rules.length, 3,
+    'plain text parses one decision per source, destination, and type');
+  assert.strictEqual(JSON.stringify(parsed.rules[1]), JSON.stringify({
+    source: 'example.com', destination: 'ads.test', type: 'script', action: 'allow'
+  }), 'plain-text fields map to source, destination, type, and action');
+  assert.strictEqual(parsed.errors.length, 2, 'invalid plain-text lines are reported');
+  assert.strictEqual(parsed.errors.map(error => error.line).join(','), '8,9',
+    'plain-text errors carry source line numbers');
+  assert.strictEqual(WildFireStore.parseDynamicRules('* * * block').rules[0].type, '*',
+    'plain text accepts a wildcard resource type');
+
+  const normalized = WildFireStore.normalizeDynamicRules([
+    { source: 'example.com', destination: '*', type: 'script', action: 'block' },
+    { source: 'example.com', destination: '*', type: 'script', action: 'allow' }
+  ]);
+  assert.strictEqual(normalized.length, 1, 'dynamic rules are deduplicated');
+  assert.strictEqual(normalized[0].action, 'allow', 'the later duplicate rule wins');
+
+  const migrated = WildFireStore.normalizeState({
+    siteRules: { 'legacy.test': { script: 'allow', image: 'block' } }
+  });
+  assert.strictEqual(migrated.dynamic.version, 1, 'dynamic state is versioned');
+  assert.strictEqual(migrated.dynamic.migrated, true,
+    'legacy site rules are migrated exactly once');
+  assert.strictEqual(migrated.dynamic.rules.length, 2,
+    'legacy allow and block site rules become dynamic rules');
+  assert.ok(migrated.dynamic.rules.every(rule => rule.source === 'legacy.test' &&
+    rule.destination === '*'), 'migrated rules keep the original site scope');
+  assert.strictEqual(migrated.siteRules['legacy.test'].script, 'allow',
+    'migration preserves legacy state instead of dropping it');
+
+  const alreadyMigrated = WildFireStore.normalizeState({
+    siteRules: { 'legacy.test': { script: 'allow' } },
+    dynamic: {
+      version: 1, migrated: true,
+      rules: [{ source: 'other.test', destination: '*', type: 'image', action: 'block' }]
+    }
+  });
+  assert.strictEqual(alreadyMigrated.dynamic.rules.length, 1,
+    'a migrated dynamic state does not replay legacy site rules');
+  assert.strictEqual(WildFireStore.formatDynamicRules(alreadyMigrated.dynamic.rules),
+    'other.test * image block', 'persistent rules round-trip to plain text');
 }
 
 async function testPopupPerSiteDisplay() {
@@ -5631,11 +5766,13 @@ async function testPopupPerSiteDisplay() {
     'popup shows the active dynamic rule state');
   elements['site-rules'].children[1].listeners.click();
   await new Promise(resolve => setImmediate(resolve));
-  const ruleMessage = sent.find(message => message.type === 'wildfire:set-site-rule');
-  assert.strictEqual(ruleMessage.type, 'wildfire:set-site-rule',
+  const ruleMessage = sent.find(message => message.type === 'wildfire:set-dynamic-rule');
+  assert.strictEqual(ruleMessage.type, 'wildfire:set-dynamic-rule',
     'rule controls send the dynamic rule action');
-  assert.strictEqual(ruleMessage.site, 'example.com',
-    'rule controls send the registrable site key');
+  assert.strictEqual(ruleMessage.source, 'example.com',
+    'rule controls send the local source host');
+  assert.strictEqual(ruleMessage.destination, '*',
+    'rule controls send a wildcard destination');
   assert.strictEqual(ruleMessage.resourceType, 'image',
     'rule controls send the resource type outside the message type');
   assert.strictEqual(ruleMessage.action, 'block',
@@ -7546,6 +7683,7 @@ async function testBackgroundControllerRobustness() {
     assert.strictEqual(actions.join(','), [
       'state', 'toggle', 'toggle-site', 'set-filters', 'validate-filters',
       'set-csp-report-blocking', 'set-csp-report-allow', 'set-cname-uncloak', 'set-site-rule', 'clear-site-rules',
+      'dynamic-rules', 'set-dynamic-rule', 'clear-dynamic-rules', 'persist-dynamic-rules', 'set-my-rules',
       'reset-stats',
       'reload', 'suggested-lists', 'list-state', 'add-list', 'remove-list',
       'update-list', 'set-list-enabled', 'set-list-auto', 'cosmetic',
@@ -7949,7 +8087,11 @@ async function testTrafficPathRegressions() {
     c.state = Object.assign({}, c.state, {
       customFilters: '||api.example^$removeheader=response:x-track',
       disabledSites: [],
-      siteRules: { 'example.com': { script: 'allow' } }
+      siteRules: { 'example.com': { script: 'allow' } },
+      dynamic: {
+        version: 1, migrated: true,
+        rules: [{ source: 'example.com', destination: '*', type: 'script', action: 'allow' }]
+      }
     });
     await c.loadFilters(true);
     await wait();
@@ -7973,7 +8115,8 @@ async function testTrafficPathRegressions() {
 
     c.state = Object.assign({}, c.state, {
       disabledSites: ['example.com'],
-      siteRules: {}
+      siteRules: {},
+      dynamic: { version: 1, migrated: true, rules: [] }
     });
     const pausedHeaders = c.onHeadersReceived({
       url: 'https://api.example/data',
@@ -8038,6 +8181,7 @@ Promise.resolve()
   .then(() => testHtmlRuntimeIntegration())
   .then(() => testRemoveRuntimeIntegration())
   .then(() => testPerSiteBadgeCounters())
+  .then(() => testPhase5DynamicState())
   .then(() => testWapiBackbone())
   .then(() => testWapiStorage())
   .then(() => testOptionsEditorHelpers())

@@ -25,6 +25,8 @@ const removeheaderCheck = (url, type, documentUrl, names, phase, exception) =>
 const htmlCheck = (url, type, documentUrl, headers, selectors, exception) =>
   ({ kind: 'html', url, type, documentUrl, headers: headers || [],
     selectors: selectors || [], exception: Boolean(exception) });
+const dynamicCheck = (rule, source, destination, type, action) =>
+  ({ kind: 'dynamic', rule, source, destination, type, action });
 
 const accepted = (id, family, rule, decision, inspectorReason, checks, engineOptions) => ({
   id, family, rule, outcome: 'accepted', decision, inspectorReason,
@@ -49,7 +51,8 @@ const families = [
   'procedural.ancestor', 'procedural.attr', 'procedural.css', 'procedural.xpath',
   'procedural.not', 'procedural.media', 'procedural.action', 'procedural.prop',
   'procedural.others', 'procedural.watch', 'scriptlet.ubo', 'scriptlet.adguard',
-  'scriptlet.exception', 'scriptlet.scope', 'html.selector', 'html.responseheader'
+  'scriptlet.exception', 'scriptlet.scope', 'html.selector', 'html.responseheader',
+  'dynamic.rule'
 ].map(id => ({ id }));
 
 const rejectionClasses = [
@@ -440,6 +443,12 @@ const rules = [
     ['example.com##^responseheader(location)', 'example.com#@^responseheader(location)'],
     'exception', 'exception wins',
     htmlCheck('https://example.com/page', 'document', 'https://example.com/page', [], [], true)),
+  accepted('dynamic.block.accepted', 'dynamic.rule', '* * script block',
+    'dynamic', 'block', dynamicCheck('* * script block', '*', '*', 'script', 'block')),
+  accepted('dynamic.noop.accepted', 'dynamic.rule', 'example.com ads.test script noop',
+    'dynamic', 'noop', dynamicCheck('example.com ads.test script noop', 'example.com', 'ads.test', 'script', 'noop')),
+  accepted('dynamic.allow.accepted', 'dynamic.rule', 'example.com * script allow',
+    'dynamic', 'allow', dynamicCheck('example.com * script allow', 'example.com', '*', 'script', 'allow')),
 
   rejected('network.domain.invalid.rejected', 'network.domain', '||bad.example^$domain=bad..example', 'rejectedRegex', 'invalid domain option: bad..example'),
   rejected('network.to.invalid.rejected', 'network.to', '||bad.example^$to=bad..example', 'rejectedRegex', 'invalid to option: bad..example'),

@@ -64,6 +64,19 @@
   </section>
 
   <section class="card">
+    <h2>My rules</h2>
+    <p class="hint">One rule per line: <code>source destination type action</code>. Use <code>*</code> for any source, destination, or type; actions are <code>block</code>, <code>noop</code>, and <code>allow</code>. Local rules override global rules, and destination rules override type rules. Popup rules are temporary until persisted; rules saved here are persistent.</p>
+    <textarea id="my-rules" rows="7" spellcheck="false" aria-label="My rules"></textarea>
+    <div id="my-rules-issues" class="filter-issues" hidden></div>
+    <div id="my-rules-status" class="status" role="status" aria-live="polite"></div>
+    <div class="actions">
+      <button id="save-my-rules" class="button" type="button">Save rules</button>
+      <button id="persist-dynamic-rules" class="button" type="button">Persist temporary rules</button>
+      <button id="clear-temporary-rules" class="button" type="button">Clear temporary rules</button>
+    </div>
+  </section>
+
+  <section class="card">
     <h2>CSP reports</h2>
     <p class="hint">CSP violation reports are development telemetry and can be used as a fingerprinting signal. WildFire removes report directives from CSP headers and cancels legacy CSP report requests. Enforcement directives stay intact.</p>
     <label class="toggle"><input id="block-csp-reports" type="checkbox"> Block CSP reports</label>

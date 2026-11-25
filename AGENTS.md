@@ -554,8 +554,8 @@ unbinds it when no live rule needs it. Filter text is never executed.
 ### State and messages
 
 Storage key `wildfire.state.v1` holds `{enabled, blocked, blockedBySite,
-customFilters, disabledSites, siteRules, blockCspReports, cspReportAllow,
-cnameUncloak}`.
+customFilters, disabledSites, siteRules, dynamic, blockCspReports,
+cspReportAllow, cnameUncloak}`.
 `blocked` is the lifetime total shown in Options;
 `blockedBySite` maps registrable domains to per-site counters shown by the
 toolbar badge and popup. The badge is set per tab and refreshed on activation
@@ -567,13 +567,28 @@ off stops new DNS lookups and ignores cached canonical names immediately, while
 the bounded cache itself stays purely in memory.
 
 `siteRules` maps registrable domains to validated per-resource-type `allow` or
-`block` actions. Dynamic rules are set from the popup, override static filter
-decisions before engine matching, and never apply to navigations or globally /
-per-site paused tabs. An `allow` rule also skips `$removeparam`, `$removeheader`,
-`$csp`, report stripping and rewrite/CSP header work; a `block` rule counts as
-one filtered request and is recorded as a local Inspector decision. Rules are
-keyed by the tab's top-level site even when the request comes from an embedded
-frame. Storage key `wildfire.remote.v1` holds
+`block` actions and is kept only as migration input. `dynamic` is versioned
+(`{version, migrated, rules}`); each rule is plain data in the form
+`source destination type action`, with `block`, `noop`, and `allow`, plus a
+runtime-only `temporary` marker. Scope values are literal hosts or `*`, and
+types are normalized resource types or `*`; navigations are never matched. Source and
+destination follow the tab's top-level site even when a request comes from an
+embedded frame. A more specific source/destination rule overrides a broader
+type rule, local rules override global rules, and a later rule replaces an
+earlier rule with the same source/destination/type slot. Rules created in the
+popup are temporary by default and stay in memory until explicitly persisted;
+Options → **My rules** edits the persisted plain-text set and offers explicit
+persist/clear actions for temporary rules. `siteRules` are folded into `dynamic`
+once and never replayed after `migrated` is set.
+
+Dynamic rules override static filter decisions before engine matching, and never
+apply to globally / per-site paused tabs. A `block` rule cancels and counts once
+as a filtered request. `noop` cancels dynamic filtering only, leaving static
+filters active. An `allow` rule also skips `$removeparam`, `$removeheader`,
+`$csp`, report stripping, HTML filtering and rewrite/CSP header work; no
+filter-supplied code path is re-enabled. Dynamic decisions have their own
+`dynamic` diagnostics phase and Inspector source, separate from static `request`
+decisions, with a copyable WildFire rule. Storage key `wildfire.remote.v1` holds
 `{lists: [{url, builtin, enabled, autoUpdate, autoUpdateChoice, etag,
 lastModified, text, updatedAt, checkedAt, hash, lastError, metadata}]}` and is
 owned entirely by `lib/state/remote-lists.js`; `metadata` also retains the
@@ -589,7 +604,7 @@ Background listens for `wildfire:*` messages:
 
 | Action | Purpose |
 | --- | --- |
-| `state` | snapshot + active-tab `{url, host, site, blocked, disabled, rules}` |
+| `state` | snapshot + active-tab `{url, host, site, blocked, disabled, rules, dynamicRules}` + `myRules` |
 | `toggle` | flip global `enabled` |
 | `toggle-site` | add/remove a host in `disabledSites` |
 | `set-filters` | save custom filters, reload engine, refresh cosmetics |
@@ -597,8 +612,13 @@ Background listens for `wildfire:*` messages:
 | `set-csp-report-blocking` | enable or disable default-on CSP report blocking |
 | `set-csp-report-allow` | replace the allowlist of report endpoint hosts |
 | `set-cname-uncloak` | enable or disable cache-backed CNAME uncloaking |
-| `set-site-rule` | set/clear/flip one `resourceType` rule for a site |
-| `clear-site-rules` | remove every dynamic rule for a site |
+| `set-site-rule` | set/clear/flip one `resourceType` legacy rule for a site |
+| `clear-site-rules` | remove every legacy rule for a site |
+| `dynamic-rules` | return the versioned persisted/temporary dynamic rule snapshot |
+| `set-dynamic-rule` | set/clear one `source destination type action` rule; temporary unless `persist` is true |
+| `clear-dynamic-rules` | clear `persisted`, `temporary`, or all dynamic rules for an optional site |
+| `persist-dynamic-rules` | promote every temporary rule into persisted state |
+| `set-my-rules` | parse and persist the plain-text My rules editor text |
 | `reset-stats` | zero the lifetime total and every site counter |
 | `reload` | rebuild from bundled + custom + enabled remote filters |
 | `list-state` | return registered remote lists |

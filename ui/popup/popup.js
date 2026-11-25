@@ -32,7 +32,7 @@
     ['ping', 'Ping'],
     ['other', 'Other']
   ];
-  const RULE_CYCLE = ['', 'block', 'allow'];
+  const RULE_CYCLE = ['', 'block', 'noop', 'allow'];
 
   let current = null;
   let site = { url: '', host: '', disabled: false };
@@ -59,23 +59,38 @@
     if (message && message.state && message.counts) applyResult(message);
   });
 
+  function dynamicAction(info, type) {
+    const rules = Array.isArray(info && info.dynamicRules) ? info.dynamicRules : [];
+    const matching = rules.filter(rule => rule.source === info.site &&
+      rule.destination === '*' && (rule.type === type || rule.type === '*'));
+    const best = matching.reduce((winner, rule) => {
+      if (!winner) return rule;
+      if (rule.type === type && winner.type !== type) return rule;
+      return winner;
+    }, null);
+    if (!best || !['block', 'noop', 'allow'].includes(best.action)) return '';
+    return best.action;
+  }
+
   function renderSiteRules(site) {
     const rules = site && site.rules ? site.rules : {};
     elements.siteRulesSite.textContent = site && site.site ? site.site : 'no site';
     elements.siteRules.textContent = '';
     SITE_RULE_TYPES.forEach(([type, label]) => {
-      const action = rules[type] || '';
+      const action = dynamicAction(site, type) || rules[type] || '';
+      const glyph = action === 'block' ? '✕' : action === 'allow' ? '✓'
+        : action === 'noop' ? '∞' : '·';
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'button small rule' + (action ? ' active' : '');
-      button.textContent = label + ' ' +
-        (action === 'block' ? '✕' : action === 'allow' ? '✓' : '·');
+      button.textContent = label + ' ' + glyph;
       button.title = label + ': ' + (action || 'default');
       button.disabled = !site || !site.site || !current.state.enabled || site.disabled;
       button.addEventListener('click', async () => {
         const next = RULE_CYCLE[(RULE_CYCLE.indexOf(action) + 1) % RULE_CYCLE.length];
-        const result = await client.send('set-site-rule', {
-          site: site.site,
+        const result = await client.send('set-dynamic-rule', {
+          source: site.site,
+          destination: '*',
           resourceType: type,
           action: next || 'clear'
         });

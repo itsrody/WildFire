@@ -6,6 +6,9 @@
   const filterStatus = document.getElementById('filter-status');
   const sitesList = document.getElementById('sites');
   const siteRulesList = document.getElementById('site-rules');
+  const myRules = document.getElementById('my-rules');
+  const myRulesIssues = document.getElementById('my-rules-issues');
+  const myRulesStatus = document.getElementById('my-rules-status');
   const siteForm = document.getElementById('site-form');
   const siteInput = document.getElementById('site-input');
   const suggestedList = document.getElementById('suggested-lists');
@@ -24,6 +27,7 @@
   let lists = [];
   let suggested = [];
   let filtersInitialized = false;
+  let myRulesInitialized = false;
 
   function setFilterStatus(message) {
     filterStatus.textContent = message || '';
@@ -116,41 +120,93 @@
     });
   }
 
-  function renderSiteRules() {
-    const rules = state.siteRules && typeof state.siteRules === 'object' &&
-      !Array.isArray(state.siteRules) ? state.siteRules : {};
-    const sites = Object.keys(rules);
+  function setMyRulesStatus(message) {
+    myRulesStatus.textContent = message || '';
+    if (message) {
+      setTimeout(() => {
+        if (myRulesStatus.textContent === message) myRulesStatus.textContent = '';
+      }, 5000);
+    }
+  }
+
+  function myRulesPayload() {
+    return state && (state.myRules || state.dynamic) || null;
+  }
+
+  function myRulesText(payload) {
+    if (payload && typeof payload.text === 'string') return payload.text;
+    if (!payload || !Array.isArray(payload.rules)) return '';
+    return payload.rules.map(rule =>
+      [rule.source, rule.destination, rule.type, rule.action].join(' ')).join('\n');
+  }
+
+  function showMyRulesIssues(issues) {
+    myRulesIssues.textContent = '';
+    const list = Array.isArray(issues) ? issues : [];
+    myRulesIssues.hidden = !list.length;
+    list.forEach(issue => {
+      const item = document.createElement('div');
+      item.textContent = 'Line ' + issue.line + ': ' + (issue.reason || 'Invalid rule.');
+      myRulesIssues.appendChild(item);
+    });
+  }
+
+  function renderMyRules() {
+    const payload = myRulesPayload();
+    if (!myRulesInitialized) {
+      myRules.value = myRulesText(payload);
+      myRulesInitialized = true;
+    }
+    const rules = payload && Array.isArray(payload.rules) ? payload.rules : [];
     siteRulesList.textContent = '';
-    if (!sites.length) {
+    if (!rules.length) {
       const item = document.createElement('li');
       item.className = 'empty';
       item.textContent = 'No dynamic site rules.';
       siteRulesList.appendChild(item);
       return;
     }
-    sites.forEach(site => {
+    rules.forEach(rule => {
       const item = document.createElement('li');
       item.className = 'list-item';
       const row = document.createElement('div');
       row.className = 'list-row';
       const label = document.createElement('span');
       label.className = 'list-label';
-      label.textContent = site;
+      label.textContent = [rule.source, rule.destination, rule.type, rule.action].join(' ');
       const meta = document.createElement('span');
       meta.className = 'list-meta';
-      meta.textContent = Object.keys(rules[site])
-        .map(type => type + ': ' + rules[site][type])
-        .join(' · ');
+      meta.textContent = rule.temporary ? 'temporary' : 'persistent';
       row.append(label, meta);
-      const actions = document.createElement('div');
-      actions.className = 'list-actions';
-      actions.append(actionButton('Clear all', async () => {
-        state = await client.send('clear-site-rules', { site });
-        renderSiteRules();
-      }));
-      item.append(row, actions);
+      item.appendChild(row);
       siteRulesList.appendChild(item);
     });
+  }
+
+  async function saveMyRules() {
+    try {
+      const result = await client.send('set-my-rules', { value: myRules.value });
+      state = result.state;
+      state.myRules = result.myRules;
+      showMyRulesIssues(result.issues);
+      setMyRulesStatus(result.ok ? 'Rules saved.' : 'Fix the listed lines and try again.');
+      if (result.ok) renderMyRules();
+    } catch (error) {
+      setMyRulesStatus('Save failed: ' + error.message);
+    }
+  }
+
+  async function updateDynamicRules(action, message, success) {
+    try {
+      const result = await client.send(action, message);
+      state = result.state;
+      state.myRules = result.myRules;
+      myRules.value = myRulesText(result.myRules);
+      renderMyRules();
+      setMyRulesStatus(success);
+    } catch (error) {
+      setMyRulesStatus('Action failed: ' + error.message);
+    }
   }
 
   function renderSuggested() {
@@ -268,7 +324,7 @@
     statsText.textContent = Number(state.blocked || 0).toLocaleString() +
       ' requests blocked since tracking began.';
     renderSites();
-    renderSiteRules();
+    renderMyRules();
     renderLists();
     renderSuggested();
     renderCspReports();
@@ -276,6 +332,12 @@
   }
 
   document.getElementById('save').addEventListener('click', saveFilters);
+  document.getElementById('save-my-rules').addEventListener('click', saveMyRules);
+  document.getElementById('persist-dynamic-rules').addEventListener('click', () =>
+    updateDynamicRules('persist-dynamic-rules', {}, 'Temporary rules persisted.'));
+  document.getElementById('clear-temporary-rules').addEventListener('click', () =>
+    updateDynamicRules('clear-dynamic-rules', { scope: 'temporary' },
+      'Temporary rules cleared.'));
 
   siteForm.addEventListener('submit', async event => {
     event.preventDefault();
@@ -323,6 +385,7 @@
   ])
     .then(results => {
       state = results[0].state;
+      state.myRules = results[0].myRules;
       lists = Array.isArray(results[1].lists) ? results[1].lists : [];
       suggested = Array.isArray(results[2].suggested) ? results[2].suggested : [];
       render();

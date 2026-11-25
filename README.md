@@ -256,20 +256,38 @@ time. WildFire reads standard `! Title`, `! Description`, `! Version`,
 to pace checks (default one day, minimum one minute). Everything is stored under
 `wildfire.remote.v1`, so the applied rules are reproducible.
 
-## Dynamic site rules
+## Dynamic rules
 
-The popup's **Site rules** grid sets per-site `block` or `allow` actions for a
-resource type. Click a type to cycle **default → block → allow**; rules apply to
-the tab's top-level site, including requests from embedded frames. Dynamic
-rules override static filters and are saved with the rest of WildFire's state.
-Options lists every site with rules and can clear them. Navigations are never
-affected, and paused tabs keep their existing pause behavior.
+Dynamic filtering uses versioned, WildFire-owned state. Each rule is plain data:
 
-An `allow` rule skips all WildFire handling for that type, including parameter
-and header edits, CSP injection/report stripping, redirects and rewrites. A
-rewrite already started before the rule changed still gets its response headers
-normalized so the substituted body stays valid. A `block` rule cancels the
-request, counts once, and appears in the local Inspector as a site-rule decision.
+```
+source destination type action
+```
+
+`source` and `destination` are literal hosts or `*`, `type` is a resource type
+or `*`, and `action` is `block`, `noop`, or `allow`. More specific source/destination
+rules override broader type rules, local rules override global rules, and a
+later rule replaces an earlier rule with the same scope and type. Rules follow
+the tab's top-level site, including requests from embedded frames. Navigations
+are never affected, and globally or per-site paused tabs keep their existing
+pause behavior.
+
+The popup's **Site rules** grid cycles **default → block → noop → allow** for
+the current site. Those rules are temporary: they apply immediately but survive
+only until the browser session ends unless you persist them. Options → **My
+rules** edits the persisted rule set as plain text, shows every live rule with
+its temporary/persistent status, and offers explicit persist and clear actions.
+Existing legacy per-site rules are migrated into the versioned set once, with
+their original `allow`/`block` scope preserved.
+
+A `block` rule cancels the request, counts once, and is recorded in the local
+Inspector under the `dynamic` phase. `noop` cancels dynamic filtering only, so
+static filters still apply. An `allow` rule skips static filters and all
+WildFire handling for that type, including parameter and header edits, HTML
+filtering, CSP injection/report stripping, and redirects or rewrites. A rewrite
+already started before the rule changed still gets its response headers
+normalized so the substituted body stays valid. Dynamic rules are data only;
+they never enable filter-supplied script or code.
 
 ## Uncloak CNAME aliases
 
