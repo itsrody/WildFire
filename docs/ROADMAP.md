@@ -1,0 +1,352 @@
+# WildFire roadmap
+
+Status: proposed plan, reviewed 2026-11-25.
+
+WildFire is a **native Firefox rewrite of uBO behavior** under the WildFire brand.
+This document maps the remaining work from today's engine to broader uBO-style
+behavior. It is a behavioral roadmap, not an import plan: every feature must be
+implemented in WildFire-owned code, with WildFire-owned tests and docs.
+
+## 0. Non-negotiable guardrails
+
+These constraints do not change as features are added:
+
+- **Firefox only.** MV2, `browser_specific_settings.gecko.strict_min_version =
+  "153.0"`, promise-based `browser.*` through `wapi`. No Chrome target, `chrome.*`,
+  callback bridge, cross-browser abstraction, or MV3 fallback.
+- **Rewrite, not clone.** Public docs, Gecko docs, local tests, and behavioral
+  source inspection are allowed. Cloning, vendoring, copying, translating,
+  minifying, or adapting upstream source, build files, assets, or filter text is
+  not. No upstream repository is added to the workspace.
+- **No filter-supplied code.** No `eval`, no `Function`, no dynamic source
+  execution, no filter-supplied script/body/header/URL value. Scriptlets and
+  rewrites resolve only curated WildFire-owned registries.
+- **Trusted-source features stay rejected** until an explicit source-trust model
+  exists. This includes all `trusted-*` scriptlets, `$replace`, `$uritransform`,
+  `$urlskip`, `!#include`, and raw `$csp` directive values.
+- **Synchronous blocking listener.** No `await`, storage read, DNS wait, or async
+  engine reload in `webRequest.onBeforeRequest`.
+- **Loop-free by construction.** Native iteration helpers only; `tools/check.js`
+  enforces this across packaged scripts and tools.
+- **Firefox-native boundary.** Raw `browser.*`/`chrome.*` calls stay inside
+  `lib/wapi/`; background policy stays in the background chain.
+- **Pinned load orders.** `manifest.json`, `lib/compile/compiler-worker.js`,
+  `lib/background/engine-host.js`, `tools/test.js`, `tools/build.js`, and
+  `tools/check.js` must stay in sync whenever a classic-script chain grows.
+- **No user data collection.** `data_collection_permissions.required` remains
+  `["none"]`; diagnostics and Inspector data stay local and in memory. Firefox
+  ETP settings stay untouched, and ETP observations never affect filter
+  decisions or counters.
+
+## 1. Current baseline
+
+Already implemented and verified in the shipped tree:
+
+- Firefox MV2 background chain, `wapi` API boundary, named message router, native
+  tabs/navigation/content-script/DNS/action adapters, and dynamic scriptlet
+  registration.
+- Engine module chains for network, cosmetic, procedural, and scriptlet parsing;
+  compiled-filter cache with worker build and synchronous fallback; host trie,
+  token index, decision cache, and safe regex subset.
+- Network blocking with exceptions, `$important`, `$badfilter`, resource types,
+  party/domain scoping, `$document`, `$popup`, CNAME uncloaking, curated
+  `$redirect`/`$redirect-rule`, `$rewrite`/`$rewrite-rule`, `$csp`,
+  `$removeparam`, and `$removeheader`.
+- Cosmetic and procedural hiding with native-CSS compilation where possible,
+  grouped selection, `MutationObserver` batching, `matchMedia` reapply, and safe
+  XPath evaluation.
+- Full non-trusted uBO `##+js()` and AdGuard `#%#//scriptlet()` alias coverage,
+  canonicalized exceptions, one-WildFire-file-per-shim structure, and rejection
+  of all trusted/debug aliases.
+- Remote list store with the preshipped uAssets CDN default list, opt-in custom
+  lists, metadata parsing, size/timeout checks, conditional fetches, and local
+  offline fallback rules.
+- Popup, Options custom-filter editor, per-site `allow`/`block` resource rules,
+  local diagnostics, and a local-only request decision Inspector.
+
+This baseline is deliberately narrower than uBO. The gaps below define the
+roadmap.
+
+## 2. Research basis
+
+Behavior was reviewed from public uBO documentation and repository structure:
+
+- uBO README and Firefox manifest: product scope, default list families, MV2
+  permissions, Firefox-first behavior. uBO's floor is 128; WildFire keeps 153.
+  Only decision gate D3 can add permissions; no Chromium/MV3 tokens are imported.
+- `src/js` module inventory: static filtering parser/engine, filtering context,
+  dynamic rules, HTML/header filtering, redirect resources, scriptlets, logger,
+  dashboard, element picker, DOM inspector, trusted sites, diff updates, public
+  suffix, and benchmarks.
+- Wiki *Static filter syntax*: network options, modifier filters, static extended
+  filters, action operators, HTML filters, response-header filtering, and
+  scriptlet injection.
+- Wiki *Dynamic filtering: quick guide* and *rule syntax*: source/destination/type
+  rules with `block`, `noop`, and `allow`, local/global precedence, temporary vs
+  persisted rules, and static-override semantics.
+- Wiki *Procedural cosmetic filters*: remaining selectors and action behavior.
+
+Only behavior and syntax were used. No upstream implementation was vendored or
+used as a source file for WildFire code.
+
+## 3. Gap map
+
+| Area | uBO behavior still missing in WildFire | Route |
+| --- | --- | --- |
+| Static network syntax | HOSTS-file interpretation, entity host values, regex host/domain values, `$to`, `$denyallow`, `$top`, `$strict1p`, `$strict3p`, `$header`, `$method`, `$ipaddress`, `$permissions`, `$cname` exceptions, `$empty`/`$mp4`, redirect priority and standalone directives, broader curated redirect resources, bare `$removeparam`, `!#if`/`!#else`/`!#endif` | Phase 2 |
+| Navigation semantics | uBO host-only entries imply strict document blocking; WildFire currently requires explicit `$document`/`$popup` | Decision gate D1 |
+| Cosmetic scope | entity targets, regex host targets, specific-generic `*##selector`, generic DOM-surveyor behavior, action operators `:remove()`, `:style()`, `:remove-attr()`, `:remove-class()` | Phase 3 |
+| Procedural selectors | `:matches-prop()`, `:others()`, `:watch-attr()`; richer mutation/attribute watching for those selectors | Phase 3 |
+| Response filtering | `example.com##^selector` HTML stream filtering and `##^responseheader(name)` header removal; encoding handling and safe stream composition | Phase 4 |
+| Dynamic filtering | global/local source-destination-type rules, `noop`, precedence, hostname-based rules, temporary vs persisted rules, plain-text “My rules”, full static override semantics | Phase 5 |
+| Filter lists | broader preshipped catalog, list categories, checksum/diff-patch updates, update status/history, asset viewer | Phase 6 |
+| UI/tools | full dashboard, per-site switches, DOM inspector, element picker/zapper, context menu, keyboard shortcuts, advanced settings, richer logger views | Phase 6 |
+| Scriptlet timing | realm-birth `set-constant` guarantees, hardened `MAIN` fallback, native exception propagation, `syncNativeScriptlets()` tests | Phase 7, gated |
+| Trust/source model | trusted aliases, `$replace`, `$uritransform`, `$urlskip`, `!#include`, raw `$csp` | Phase 7, gated |
+| Cosmetic timing | `document_idle` injection can flash unhidden content before cosmetic CSS applies | Phase 3 |
+| Performance | repeatable local compatibility corpus, parser fuzzing, benchmark thresholds, long-run memory profiling | Continuous |
+
+Curated WildFire aliases for `$redirect`, `$rewrite`, and `$csp` are a deliberate
+security boundary, not an accidental gap. Filter text still never supplies a
+redirect URL, response body, header value, or script.
+
+## 4. Recommended implementation order
+
+### Phase 0 — Compatibility harness first
+
+**Priority:** P0. **Depends on:** nothing.
+
+- Add a local, WildFire-authored compatibility corpus covering every supported
+  syntax family and every rejection class. Never vendor upstream filter text;
+  audit external corpora only when needed and keep results outside the repo.
+- Record a rule-family matrix in tests: input rule, expected accepted/rejected
+  state, expected decision, and expected Inspector reason.
+- Add or extend checks for load-order registries, manifest references, loop-free
+  code, and the `wapi` boundary before each chain grows.
+- Add a phase-specific smoke scenario for each engine capability as it lands.
+
+**Exit criteria:** corpus runs in `npm test`; build/lint stay clean; no generated
+or upstream filter text is committed.
+
+### Phase 1 — Verify and document current feature truth
+
+**Priority:** P0. **Depends on:** Phase 0.
+
+- Reconcile `README.md`, `AGENTS.md`, and this roadmap with the exact implemented
+  option set. Fix known drift: the README still describes the product as
+  “minimal/uBO-inspired” and its message list omits `validate-filters`,
+  `set-site-rule`, and `clear-site-rules`; Options/suggested-list text says
+  adding only registers while `add-list` also fetches immediately.
+- Audit option/resource-type aliases (`css`, `frame`, `xhr`, `first-party`,
+  `third-party`, `doc`, `ehide`, `ghide`, `shide`, and similar) and document which
+  are accepted; preserve the forgiving “unknown options are ignored” rule.
+- Make rejection diagnostics explicit for options parsed but not actionable, so
+  unimplemented syntax is visible in validation and local diagnostics rather
+  than silently ignored.
+- Confirm compiled-schema versioning and cache invalidation for every new IR
+  field added later.
+
+**Exit criteria:** documentation matches parser/engine behavior; validation
+messages are stable and tested; cached compiled data from older schemas is
+rejected.
+
+### Phase 2 — Static network behavior completeness
+
+**Priority:** P0. **Depends on:** Phase 1.
+
+Scope, in dependency order:
+
+1. HOSTS-file interpretation: a bare valid hostname behaves as `||host^` for
+   resource matching; hostname-like patterns can still be forced to plain
+   pattern semantics with a wildcard.
+2. Entity and regex host values in targets, `domain=`/`from=`, `to=`, and static
+   extended host lists, with negation and safe-regex validation.
+3. `$to`, `$denyallow`, `$top`, `$strict1p`, `$strict3p`, and `$all` semantics.
+4. `$header`, `$method`, `$ipaddress`, and `$permissions`, reusing the existing
+   `wapi-webrequest` header/stream plumbing and bounded CNAME cache; IP matching
+   needs new bounded DNS-address state.
+5. Redirect priorities, standalone `$redirect-rule` directives, `$redirect-rule`
+   exceptions, `$empty`/`$mp4` aliases, `$cname` exceptions, and bare
+   `$removeparam`. Expand the WildFire-owned redirect registry with curated
+   empty audio/video/ad-manifest resources; no upstream resource bytes are
+   copied.
+6. `!#if`/`!#else`/`!#endif` with WildFire capability tokens only: Firefox is
+   true, Chromium/MV3/adguard environment tokens are false, and capability
+   tokens reflect real WildFire registries. `!#include` waits for the trust
+   model.
+
+**Files most likely touched:** `lib/engine/filter/parse-network.js`,
+`lib/engine/filter/utils.js`, `lib/engine/filter/engine*.js`,
+`lib/background/requests.js`, `lib/background/cname.js`,
+`lib/wapi/wapi-dns.js`, `lib/wapi/wapi-webrequest.js`,
+`lib/resources/redirect-resources.js`, `tools/test.js`, `README.md`.
+
+**Exit criteria:** every accepted rule is matched in unit tests and visible in
+the Inspector; every rejected rule has a line-numbered validation reason; the
+blocking listener remains synchronous; all load-order registries stay in sync.
+
+### Phase 3 — Cosmetic and procedural completeness
+
+**Priority:** P0/P1. **Depends on:** Phase 2 for entity/regex host scope.
+
+- Add entity and regex host targets for cosmetic/scriptlet rules.
+- Implement `*##selector` specific-generic behavior and define generic handling
+  explicitly: either bounded surveyor-style injection or unconditional
+  injection with documented performance tradeoffs.
+- Add safe action operators: `:remove()`, `:style()`, `:remove-attr()`, and
+  `:remove-class()`. Validate declarations and arguments as data; reject unsafe
+  URLs, comments, escapes, and executable values.
+- Add `:matches-prop()` (bounded dot-separated property path with optional
+  literal/regex value), `:others()` (bounded complement of the selected set),
+  and `:watch-attr()` (pass-through attribute-change trigger with an optional
+  attribute list) to the procedural chain, using the same native-prefilter-first
+  strategy as existing selectors.
+- Widen `MutationObserver` handling only when a live rule needs attribute or
+  watched-attribute changes; keep text observation conditional and `resize`
+  binding conditional as today.
+- Evaluate moving the cosmetic content script from `document_idle` to an earlier
+  safe phase to reduce flash-of-unhidden-content, keeping selector validation
+  and the pinned manifest/test content-script chain in sync.
+
+**Exit criteria:** selectors are validated before CSS injection or DOM action;
+malformed rules land in `engine.rejectedCosmetic`; generic exceptions and hide
+modifiers still win correctly; no filter text becomes executable code.
+
+### Phase 4 — HTML and response-header filtering
+
+**Priority:** P1. **Depends on:** Phase 3 selectors and existing rewrite stream
+infrastructure.
+
+- Parse `example.com##^selector` as a document-stream filter, not a DOM-only
+  rule.
+- Remove matching elements from streamed response data using
+  `webRequest.filterResponseData()`, with encoding limits and bounded buffering.
+- Implement `##^responseheader(name)` only for the currently safe header set
+  (`location`, `refresh`, `report-to`, `set-cookie`) on document/subdocument
+  responses. Never remove security headers.
+- Keep generic stream filters domain-scoped; reject malformed, unsafe, or
+  oversized selectors. Preserve MIME type and normalize length/encoding headers
+  after modification.
+
+**Exit criteria:** stream filters are created synchronously in
+`onBeforeRequest`; body/header outcomes appear in Inspector diagnostics;
+navigation counters and pause/site-rule semantics remain unchanged; no page code
+is derived from filter text.
+
+### Phase 5 — Dynamic filtering model
+
+**Priority:** P1. **Depends on:** Phases 2–4 for override targets.
+
+- Introduce a versioned dynamic-rule state that supports global and local rules
+  of the form `source destination type action`, with `block`, `noop`, and
+  `allow`.
+- Preserve current per-site `allow`/`block` resource rules as a migration input;
+  do not silently drop existing user state.
+- Implement rule precedence: more specific source/destination rules override
+  broader type rules; local rules override global rules; `noop` cancels dynamic
+  filtering only; `allow` overrides static blockers and WildFire handling for
+  the matched scope.
+- Make rules temporary by default with explicit persistence, and add a
+  plain-text “My rules” surface.
+- Extend diagnostics so dynamic decisions are distinguishable from static
+  network decisions.
+
+Decision gate D1 applies here: uBO-style strict navigation blocking requires an
+explicit product decision before changing the current “only `$document`/`$popup`
+blocks navigation” rule.
+
+**Exit criteria:** precedence tests cover local/global, hostname/type, and
+`block`/`noop`/`allow`; existing `siteRules` migrate safely; dynamic `allow`
+does not accidentally re-enable filter-supplied code paths.
+
+### Phase 6 — Lists, catalog, and UI/tools
+
+**Priority:** P1/P2. **Depends on:** parser/engine phases for list correctness.
+
+- Expand the inert suggested catalog and support user-configurable preshipped
+  list groups (ads, privacy, malicious, social, regional) without vendoring any
+  list text.
+- Add checksum and `! Diff-Path` update support, update status/history, and a
+  local asset viewer for curated registries.
+- Build out the dashboard with clear panes for filter lists, custom rules,
+  dynamic rules, trusted sites (status/rejection explanation), settings, and
+  support.
+- Add per-site switches, element picker/zapper, DOM inspector, context-menu
+  actions, keyboard shortcuts, and richer logger filters using `wapi-client`
+  only.
+- Any new permission (`menus`, `privacy`, `unlimitedStorage`) is a separate
+  decision and requires matching `tools/check.js` assertions and docs.
+
+**Exit criteria:** UI reads and writes only through `wildfire:*` messages;
+user-visible strings are WildFire-branded; no upstream branding appears in UI;
+`data_collection_permissions.required` stays `["none"]`.
+
+### Phase 7 — Trust-gated features and native realm birth
+
+**Priority:** deferred. **Depends on:** explicit product/source-trust decision.
+
+Only after a source-trust model exists:
+
+- Distinguish trusted list origin and trusted local input in state.
+- Reconsider `trusted-*` aliases, `$replace`, `$uritransform`, `$urlskip`,
+  `!#include`, and raw `$csp` directive values.
+- Complete and test the non-packaged FOSS/custom-Firefox bridge scaffold in
+  `browser/` and align `docs/native-global-integration.md` with its actual state.
+  Fix realm-birth exception handling so `#@#+js(set-constant, …)` cancels native
+  entries, and add focused tests for `syncNativeScriptlets()` payload delivery.
+  The stock extension keeps `document_start` fallback and never ships
+  `browser/`.
+- Harden any `world: "MAIN"` mitigation with a non-page-visible trampoline;
+  treat it as best-effort `document_start`, never proof of realm birth.
+- Revalidate every payload in both extension and privileged layer; continue to
+  reject all code-bearing payloads.
+
+**Exit criteria:** a written trust model, explicit owner approval, independent
+validation in both layers, and no regression to stock-Firefox behavior.
+
+### Continuous — Performance, privacy, and verification
+
+Run for every phase:
+
+- `npm test`, `npm run build`, and
+  `web-ext lint --source-dir . --output text` with zero errors/warnings.
+- Local compatibility corpus and focused tests for each changed syntax family.
+- Real-site smoke (`npm run smoke:rules`, `npm run smoke:site`) after engine or
+  UI changes; report counters, diagnostics, and Inspector decisions.
+- Benchmark request decision cost and cosmetic/scriptlet startup before and
+  after large phases; keep caches bounded and deterministic.
+- Confirm no raw `browser.*` outside `lib/wapi/`, no hand-written loops, no
+  `dist/` or `node_modules/` changes, and no upstream text or source vendored.
+
+## 5. Decision gates
+
+| Gate | Decision needed | Default until decided |
+| --- | --- | --- |
+| D1 | Whether bare-host/`||host^` rules may cancel top-level navigation like uBO strict blocking | Keep explicit `$document`/`$popup` only |
+| D2 | Whether any list source is trusted enough for code-like modifiers | Reject all trusted-only aliases and modifiers |
+| D3 | Whether to add `menus`, `privacy`, or `unlimitedStorage` for UI/list scale | Keep current permission set |
+| D4 | Whether to ship a FOSS/custom Firefox native bridge for realm-birth scriptlets | Keep bridge as design note only |
+
+## 6. Definition of done for any roadmap item
+
+A feature is complete only when all of these are true:
+
+1. WildFire-owned implementation, tests, and docs are in the same change.
+2. Public syntax is documented in `README.md`; internal invariants are in
+   `AGENTS.md` if they become load-bearing.
+3. All pinned load-order registries are updated together.
+4. Rejected input has a stable reason in validation and local diagnostics.
+5. The blocking listener remains synchronous and no async capability lookup
+   affects a filter decision.
+6. Inspector records the decision without changing counters.
+7. Verification gates pass with zero errors and zero warnings.
+8. No upstream source, asset, build script, or filter text was copied into the
+   repository.
+
+## 7. Immediate next actions
+
+1. Build the local compatibility harness and current-truth matrix (Phase 0).
+2. Implement HOSTS-file interpretation and entity/regex host scope (Phase 2
+   steps 1–2), including strict-blocking decision gate D1 documentation.
+3. Implement `$to`, `$denyallow`, `$top`, and strict party options (Phase 2
+   step 3) with Inspector and validation tests.

@@ -46,6 +46,8 @@ npm run dev
 
 Requires Firefox or Firefox ESR **153 or newer**; older versions will refuse to install.
 
+The current implementation roadmap is in [docs/ROADMAP.md](docs/ROADMAP.md).
+
 ## Rule-performance smoke
 
 Run every supported rule family against a real Firefox instance:
