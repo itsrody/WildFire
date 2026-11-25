@@ -157,7 +157,7 @@ content/cosmetic.js    injects hidden-element CSS in every frame
 filters/default.txt    bundled starter rules (~85 network rules)
 ui/
   popup/               toolbar popup (status, counter, pause controls, inspector buttons)
-  options/             custom filters, paused sites, remote lists, stats reset
+  options/             custom filters, paused sites, grouped remote lists, stats reset, local asset viewer
   inspector/           local-only request decision window (logger-ui.js renderer)
 assets/                generated PNG icons (16/32/48/96/128)
 tools/                 icon generator, validator, tests, XPI packager, Firefox smoke tools
@@ -590,9 +590,11 @@ filter-supplied code path is re-enabled. Dynamic decisions have their own
 `dynamic` diagnostics phase and Inspector source, separate from static `request`
 decisions, with a copyable WildFire rule. Storage key `wildfire.remote.v1` holds
 `{lists: [{url, builtin, enabled, autoUpdate, autoUpdateChoice, etag,
-lastModified, text, updatedAt, checkedAt, hash, lastError, metadata}]}` and is
-owned entirely by `lib/state/remote-lists.js`; `metadata` also retains the
-response `contentType`. The preshipped default entry points directly at
+lastModified, text, updatedAt, checkedAt, lastPatchAt, hash, lastError,
+history, metadata}]}` and is owned entirely by `lib/state/remote-lists.js`;
+`metadata` also retains the response `contentType`. `history` is a bounded
+local-only record of patch/update/error outcomes. The preshipped default entry
+points directly at
 `https://ublockorigin.github.io/uAssetsCDN/filters/filters.min.txt`, starts
 enabled, and auto-fetches on startup before following `! Expires`; it cannot be
 removed and can be disabled or opted out of Auto in Options. The old
@@ -622,12 +624,13 @@ Background listens for `wildfire:*` messages:
 | `reset-stats` | zero the lifetime total and every site counter |
 | `reload` | rebuild from bundled + custom + enabled remote filters |
 | `list-state` | return registered remote lists |
-| `suggested-lists` | return the inert catalog of suggested list URLs |
+| `suggested-lists` | return the inert, grouped catalog of suggested list URLs |
 | `add-list` | register an http(s) list URL, fetch it once, leave it disabled |
 | `remove-list` | forget a list and stop applying its rules |
 | `update-list` | explicitly fetch/revalidate one list |
 | `set-list-enabled` | apply or stop a fetched list |
 | `set-list-auto` | turn automatic first fetch and `! Expires` checks on or off |
+| `asset-registries` | return curated redirect/CSP/rewrite/scriptlet aliases for the local viewer |
 | `cosmetic` | return selectors for a URL |
 | `diagnostics` | toggle/reset in-memory request metrics, ETP observation, CSP report counts and CNAME cache counters |
 | `inspect` | enable/reset/return the bounded local request decision log |
@@ -663,17 +666,22 @@ The preshipped default list is remote-list shaped and is fetched directly from
 `lib/state/bundled-lists.js` is an inert catalog with that default URL;
 `lib/state/remote-lists.js` seeds the entry at startup, parses `! Title`,
 `! Description`, `! Version`, `! Homepage`, `! License`, `! Expires`,
-`! Checksum`, `! Diff-Path` and `! Last Modified` metadata, stores the fetched
-text and hash, and loads it once before custom and external remote rules. It
-auto-fetches on startup, then revalidates at its `! Expires` interval;
+`! Checksum`, `! Diff-Name`, `! Diff-Path`, `! Diff-Expires` and
+`! Last Modified` metadata, stores the fetched text, hash, and bounded update
+history, and loads it once before custom and external remote rules. A
+`! Diff-Path` list is updated through WildFire's own bounded diff reader on the
+short `! Diff-Expires` interval; the patched text is accepted only when the
+patch's SHA-1 checksum prefix matches, and any failure falls back to the full
+URL. It auto-fetches on startup, then revalidates at its `! Expires` interval;
 `remove-list` rejects it, while `set-list-enabled` and `set-list-auto` can opt it
 out. A fetched update persists across extension reseeds; the legacy
 `wildfire:bundled/default.txt` sentinel and the former WildFire starter URL
 migrate to the default URL while preserving user choices. No upstream filter
 text is vendored into this repository; `filters/default.txt` supplies offline
 fallback rules only. The bundled `lib/state/suggested-lists.js` catalog remains
-inert: Options shows its URLs as shortcuts, and clicking one only sends
-`add-list`. Every registered list, including the default list,
+inert grouped data: Options shows its URLs as ads, privacy, malicious, social,
+and regional shortcuts, and clicking one only sends `add-list`. Every registered
+list, including the default list,
 auto-fetches once and then revalidates at its `! Expires` interval, which
 defaults to one day and can be as short as one minute. `set-list-auto` can
 disable this per list. User-added lists stay disabled until the user enables

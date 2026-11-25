@@ -112,6 +112,14 @@
   </section>
 
   <section class="card">
+    <h2>Local assets</h2>
+    <p class="hint">Inspect the WildFire-owned redirect, CSP, rewrite, and scriptlet registries. Values are local data only; filter text can select an alias but cannot supply its own body, header, URL, or script.</p>
+    <label class="asset-label" for="asset-registry">Registry</label>
+    <select id="asset-registry" aria-label="Curated asset registry"></select>
+    <pre id="asset-viewer" class="asset-viewer">Loading…</pre>
+  </section>
+
+  <section class="card">
     <h2>Statistics</h2>
     <p id="stats-text" class="hint">Loading…</p>
     <button id="reset" class="button" type="button">Reset blocked counter</button>

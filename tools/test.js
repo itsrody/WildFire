@@ -2,6 +2,7 @@
 'use strict';
 
 const assert = require('assert');
+const nodeCrypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
@@ -103,7 +104,7 @@ const loadScriptlets = target => loadFiles(target, SCRIPTLET_FILES);
 const loadClient = target => loadFiles(target, [CLIENT_FILE]);
 const context = vm.createContext({
   console, URL, setTimeout, clearTimeout, setImmediate,
-  TextEncoder, TextDecoder, Uint8Array, ArrayBuffer,
+  TextEncoder, TextDecoder, Uint8Array, ArrayBuffer, crypto: nodeCrypto.webcrypto,
   CSS: { supports: () => true }, location: { hostname: 'page.example' }
 });
 context.window = context;
@@ -3165,6 +3166,9 @@ async function testStaleGenerationWorkerHang() {
     'the background exposes the suggested-list catalog');
   assert.ok(suggested.suggested.every(entry => /^https:\/\//.test(entry.url)),
     'catalog URLs are https');
+  assert.strictEqual(suggested.groups.map(group => group.id).join(','),
+    'ads,privacy,malicious,social,regional',
+    'the suggested-list message exposes display groups');
 
   // Make custom compile hang at worker level; default/bundled compiles still respond.
   ctx.Worker = class extends HangingWorker {
@@ -5824,6 +5828,17 @@ async function testRemoteLists() {
   copy[0].url = 'https://changed.example/';
   assert.notStrictEqual(WildFireSuggestedLists.all()[0].url, 'https://changed.example/',
     'catalog data cannot be mutated by callers');
+  const groups = WildFireSuggestedLists.groups();
+  assert.strictEqual(groups.map(group => group.id).join(','),
+    'ads,privacy,malicious,social,regional',
+    'the inert catalog is grouped by purpose');
+  assert.ok(catalog.every(entry => groups.some(group => group.id === entry.group)),
+    'every catalog entry belongs to a displayed group');
+  assert.ok(catalog.every(entry => !/(ubo|adblock|easylist|adguard)/i.test(entry.name)),
+    'catalog labels use WildFire-branded generic names');
+  groups[0].name = 'Changed';
+  assert.notStrictEqual(WildFireSuggestedLists.groups()[0].name, 'Changed',
+    'catalog groups cannot be mutated by callers');
   const catalogRemote = RemoteLists.create({
     storage: memoryStorage({ [RemoteLists.KEY]: { lists: [] } }),
     fetchImpl: async () => { throw new Error('suggested-list registration must not fetch'); },
@@ -5884,6 +5899,90 @@ async function testRemoteLists() {
     'short expiry durations are understood');
   assert.strictEqual(RemoteLists.parseDuration('90 days'), 0,
     'unreasonable expiry durations are ignored');
+
+  const patchedText = 'a\nx\nc';
+  const patchChecksum = await RemoteLists.sha1Hex(
+    patchedText, nodeCrypto.webcrypto, TextEncoder);
+  assert.strictEqual(patchChecksum.length, 40, 'patch checksums are SHA-1 hex');
+  const patchText = [
+    '! patch bundle header',
+    'diff name:test checksum:' + patchChecksum.slice(0, 12) + ' lines:3',
+    'd2 1',
+    'a2 1',
+    'x'
+  ].join('\n');
+  const patchBlocks = RemoteLists.parsePatch(patchText);
+  assert.ok(patchBlocks && patchBlocks.test, 'WildFire reads a named diff block');
+  assert.strictEqual(patchBlocks.test.checksum, patchChecksum.slice(0, 12),
+    'the diff checksum is retained for validation');
+  assert.strictEqual(RemoteLists.applyPatch('a\nb\nc', patchBlocks.test.diff),
+    patchedText, 'the WildFire patch applier produces the expected text');
+  assert.strictEqual(RemoteLists.applyPatch('a\nb\nc', 'd9 1\n'), null,
+    'an out-of-range patch is rejected instead of corrupting the list');
+  assert.strictEqual(RemoteLists.parsePatch('diff name:x checksum:abc lines:2\nd1 1'),
+    null, 'a truncated diff block is ignored');
+
+  const patchUrl = 'https://patch.test/rules.patch';
+  const patchListUrl = 'https://list.test/rules.txt';
+  function patchStorage() {
+    return memoryStorage({
+      [RemoteLists.KEY]: {
+        lists: [{
+          url: patchListUrl,
+          enabled: true,
+          text: 'a\nb\nc',
+          hash: RemoteLists.hashText('a\nb\nc'),
+          updatedAt: 100,
+          checkedAt: 100,
+          metadata: {
+            diffPath: patchUrl + '#test',
+            diffExpiresMs: 60 * 1000
+          }
+        }]
+      }
+    });
+  }
+  const patchRemote = RemoteLists.create({
+    storage: patchStorage(),
+    fetchImpl: async url => String(url).includes('.patch')
+      ? remoteResponse(patchText, { 'content-type': 'text/plain' })
+      : remoteResponse('||full.example^', { 'content-type': 'text/plain' }),
+    now: () => 200000,
+    timeoutMs: 0,
+    crypto: nodeCrypto.webcrypto,
+    textEncoder: TextEncoder
+  });
+  const patchedUpdate = await patchRemote.update(patchListUrl);
+  assert.strictEqual(patchedUpdate.ok, true, 'a checksummed diff updates the list');
+  assert.strictEqual(patchedUpdate.action, 'patch', 'the update used the diff path');
+  assert.strictEqual(patchedUpdate.list.text, patchedText, 'the patched text is stored');
+  assert.strictEqual(patchedUpdate.list.lastPatchAt, 200000,
+    'the patch time is recorded for the next Expiry check');
+  assert.strictEqual(patchedUpdate.list.history.length, 1, 'the patch is recorded in history');
+  assert.strictEqual(patchedUpdate.list.history[0].changed, true,
+    'history records that the patch changed the rules');
+
+  const badPatchText = patchText.replace(patchChecksum.slice(0, 12), '000000000000');
+  const fallbackRemote = RemoteLists.create({
+    storage: patchStorage(),
+    fetchImpl: async url => String(url).includes('.patch')
+      ? remoteResponse(badPatchText, { 'content-type': 'text/plain' })
+      : remoteResponse('||full.example^', { 'content-type': 'text/plain' }),
+    now: () => 200000,
+    timeoutMs: 0,
+    crypto: nodeCrypto.webcrypto,
+    textEncoder: TextEncoder
+  });
+  const fallbackUpdate = await fallbackRemote.update(patchListUrl);
+  assert.strictEqual(fallbackUpdate.ok, true, 'a bad patch falls back to a full fetch');
+  assert.strictEqual(fallbackUpdate.action, 'update', 'the fallback is a full update');
+  assert.strictEqual(fallbackUpdate.list.text, '||full.example^',
+    'the full body replaces the list after a failed patch');
+  assert.strictEqual(fallbackUpdate.list.lastPatchAt, 0,
+    'a full body clears the stale patch schedule');
+  assert.strictEqual(
+    fallbackUpdate.list.history.map(entry => entry.action + ':' + entry.ok).join(','),
+    'patch:false,update:true', 'history keeps the failed patch and the fallback');
 
   let bundledNetworkFetches = 0;
   const preshipped = RemoteLists.create({
@@ -7686,9 +7785,16 @@ async function testBackgroundControllerRobustness() {
       'dynamic-rules', 'set-dynamic-rule', 'clear-dynamic-rules', 'persist-dynamic-rules', 'set-my-rules',
       'reset-stats',
       'reload', 'suggested-lists', 'list-state', 'add-list', 'remove-list',
-      'update-list', 'set-list-enabled', 'set-list-auto', 'cosmetic',
+      'update-list', 'set-list-enabled', 'set-list-auto', 'asset-registries', 'cosmetic',
       'diagnostics', 'inspect'
     ].join(','), 'router registers every wildfire action');
+    const assets = await healthy.debug().onMessage({ type: 'wildfire:asset-registries' }, {});
+    assert.strictEqual(assets.ok, true, 'local asset viewer payload is available');
+    assert.strictEqual(assets.registries.map(registry => registry.id).join(','),
+      'redirect,csp,rewrite,scriptlet',
+      'the asset viewer exposes curated WildFire registries');
+    assert.ok(assets.registries.every(registry => registry.entries.length > 0),
+      'every displayed registry has aliases');
     const beforeValidation = healthy.context.state.customFilters;
     const validation = await healthy.debug().onMessage({
       type: 'wildfire:validate-filters',

@@ -1,7 +1,7 @@
 # WildFire roadmap
 
-Status: implementation plan; Phase 0, Phase 1, Phase 2, Phase 3, Phase 4, and
-Phase 5 complete; updated 2026-11-25.
+Status: implementation plan; Phase 0–5 complete, Phase 6 list/catalog slice
+complete; updated 2026-11-25.
 
 WildFire is a **native Firefox rewrite of uBO behavior** under the WildFire brand.
 This document maps the remaining work from today's engine to broader uBO-style
@@ -103,7 +103,7 @@ used as a source file for WildFire code.
 | Procedural selectors | `:matches-prop()`, `:others()`, `:watch-attr()`; richer mutation/attribute watching for those selectors | Complete (Phase 3) |
 | Response filtering | `example.com##^selector` HTML stream filtering and `##^responseheader(name)` header removal; encoding handling and safe stream composition | Complete (Phase 4): bounded UTF-8 simple selectors and safe header set only |
 | Dynamic filtering | global/local source-destination-type rules, `noop`, precedence, hostname-based rules, temporary vs persisted rules, plain-text “My rules”, full static override semantics | Complete (Phase 5): versioned state, one-time `siteRules` migration, distinct diagnostics phase |
-| Filter lists | broader preshipped catalog, list categories, checksum/diff-patch updates, update status/history, asset viewer | Phase 6 |
+| Filter lists | broader preshipped catalog, list categories, checksum/diff-patch updates, update status/history, asset viewer | Complete (Phase 6 list slice): grouped inert catalog, diff checksum validation, bounded history, local asset viewer |
 | UI/tools | full dashboard, per-site switches, DOM inspector, element picker/zapper, context menu, keyboard shortcuts, advanced settings, richer logger views | Phase 6 |
 | Scriptlet timing | realm-birth `set-constant` guarantees, hardened `MAIN` fallback, native exception propagation, `syncNativeScriptlets()` tests | Phase 7, gated |
 | Trust/source model | trusted aliases, `$replace`, `$uritransform`, `$urlskip`, `!#include`, raw `$csp` | Phase 7, gated |
@@ -290,11 +290,10 @@ synchronous and navigation rules remain ignored under decision gate D1.
 
 **Priority:** P1/P2. **Depends on:** parser/engine phases for list correctness.
 
-- Expand the inert suggested catalog and support user-configurable preshipped
-  list groups (ads, privacy, malicious, social, regional) without vendoring any
-  list text.
-- Add checksum and `! Diff-Path` update support, update status/history, and a
-  local asset viewer for curated registries.
+- Expanded the inert suggested catalog with grouped ads, privacy, malicious,
+  social, and regional shortcuts; no list text is vendored.
+- Added checksum-validated `! Diff-Path` updates with full-fetch fallback,
+  bounded update history, and a read-only local viewer for curated registries.
 - Build out the dashboard with clear panes for filter lists, custom rules,
   dynamic rules, trusted sites (status/rejection explanation), settings, and
   support.
@@ -307,6 +306,11 @@ synchronous and navigation rules remain ignored under decision gate D1.
 **Exit criteria:** UI reads and writes only through `wildfire:*` messages;
 user-visible strings are WildFire-branded; no upstream branding appears in UI;
 `data_collection_permissions.required` stays `["none"]`.
+
+The list/catalog slice is complete: Options groups suggested shortcuts, shows
+per-list status and bounded history, and opens a local asset viewer through
+`wildfire:asset-registries`. The dashboard/tools and context-menu/shortcut work
+in this phase remains deferred; no new permission was added.
 
 ### Phase 7 — Trust-gated features and native realm birth
 

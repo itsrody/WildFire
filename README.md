@@ -244,17 +244,27 @@ rules. Every list then revalidates on its own `! Expires` interval; **Auto: off*
 disables automatic checks, and **Update** forces a check now. The suggested
 catalog is inert: WildFire never adds or enables those shortcut lists for you,
 and it sends no data about you — the manifest still declares
-`data_collection_permissions: ["none"]`.
+`data_collection_permissions: ["none"]`. Suggested shortcuts are grouped as
+**Ads**, **Privacy**, **Malicious sites**, **Social widgets**, and **Regional**.
 
 Fetches bypass the HTTP cache, are size-capped (including `Content-Length`
 preflight), time-limited to 60 seconds, and support `ETag`/`Last-Modified`
 revalidation. A
 `304` reuses the stored rules; an unchanged `200` keeps the original content
 time. WildFire reads standard `! Title`, `! Description`, `! Version`,
-`! Homepage`, `! License`, `! Expires`, `! Checksum`, `! Diff-Path` and
-`! Last Modified` headers, stores them with the exact text, and uses `! Expires`
-to pace checks (default one day, minimum one minute). Everything is stored under
+`! Homepage`, `! License`, `! Expires`, `! Checksum`, `! Diff-Name`,
+`! Diff-Path`, `! Diff-Expires` and `! Last Modified` headers, stores them with
+the exact text, and uses `! Expires` to pace checks (default one day, minimum
+one minute). When a list advertises a `! Diff-Path`, WildFire applies its own
+bounded diff reader on the short `! Diff-Expires` interval and accepts the new
+text only when the patch's SHA-1 checksum prefix matches; a missing, malformed,
+or mismatched patch falls back to the full URL. Each list keeps a bounded
+history of patch, update, and error outcomes. Everything is stored under
 `wildfire.remote.v1`, so the applied rules are reproducible.
+
+Options → **Local assets** is a read-only viewer for the curated WildFire
+redirect, CSP, rewrite, and scriptlet registries. It shows alias data that filter
+text may select; no filter can supply its own URL, body, header, or script.
 
 ## Dynamic rules
 
@@ -535,8 +545,10 @@ This is deliberately a scoped rewrite, not parity with every uBO feature today:
 - The default list ships preshipped, and the uAssets CDN list is preshipped as a
   direct remote URL. Every list auto-fetches once and revalidates on its
   `! Expires` interval unless Auto is off. User-added lists must be enabled
-  before their rules apply. WildFire stores the exact text, a hash, and parsed
-  header metadata for each list.
+  before their rules apply. WildFire stores the exact text, a hash, bounded
+  update history, and parsed header metadata for each list. The suggested-list
+  catalog is inert grouped data, and the local asset viewer reads only curated
+  registries.
 - Firefox ETP is left untouched. WildFire observes ETP block errors and
   classifications only while diagnostics are enabled, and never adds them to
   WildFire's counters. Header listeners are registered when loaded rules need
@@ -605,7 +617,7 @@ Background listens for `wildfire:*` messages: `state`, `toggle`, `toggle-site`,
 `set-csp-report-allow`, `set-cname-uncloak`, `set-site-rule`,
 `clear-site-rules`, `reset-stats`, `reload`, `list-state`, `suggested-lists`,
 `add-list`, `remove-list`, `update-list`, `set-list-enabled`, `set-list-auto`,
-`cosmetic`, `diagnostics`, and `inspect`. `diagnostics` accepts an optional
+`asset-registries`, `cosmetic`, `diagnostics`, and `inspect`. `diagnostics` accepts an optional
 boolean `value` to enable/disable in-memory request metrics, ETP observation,
 CSP report counts and CNAME cache counters, and an optional `reset: true` to
 clear them. `inspect` accepts `value` to enable/disable the local decision log

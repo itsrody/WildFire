@@ -13,6 +13,8 @@
   const siteInput = document.getElementById('site-input');
   const suggestedList = document.getElementById('suggested-lists');
   const listsList = document.getElementById('remote-lists');
+  const assetRegistry = document.getElementById('asset-registry');
+  const assetViewer = document.getElementById('asset-viewer');
   const listForm = document.getElementById('list-form');
   const listInput = document.getElementById('list-url');
   const listStatus = document.getElementById('list-status');
@@ -26,6 +28,8 @@
   let state = null;
   let lists = [];
   let suggested = [];
+  let groups = [];
+  let registries = [];
   let filtersInitialized = false;
   let myRulesInitialized = false;
 
@@ -211,29 +215,71 @@
 
   function renderSuggested() {
     suggestedList.textContent = '';
-    suggested.forEach(entry => {
-      const item = document.createElement('li');
-      item.className = 'list-item';
-      const row = document.createElement('div');
-      row.className = 'list-row';
-      const label = document.createElement('span');
-      label.className = 'list-label';
-      label.textContent = entry.name;
-      const meta = document.createElement('span');
-      meta.className = 'list-meta';
-      meta.textContent = entry.description;
-      row.append(label, meta);
+    groups.forEach(group => {
+      const heading = document.createElement('li');
+      heading.className = 'list-group';
+      heading.textContent = group.name;
+      suggestedList.appendChild(heading);
+      suggested.filter(entry => entry.group === group.id).forEach(entry => {
+        const item = document.createElement('li');
+        item.className = 'list-item';
+        const row = document.createElement('div');
+        row.className = 'list-row';
+        const label = document.createElement('span');
+        label.className = 'list-label';
+        label.textContent = entry.name;
+        const meta = document.createElement('span');
+        meta.className = 'list-meta';
+        meta.textContent = entry.description;
+        row.append(label, meta);
 
-      const actions = document.createElement('div');
-      actions.className = 'list-actions';
-      const added = lists.some(list => list.url === entry.url);
-      const add = actionButton(added ? 'Added' : 'Add',
-        () => listAction('add-list', entry.url));
-      add.disabled = added;
-      actions.appendChild(add);
-      item.append(row, actions);
-      suggestedList.appendChild(item);
+        const actions = document.createElement('div');
+        actions.className = 'list-actions';
+        const added = lists.some(list => list.url === entry.url);
+        const add = actionButton(added ? 'Added' : 'Add',
+          () => listAction('add-list', entry.url));
+        add.disabled = added;
+        actions.appendChild(add);
+        item.append(row, actions);
+        suggestedList.appendChild(item);
+      });
     });
+    suggested.filter(entry => !groups.some(group => group.id === entry.group))
+      .forEach(entry => {
+        const item = document.createElement('li');
+        item.className = 'list-item';
+        item.textContent = entry.name + ' — ' + entry.description;
+        suggestedList.appendChild(item);
+      });
+  }
+
+  function renderRegistries() {
+    const previous = assetRegistry.value;
+    assetRegistry.textContent = '';
+    registries.forEach(registry => {
+      const option = document.createElement('option');
+      option.value = registry.id;
+      option.textContent = registry.name;
+      assetRegistry.appendChild(option);
+    });
+    if (previous && registries.some(registry => registry.id === previous)) {
+      assetRegistry.value = previous;
+    }
+    renderAssetViewer();
+  }
+
+  function renderAssetViewer() {
+    const registry = registries.find(entry => entry.id === assetRegistry.value) || registries[0];
+    if (!registry) {
+      assetViewer.textContent = 'No curated registry is available.';
+      return;
+    }
+    assetViewer.textContent = registry.entries.map(entry => {
+      const fields = Object.keys(entry)
+        .filter(key => key !== 'alias' && entry[key] !== '')
+        .map(key => key + ': ' + String(entry[key]));
+      return entry.alias + (fields.length ? ' — ' + fields.join(' · ') : '');
+    }).join('\n') || 'No aliases are registered.';
   }
 
   function renderLists() {
@@ -251,11 +297,12 @@
       const row = document.createElement('div');
       row.className = 'list-row';
       const metadata = entry.metadata && typeof entry.metadata === 'object' ? entry.metadata : {};
+      const catalog = suggested.find(item => item.url === entry.url);
       const label = document.createElement('span');
       label.className = 'list-url';
       label.textContent = entry.builtin
-        ? (metadata.title || 'WildFire default filters') + ' (preshipped)'
-        : (metadata.title || entry.url);
+        ? 'WildFire default filters (preshipped)'
+        : (catalog && catalog.name ? catalog.name : entry.url);
       const meta = document.createElement('span');
       meta.className = 'list-meta';
       const when = entry.checkedAt || entry.updatedAt;
@@ -264,9 +311,14 @@
       const time = when ? new Date(when).toLocaleString() : 'never';
       const hash = entry.hash ? ' · ' + String(entry.hash).slice(0, 8) : '';
       const err = entry.lastError ? ' · Error: ' + entry.lastError : '';
-      const details = [metadata.version, metadata.description, metadata.expires]
+      const history = Array.isArray(entry.history) ? entry.history : [];
+      const latest = history[history.length - 1];
+      const update = latest ? ' · Last change: ' + latest.action +
+        (latest.error ? ' failed (' + latest.error + ')' : (latest.changed ? ' applied' : ' checked')) : '';
+      const details = [metadata.version, metadata.expires]
         .filter(Boolean).join(' · ');
-      meta.textContent = status + ' · ' + time + hash + err + (details ? ' · ' + details : '');
+      meta.textContent = status + ' · ' + time + hash + err + update +
+        (details ? ' · ' + details : '');
       row.append(label, meta);
 
       const actions = document.createElement('div');
@@ -327,6 +379,7 @@
     renderMyRules();
     renderLists();
     renderSuggested();
+    renderRegistries();
     renderCspReports();
     renderCname();
   }
@@ -373,6 +426,8 @@
     listInput.value = '';
   });
 
+  assetRegistry.addEventListener('change', renderAssetViewer);
+
   document.getElementById('reset').addEventListener('click', async () => {
     state = await client.send('reset-stats');
     render();
@@ -381,13 +436,16 @@
   Promise.all([
     client.send('state'),
     client.send('list-state'),
-    client.send('suggested-lists')
+    client.send('suggested-lists'),
+    client.send('asset-registries')
   ])
     .then(results => {
       state = results[0].state;
       state.myRules = results[0].myRules;
       lists = Array.isArray(results[1].lists) ? results[1].lists : [];
       suggested = Array.isArray(results[2].suggested) ? results[2].suggested : [];
+      groups = Array.isArray(results[2].groups) ? results[2].groups : [];
+      registries = Array.isArray(results[3].registries) ? results[3].registries : [];
       render();
     })
     .catch(error => {
