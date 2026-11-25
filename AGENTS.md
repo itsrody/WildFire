@@ -8,25 +8,25 @@ good, and the checks that prove it.
 
 ## 1. The goal (load-bearing)
 
-**WildFire is a clean-room, uBO-inspired content blocker built from scratch for
-100% Firefox/Gecko native runtime, under a new brand: WildFire.**
+**WildFire is a native Firefox rewrite of uBO — a Firefox/Gecko-native uBO port
+under a new brand: WildFire.**
 
 That sentence is the constitution of this repo. Unpack it:
 
-- **uBO-inspired, not uBO-derived.** We reimplement the *ideas* — network
-  filtering with exceptions, domain/wildcard matching, element hiding, a
-  counter, per-site controls — in original code. This is **not** a fork,
-  repackaging, minified copy, port, or adaptation of uBO source. Behavior comes
-  from public filter-syntax docs, Gecko/WebExtensions docs, our own tests, and
-  reading upstream implementations for inspiration; architecture, names,
-  registries, assets, and code are WildFire's. If a behavior is needed, specify
-  it here and write it here.
-- **Inspiration allowed, cloning not.** Reading individual upstream
-  uBO/AdGuard source files to understand an approach is allowed. Do not clone
-  or download repositories into the workspace, vendor files, or copy,
-  translate, adapt, minify, or paste upstream code, engines, build scripts, or
-  assets. Do not import upstream modules. A feature is complete only when it
-  has WildFire-owned code, tests, and docs.
+- **uBO behavior, rewritten for native Firefox.** We rewrite the *behavior* —
+  network filtering with exceptions, domain/wildcard matching, element hiding,
+  a counter, per-site controls — in original code for Firefox's native runtime.
+  This is **not** a fork, repackaging, minified copy, or vendored copy of uBO
+  source. Behavior comes from public filter-syntax docs, Gecko/WebExtensions
+  docs, our own tests, and reading upstream implementations for guidance;
+  architecture, names, registries, assets, and code are WildFire's. If a
+  behavior is needed, specify it here and write it here.
+- **Rewrite allowed, cloning not.** Reading individual upstream uBO/AdGuard
+  source files to understand an approach is allowed. Do not clone or download
+  repositories into the workspace, vendor files, or copy, translate, adapt,
+  minify, or paste upstream code, engines, build scripts, or assets. Do not
+  import upstream modules. A feature is complete only when it has WildFire-owned
+  code, tests, and docs.
 - **100% Firefox native.** Firefox is the only target. The manifest uses
   Firefox's `browser_specific_settings`, runtime code uses the promise-based
   `browser.*` API through thin WildFire `wapi` modules, and there is no Chrome
@@ -52,9 +52,9 @@ ESR line). Firefox 153 is why MV2 is viable here: it still supports
 Do not raise, lower, or remove the floor, and do not migrate to MV3 without an
 explicit product decision from the owner.
 
-**Honest scope.** "Clean-room, uBO-inspired" is the *direction*, not a claim of
-feature parity today. The current engine is deliberately minimal (§5). Grow it
-in the WildFire style; never close a gap by importing upstream code.
+**Honest scope.** "Native Firefox rewritten uBO port" is the *direction*, not a
+claim of feature parity today. The current engine is deliberately minimal (§5).
+Grow it in the WildFire style; never close a gap by importing upstream code.
 
 ---
 
