@@ -103,6 +103,7 @@ const loadScriptlets = target => loadFiles(target, SCRIPTLET_FILES);
 const loadClient = target => loadFiles(target, [CLIENT_FILE]);
 const context = vm.createContext({
   console, URL, setTimeout, clearTimeout, setImmediate,
+  TextEncoder, TextDecoder, Uint8Array, ArrayBuffer,
   CSS: { supports: () => true }, location: { hostname: 'page.example' }
 });
 context.window = context;
@@ -144,7 +145,8 @@ const { FilterEngine, mapResourceType, WildFirePageStore, RedirectResources, Wil
   WildFireWapiBackground, wapiBackground, WildFireWapiRouter, wapiRouter,
   WildFireWapiTabs, wapiTabs, WildFireWapiWebRequest, wapiWebRequest,
   WildFireWapiAction, wapiAction, WildFireWapiCapabilities, wapiCapabilities,
-  WildFireWapiScripting, wapiScripting, WildFireWapiDns, wapiDns } = context;
+  WildFireWapiScripting, wapiScripting, WildFireWapiDns, wapiDns,
+  WildFireBackgroundCore } = context;
 
 const engine = new FilterEngine();
 engine.load([
@@ -3441,6 +3443,231 @@ async function testBackgroundLoadFiltersIntegration() {
   assert.strictEqual(api.engine.matchRequest('https://fallback.example/x.js', 'script', 'https://site.test/').blocked, true, 'fallback compile activates rules');
 }
 
+async function testPhase4HtmlFiltering() {
+  const engine = new FilterEngine();
+  engine.load([
+    'html.example##^.promo, div.banner[data-x="1"]',
+    'html.example##^responseheader(location)'
+  ].join('\n'));
+  assert.strictEqual(engine.counts.html, 2, 'HTML rules are counted separately');
+  assert.ok(engine.hasCapability(FilterEngine.CAP.HTML), 'HTML stream capability is enabled');
+  assert.ok(engine.hasCapability(FilterEngine.CAP.RESPONSE_HEADER),
+    'response-header capability is enabled');
+
+  const match = engine.matchHtml('https://html.example/page', 'document',
+    'https://html.example/page', { target: ['html.example'], document: ['html.example'] });
+  assert.strictEqual(JSON.stringify(match.headers), '["location"]',
+    'safe response header action is selected');
+  assert.strictEqual(match.selectors.length, 2, 'both stream selectors are selected');
+  assert.strictEqual(match.blocked, undefined, 'HTML rules never block requests');
+  assert.strictEqual(engine.matchHtml('https://html.example/app.js', 'script',
+    'https://html.example/page').selectors.length, 0, 'stream rules do not apply to scripts');
+  assert.strictEqual(engine.matchHtml('https://other.example/page', 'document',
+    'https://other.example/page').headers.length, 0, 'stream rules stay domain-scoped');
+
+  const reloaded = new FilterEngine();
+  assert.strictEqual(reloaded.loadCompiled(engine.toCompiled()), true,
+    'compiled HTML rules load from v14 IR');
+  const reloadedMatch = reloaded.matchHtml('https://html.example/page', 'document',
+    'https://html.example/page', { target: ['html.example'], document: ['html.example'] });
+  assert.deepStrictEqual(reloadedMatch.headers, match.headers, 'compiled header actions survive');
+  assert.deepStrictEqual(reloadedMatch.selectors, match.selectors, 'compiled selectors survive');
+
+  const exceptionEngine = new FilterEngine();
+  exceptionEngine.load([
+    'html.example##^responseheader(location)',
+    'html.example#@^responseheader(location)'
+  ].join('\n'));
+  const excepted = exceptionEngine.matchHtml('https://html.example/page', 'document',
+    'https://html.example/page', { target: ['html.example'], document: ['html.example'] });
+  assert.strictEqual(excepted.headers.length, 0, 'an HTML exception cancels the header action');
+  assert.strictEqual(excepted.exception, true, 'the HTML exception is reported');
+
+  const rejectedEngine = new FilterEngine();
+  rejectedEngine.load([
+    '##^.generic',
+    'html.example##^script',
+    'html.example##^div:has-text("ad")',
+    'html.example##^responseheader(x-frame-options)',
+    '##^responseheader(location)',
+    '*##^.surveyor'
+  ].join('\n'));
+  const reasons = rejectedEngine.rejectedCosmetic.map(item => item.reason);
+  assert.strictEqual(reasons.length, 6, 'unsafe HTML rules are all rejected');
+  assert.ok(reasons.some(reason => reason === 'HTML filters need domain scope'));
+  assert.ok(reasons.some(reason => reason === 'unsafe HTML filter selector'));
+  assert.ok(reasons.some(reason => reason === 'unsupported response header: x-frame-options'));
+  assert.ok(reasons.some(reason => reason === 'responseheader filters need domain scope'));
+  assert.ok(reasons.some(reason => reason === 'specific-generic HTML filters are unsupported'));
+  assert.ok(rejectedEngine.rejectedCosmetic.every(item => item.lineNumber > 0),
+    'HTML rejections keep line numbers');
+
+  const body = '<main><div class="promo">ad<span>inner</span></div>' +
+    '<div class="banner" data-x="1">promoted</div><p>keep</p></main>';
+  const transformed = WildFireBackgroundCore.transformHtmlText(body, match.selectors);
+  assert.strictEqual(transformed.changed, true, 'the stream body is changed');
+  assert.ok(!transformed.text.includes('ad') && !transformed.text.includes('promoted'),
+    'matching elements and their children are removed');
+  assert.ok(transformed.text.includes('<p>keep</p>'), 'unmatched nodes survive');
+  const bytes = new TextEncoder().encode(body);
+  const transformedBody = WildFireBackgroundCore.transformHtmlBody(bytes, match.selectors);
+  assert.strictEqual(new TextDecoder().decode(transformedBody.bytes), transformed.text,
+    'UTF-8 stream transformation matches text transformation');
+  const invalid = WildFireBackgroundCore.transformHtmlBody(Uint8Array.of(0xff, 0xfe), match.selectors);
+  assert.strictEqual(invalid.error, 'unsupported encoding', 'non-UTF-8 bodies are skipped');
+  assert.strictEqual(invalid.changed, false, 'invalid encoding is never transformed');
+}
+
+async function testHtmlRuntimeIntegration() {
+  function memoryStorage(initial) {
+    let data = Object.assign({}, initial || {});
+    return {
+      async get(key) { if (key === undefined) return Object.assign({}, data); return { [key]: data[key] }; },
+      async set(patch) { data = Object.assign({}, data, patch || {}); },
+      async remove(key) { (Array.isArray(key) ? key : [key]).forEach(k => delete data[k]); }
+    };
+  }
+  const apiHooks = {};
+  const streams = new Map();
+  const makeStream = () => ({
+    writes: [], closed: 0, disconnected: 0,
+    write(bytes) { this.writes.push(bytes); },
+    close() { this.closed += 1; },
+    disconnect() { this.disconnected += 1; }
+  });
+  const fakeCompiled = text => {
+    const e = new FilterEngine(null, () => '', null, () => false);
+    e.load(text);
+    return e.toCompiled();
+  };
+  class FakeWorker {
+    constructor() { this.terminated = false; }
+    postMessage(msg) {
+      if (msg.type === 'ping') return this.onmessage({ data: { id: msg.id, ok: true, type: 'pong' } });
+      if (msg.type === 'compile') setImmediate(() => !this.terminated &&
+        this.onmessage({ data: { id: msg.id, ok: true, type: 'compiled', compiled: fakeCompiled(msg.text), counts: {} } }));
+    }
+    terminate() { this.terminated = true; }
+  }
+  const ctx = vm.createContext({
+    console, URL, setTimeout, clearTimeout, setImmediate, Promise, Map, Set, Array, Object,
+    String, RegExp, JSON, Math, Boolean, Number, Error, TextEncoder, TextDecoder, Uint8Array,
+    ArrayBuffer, fetch: async url => {
+      const u = String(url);
+      if (u.includes('default.compiled.json')) return { ok: true, json: async () => fakeCompiled('') };
+      if (u.includes('default.txt')) return { ok: true, text: async () => '' };
+      return { ok: false, status: 404, json: async () => ({}), text: async () => '' };
+    }
+  });
+  ctx.globalThis = ctx;
+  ctx.window = ctx;
+  ctx.CSS = { supports: () => true };
+  ctx.location = { hostname: 'page.example' };
+  ctx.Worker = FakeWorker;
+  ctx.indexedDB = undefined;
+  ctx.browser = {
+    runtime: { getURL: p => 'moz-extension://test/' + p, onMessage: { addListener() {} } },
+    storage: { local: memoryStorage({}) },
+    browserAction: { setBadgeBackgroundColor() {}, setBadgeText() {} },
+    webRequest: {
+      onBeforeRequest: { addListener(fn, filter) {
+        if (filter && filter.types && filter.types.includes('csp_report')) apiHooks.onCspReportRequest = fn;
+        else apiHooks.onBeforeRequest = fn;
+      } },
+      onBeforeSendHeaders: { addListener: fn => { apiHooks.onBeforeSendHeaders = fn; } },
+      onHeadersReceived: { addListener: fn => { apiHooks.onHeadersReceived = fn; } },
+      onCompleted: { addListener: fn => { apiHooks.onCompleted = fn; } },
+      onErrorOccurred: { addListener: () => {} },
+      onBeforeRedirect: { addListener: () => {} },
+      filterResponseData: requestId => {
+        const stream = makeStream();
+        streams.set(requestId, stream);
+        return stream;
+      }
+    },
+    webNavigation: {
+      onCreatedNavigationTarget: { addListener() {} },
+      onCommitted: { addListener() {} },
+      onReferenceFragmentUpdated: { addListener() {} },
+      onHistoryStateUpdated: { addListener() {} }
+    },
+    tabs: {
+      query: async () => [], onUpdated: { addListener() {} }, onRemoved: { addListener() {} },
+      sendMessage: async () => {}, remove: async () => {}
+    },
+    alarms: { onAlarm: { addListener() {} }, clear: async () => {}, get: async () => null, create: async () => {} },
+    contentScripts: { register: async () => ({ unregister: async () => {} }) },
+    dns: { resolve: async host => ({ canonicalName: host }) },
+    publicSuffix: { getDomain: host => host.split('.').slice(-2).join('.') }
+  };
+  ['lib/state/store.js', ...ENGINE_FILES, 'lib/state/page-store.js',
+    'lib/resources/redirect-resources.js', 'lib/state/bundled-lists.js',
+    'lib/state/remote-lists.js', 'lib/state/suggested-lists.js',
+    'lib/resources/csp-resources.js', ...SCRIPTLET_FILES,
+    'lib/resources/rewrite-resources.js', 'lib/compile/compile-cache.js',
+    'lib/compile/compiler.js', ...WAPI_FILES, ...BACKGROUND_FILES]
+    .forEach(file => vm.runInContext(fs.readFileSync(path.join(ROOT, file), 'utf8'), ctx, { filename: file }));
+  const bgSource = fs.readFileSync(path.join(ROOT, 'background.js'), 'utf8')
+    .replace(/  wildfire\.start\(\);\n\}\)\(\);\s*$/, '  globalThis.__wildfireTest = wildfire.debug(); wildfire.start(); })();');
+  vm.runInContext(bgSource, ctx, { filename: 'background.js' });
+  await new Promise(resolve => setTimeout(resolve, 30));
+  const api = ctx.__wildfireTest;
+  api.logger.setEnabled(true);
+  api.setState({
+    enabled: true,
+    customFilters: 'html.example##^.promo\nhtml.example##^responseheader(location)',
+    disabledSites: []
+  });
+  await api.loadFilters(true);
+  await new Promise(resolve => setTimeout(resolve, 30));
+
+  const details = {
+    url: 'https://html.example/page', type: 'main_frame', requestId: 'html-1',
+    tabId: 11, frameId: 0, documentUrl: 'https://html.example/page'
+  };
+  assert.strictEqual(apiHooks.onBeforeRequest(details), undefined,
+    'an HTML filter does not cancel the navigation');
+  const stream = streams.get('html-1');
+  assert.ok(stream, 'the stream filter is created synchronously');
+  stream.ondata({ data: new TextEncoder().encode('<main><div class="promo">ad</div><p>keep</p></main>') });
+  stream.onstop();
+  assert.ok(new TextDecoder().decode(stream.writes[0]).includes('<p>keep</p>'),
+    'the transformed body is written back');
+  assert.ok(!new TextDecoder().decode(stream.writes[0]).includes('ad'),
+    'the removed element is absent from the response body');
+
+  const headers = apiHooks.onHeadersReceived(Object.assign({}, details, {
+    responseHeaders: [
+      { name: 'Content-Type', value: 'text/html' },
+      { name: 'Content-Length', value: '999' },
+      { name: 'Content-Encoding', value: 'identity' },
+      { name: 'Location', value: 'https://other.example/' },
+      { name: 'X-Frame-Options', value: 'DENY' }
+    ]
+  }));
+  const headerNames = headers.responseHeaders.map(header => header.name.toLowerCase());
+  assert.ok(headerNames.includes('content-type'), 'the response MIME type is preserved');
+  assert.ok(!headerNames.includes('location'), 'the safe response header is removed');
+  assert.ok(!headerNames.includes('content-length') && !headerNames.includes('content-encoding'),
+    'stale length and encoding headers are normalized');
+  assert.ok(headers.responseHeaders.some(header => header.name.toLowerCase() === 'x-frame-options'),
+    'security headers are never removed by HTML filters');
+  assert.ok(headers.responseHeaders.some(header => header.name.toLowerCase() === 'content-type' &&
+    /charset=utf-8/i.test(header.value)), 'UTF-8 charset is declared for the transformed body');
+  assert.strictEqual(api.getState().blocked, 0, 'HTML filtering never changes counters');
+  const phases = api.logger.snapshot().entries.map(entry => entry.phase);
+  assert.ok(phases.includes('html'), 'HTML stream outcomes appear in the Inspector');
+  assert.ok(phases.includes('responseheader'), 'response-header outcomes appear in the Inspector');
+
+  api.setState({ enabled: false });
+  const paused = apiHooks.onHeadersReceived(Object.assign({}, details, {
+    requestId: 'html-paused',
+    responseHeaders: [{ name: 'Location', value: 'https://other.example/' }]
+  }));
+  assert.strictEqual(paused, undefined, 'global pause stops HTML response-header edits');
+  api.logger.setEnabled(false);
+}
+
 async function testRemoveRuntimeIntegration() {
   function memoryStorage(initial) {
     let data = Object.assign({}, initial || {});
@@ -4055,6 +4282,30 @@ function assertCompatCheck(engine, check, decision, reason, label, options) {
     const actualReason = result.headers.length
       ? (check.phase === 'request' ? 'request headers' : 'response headers')
       : result.exception ? 'exception wins' : 'no matching rule';
+    assert.strictEqual(actualDecision, decision, label + ': decision');
+    assert.strictEqual(actualReason, reason, label + ': inspector reason');
+    return;
+  }
+  if (check.kind === 'html') {
+    const result = engine.matchHtml(check.url, mapResourceType(check.type), check.documentUrl || '', check.hosts);
+    if (strict) {
+      assert.strictEqual(JSON.stringify(result.headers), JSON.stringify(check.headers),
+        label + ': HTML response headers');
+      assert.strictEqual(JSON.stringify(result.selectors), JSON.stringify(check.selectors),
+        label + ': HTML selectors');
+    } else {
+      check.headers.forEach(header => assert.ok(result.headers.includes(header), label + ': HTML header ' + header));
+      check.selectors.forEach(selector => assert.ok(result.selectors.some(found =>
+        JSON.stringify(found) === JSON.stringify(selector)), label + ': HTML selector'));
+    }
+    assert.strictEqual(Boolean(result.exception), Boolean(check.exception), label + ': HTML exception');
+    const actualDecision = result.headers.length && !result.selectors.length
+      ? 'html-responseheader'
+      : result.selectors.length ? 'html' : result.exception ? 'exception' : 'allowed';
+    const actualReason = result.headers.length && !result.selectors.length
+      ? 'HTML response header action'
+      : result.selectors.length ? 'HTML stream selectors'
+        : result.exception ? 'exception wins' : 'no matching rule';
     assert.strictEqual(actualDecision, decision, label + ': decision');
     assert.strictEqual(actualReason, reason, label + ': inspector reason');
     return;
@@ -6875,9 +7126,60 @@ async function testWapiWebRequest() {
   assert.strictEqual(filter.disconnected, 1);
   assert.strictEqual(finished.length, 3);
 
+  const streamTransforms = [];
+  const streamFinishes = [];
+  const streamErrors = [];
+  const streamCancels = [];
+  const transformed = Uint8Array.of(9, 8);
+  const streamHooks = {
+    onTransform(bytes) {
+      streamTransforms.push(Array.from(bytes));
+      return { bytes: transformed, changed: true };
+    },
+    onFinish: result => streamFinishes.push(result),
+    onError: (error, reason) => streamErrors.push((error && error.message) || String(reason || error)),
+    onCancel: () => streamCancels.push('s4')
+  };
+  filter = makeFilter();
+  const liveStream = adapter.stream('s1', { maxBytes: 16 }, streamHooks);
+  assert.strictEqual(liveStream.active, true);
+  filter.ondata({ data: Uint8Array.of(1, 2, 3).buffer });
+  filter.ondata({ data: Uint8Array.of(4).buffer });
+  filter.onstop();
+  assert.deepStrictEqual(streamTransforms, [[1, 2, 3, 4]]);
+  assert.strictEqual(filter.writes[0], transformed, 'transformed body is written back');
+  assert.strictEqual(filter.closed, 1);
+  assert.strictEqual(streamFinishes[0].bytes, transformed);
+  assert.strictEqual(streamFinishes[0].changed, true);
+  assert.strictEqual(liveStream.active, false);
+  filter.onstop();
+  assert.strictEqual(streamFinishes.length, 1, 'stream completion is idempotent');
+
+  filter = makeFilter();
+  const limitedStream = adapter.stream('s2', { maxBytes: 3 }, streamHooks);
+  filter.ondata({ data: Uint8Array.of(1, 2).buffer });
+  filter.ondata({ data: Uint8Array.of(3, 4).buffer });
+  assert.strictEqual(limitedStream.active, false);
+  assert.strictEqual(streamErrors[0], 'response body exceeds the WildFire stream limit');
+  assert.strictEqual(filter.disconnected, 1);
+  assert.strictEqual(filter.writes.length, 0);
+  assert.strictEqual(streamFinishes.length, 1);
+
+  filter = makeFilter();
+  const cancelledStream = adapter.stream('s4', { maxBytes: 16 }, streamHooks);
+  assert.strictEqual(cancelledStream.cancel(), true);
+  assert.strictEqual(cancelledStream.cancel(), false);
+  assert.deepStrictEqual(streamCancels, ['s4']);
+  assert.strictEqual(filter.disconnected, 1);
+  assert.strictEqual(cancelledStream.active, false);
+
   browserApi.webRequest.filterResponseData = () => { throw new Error('filter failed'); };
   assert.strictEqual(adapter.rewrite('r5', resource, hooks), false);
   assert.strictEqual(filterErrors.length, 1);
+  const failedStream = adapter.stream('s6', { maxBytes: 16 }, streamHooks);
+  assert.strictEqual(failedStream.active, false);
+  assert.strictEqual(streamErrors[1], 'filter failed');
+  assert.doesNotThrow(() => failedStream.cancel());
 
   assert.strictEqual(adapter.unregister(), true);
   assert.strictEqual(adapter.registered, false);
@@ -7724,6 +8026,7 @@ Promise.resolve()
   .then(() => testHideExceptionModifiers())
   .then(() => testPhase1BBadfilter())
   .then(() => testPhase1CRemoveModifiers())
+  .then(() => testPhase4HtmlFiltering())
   .then(() => testCompileCacheAndCompiler())
   .then(() => testCompilerTimeoutFallback())
   .then(() => testTrafficPathRegressions())
@@ -7732,6 +8035,7 @@ Promise.resolve()
   .then(() => testIncrementalRemoteCompileSemantics())
   .then(() => testBackgroundLoadFiltersIntegration())
   .then(() => testStaleGenerationWorkerHang())
+  .then(() => testHtmlRuntimeIntegration())
   .then(() => testRemoveRuntimeIntegration())
   .then(() => testPerSiteBadgeCounters())
   .then(() => testWapiBackbone())

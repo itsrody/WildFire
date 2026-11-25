@@ -9,7 +9,7 @@ framework — just Firefox-native WebExtensions APIs and WildFire's filter engin
 
 - **Manifest:** MV2 (`manifest_version: 2`)
 - **Firefox floor:** `strict_min_version: "153.0"` (current ESR line)
-- **Engine:** network blocking + exceptions, domain/wildcard matching, cosmetic hiding, scriptlets, curated redirects/rewrites/CSP, and CNAME uncloaking
+- **Engine:** network blocking + exceptions, domain/wildcard matching, cosmetic hiding, scriptlets, curated redirects/rewrites/CSP, bounded HTML stream and response-header filtering, and CNAME uncloaking
 - **Style:** promise-based `browser.*` through WildFire `wapi` modules; no hand-written
   JS loops, no callback bridges, no generic compatibility layer
 
@@ -192,6 +192,10 @@ line-numbered validation issues and notices from WildFire's own parser; `Ctrl/Cm
 | `example.com##.ad:remove-attr(data-ad)` / `:remove-class(old)` | Remove named attributes or classes from a matched element |
 | `example.com#?#div:-abp-has(.ad)` | ABP procedural form, mapped safely to `:has()` |
 | `example.com#?#div:-abp-contains(Ad)` | ABP procedural form, mapped safely to `:has-text()` |
+| `example.com##^.promo` | Remove matching elements from the streamed HTML response |
+| `example.com##^div.banner[data-x="1"]` | Remove a simple tag/class/id/attribute match from streamed HTML |
+| `example.com##^responseheader(location)` | Remove a safe response header from document/subdocument responses |
+| `example.com#@^.promo` | Keep matching streamed elements on example.com |
 
 Cosmetic and scriptlet host lists accept comma-separated literal domains,
 `~domain` exclusions, entity values (`example.*`), and safe `/regex/` values;
@@ -476,7 +480,7 @@ execution is used.
 
 This is deliberately a scoped rewrite, not parity with every uBO feature today:
 
-- Filter compilation is event-driven (worker-backed with sync fallback) and cached by compiled schema version + content hash. The compiled schema is currently v13; any new IR field requires a version bump, and incompatible compiled data is rejected and rebuilt from text.
+- Filter compilation is event-driven (worker-backed with sync fallback) and cached by compiled schema version + content hash. The compiled schema is currently v14; any new IR field requires a version bump, and incompatible compiled data is rejected and rebuilt from text.
 
 - Regex filters use a safe subset: backreferences, nested/alternated quantifiers,
   long patterns and stateful flags are rejected when the list loads.
@@ -528,6 +532,13 @@ This is deliberately a scoped rewrite, not parity with every uBO feature today:
 - Top-level navigations are only blocked by explicit `$document` or `$popup`
   rules, so plain network rules never cancel a page load.
 - `$important` blockers/redirects/rewrites override `@@` exceptions (uBO-style).
+- HTML stream filters (`##^selector`) require a domain scope and use bounded,
+  validated tag/id/class/attribute selectors on UTF-8 document and subdocument
+  responses up to 2 MiB. They are applied through Firefox response streams
+  before scripts run, never change counters, and never execute page code.
+  `##^responseheader(name)` removes only the safe headers `location`, `refresh`,
+  `report-to`, and `set-cookie`; security headers are never removable. Modified
+  responses keep their MIME type while stale length/encoding headers are dropped.
 - Redirect filters can only name WildFire-owned aliases (`noopjs`, `noopcss`,
   `nooptext`, `noopjson`, `noophtml`, `1x1.gif`, `1x1.png`, `tagged.svg`); the
   response is a bundled `data:` URI, never a URL from the filter. Unknown

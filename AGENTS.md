@@ -308,6 +308,15 @@ graph without a deliberate redesign.
   back to a cancel.
 - Exceptions (`@@`) win unless an `$important` blocker applies; the engine
   scans all candidates in load order to make that decision.
+- HTML filters are a separate response realm. After normal blocking and
+  removeparam decisions, `engine.matchHtml()` selects domain-scoped selector and
+  safe response-header actions for `document`/`subdocument` responses. Selector
+  actions create a `filterResponseData()` stream synchronously through
+  `wapi-webrequest.stream()`; the body is buffered up to 2 MiB, decoded as UTF-8,
+  transformed as data, and written back with stale length/encoding headers
+  normalized. Header actions remove only `location`, `refresh`, `report-to`, and
+  `set-cookie`; security headers are never removed. HTML filtering never cancels
+  a request, changes counters, or applies to paused sites.
 
 **Never make the blocking listener async.** Engine state lives in memory and
 is rebuilt from `filters/default.txt` plus `customFilters` at startup; storage
@@ -361,7 +370,11 @@ indexes, plus cosmetic and scriptlet indexes:
   and resolved with parent-domain scoping. Procedural maps use the same entry
   shape with a parsed tree instead of a plain selector.
 - `scriptletRules`/`rejectedScriptlets` for `##+js(alias, args)` rules.
-- `counts: {network, exceptions, cosmetic, csp, scriptlets, rewrite}` for the UI.
+- `htmlRules` for domain-scoped `##^selector` and `##^responseheader(name)` rules.
+  Selector actions carry bounded, validated simple selector data; response-header
+  actions carry only names from the curated safe set. Generic and specific-generic
+  HTML rules are rejected into `rejectedCosmetic`.
+- `counts: {network, exceptions, cosmetic, csp, scriptlets, rewrite, html}` for the UI.
 
 `FilterEngine` accepts injected registrable-domain, CSP, scriptlet and rewrite
 resolvers so the engine stays self-contained and unit-testable. Background
@@ -404,6 +417,12 @@ curated capture alias; fixed bodies cannot be used with captures. Rewrites never
 apply to navigations and count as one filtered/blocked request. Filter text can
 never supply a response body.
 
+`matchHtml()` is the response-body counterpart in the separate `html` realm:
+for `document`/`subdocument` responses it returns
+`{exception, headers, selectors, rules}` after domain/entity/regex scope checks
+and matching `#@^` exceptions keyed by header name or selector source. It never
+returns a cancel or counter flag; background consumes selectors through
+`wapi-webrequest.stream()` and applies headers in `onHeadersReceived`.
 `matchCsp()` is the response-header counterpart in the separate `csp` realm:
 a bare `@@...$csp` exception stops all injection, `@@...$csp=alias` stops only
 that alias, and a plain network exception has no effect. Matching curated
@@ -602,8 +621,9 @@ snapshot live in memory, are disabled by default, and are never persisted or
 reported. WildFire never changes Firefox's ETP settings. ETP block errors and
 `urlClassification` flags are observed as hints only; they must never affect
 `blocked`, `blockedBySite`, or filter decisions. `onHeadersReceived` is
-registered while loaded rules need `$csp`, `$rewrite`, or `$removeheader`, and
-also while CSP report blocking is enabled.
+registered while loaded rules need `$csp`, `$rewrite`, `$removeheader`, HTML
+stream filtering, response-header filtering (`CAP.HTML`/`CAP.RESPONSE_HEADER`),
+or while CSP report blocking is enabled.
 
 `inspect` is local-only: `lib/background/logger.js` keeps a bounded in-memory
 ring of request, CSP, CSP-report and CNAME decisions with phase, source, reason,
@@ -695,6 +715,8 @@ reported, so `data_collection_permissions.required` stays `["none"]`.
 | `##sel:matches-prop(path[=value|/re/])` (bounded, safe property path), `##sel:others()` (bounded sibling complement), `##sel:watch-attr([name,...])` (pass-through attribute trigger) | |
 | trailing `##sel:remove()`, `##sel:style(declarations)`, `##sel:remove-attr(name,...)`, `##sel:remove-class(name,...)` | nested/chained actions and executable style values rejected |
 | `#?#` / `#@?#` with safe `:-abp-has()`/`:-abp-contains()` | unsupported ABP action/procedural selectors rejected |
+| `domain##^selector[,selector…]`, `domain#@^selector` (bounded simple selectors, domain-scoped) | generic/specific-generic HTML filters, procedural selectors, unsafe tags and selectors rejected |
+| `domain##^responseheader(name)`, `domain#@^responseheader(name)` | only `location`, `refresh`, `report-to`, `set-cookie`; security headers rejected |
 | `domain##+js(alias, args)` (curated aliases only) | |
 | `domain#%#//scriptlet('alias', 'args')` (AdGuard, string-only) | AdGuard trusted/debug aliases |
 
@@ -722,7 +744,7 @@ later phases (`$header`, `$method`, `$ipaddress`,
 `$mp4`) are parsed as option syntax but are not actionable: they stay non-fatal
 blockers, are recorded in `engine.ignoredOptions` with `type: 'ignored'`
 diagnostics, and appear as `kind: 'notice'` entries from
-`wildfire:validate-filters`. The compiled IR is currently v13; every new IR field
+`wildfire:validate-filters`. The compiled IR is currently v14; every new IR field
 must bump `COMPILED_VERSION`, and cache entries from older schemas are rejected.
 
 Redirect rules name an alias from `lib/resources/redirect-resources.js`: `noopjs`,

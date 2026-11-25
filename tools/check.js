@@ -386,8 +386,8 @@ function FilterEngineCapabilities() {
 }
 
 const filterConstants = require('../lib/engine/filter/constants.js').WildFireFilter;
-if (filterConstants.COMPILED_VERSION !== 13) {
-  errors.push('compiled IR version must be pinned to 13; bump it for every new IR field');
+if (filterConstants.COMPILED_VERSION !== 14) {
+  errors.push('compiled IR version must be pinned to 14; bump it for every new IR field');
 }
 const EXPECTED_TYPE_ALIASES = {
   main_frame: 'document', document: 'document', doc: 'document',

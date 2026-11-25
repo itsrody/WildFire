@@ -1,7 +1,7 @@
 # WildFire roadmap
 
-Status: implementation plan; Phase 0, Phase 1, and Phase 3 complete, Phase 2 in
-progress; updated 2026-11-25.
+Status: implementation plan; Phase 0, Phase 1, Phase 3, and Phase 4 complete,
+Phase 2 in progress; updated 2026-11-25.
 
 WildFire is a **native Firefox rewrite of uBO behavior** under the WildFire brand.
 This document maps the remaining work from today's engine to broader uBO-style
@@ -53,6 +53,9 @@ Already implemented and verified in the shipped tree:
   party/domain scoping, `$document`, `$popup`, CNAME uncloaking, curated
   `$redirect`/`$redirect-rule`, `$rewrite`/`$rewrite-rule`, `$csp`,
   `$removeparam`, and `$removeheader`.
+- Domain-scoped HTML stream filtering through bounded UTF-8 selectors and safe
+  response-header removal, with no counters, no request cancellation, and no
+  filter-supplied code or header values.
 - Cosmetic and procedural hiding with native-CSS compilation where possible,
   grouped selection, `MutationObserver` batching, `matchMedia` reapply, and safe
   XPath evaluation.
@@ -98,7 +101,7 @@ used as a source file for WildFire code.
 | Navigation semantics | uBO host-only entries imply strict document blocking; WildFire currently requires explicit `$document`/`$popup` | Decision gate D1 |
 | Cosmetic scope | entity targets, regex host targets, specific-generic `*##selector`, generic DOM-surveyor behavior, action operators `:remove()`, `:style()`, `:remove-attr()`, `:remove-class()` | Complete (Phase 3) |
 | Procedural selectors | `:matches-prop()`, `:others()`, `:watch-attr()`; richer mutation/attribute watching for those selectors | Complete (Phase 3) |
-| Response filtering | `example.com##^selector` HTML stream filtering and `##^responseheader(name)` header removal; encoding handling and safe stream composition | Phase 4 |
+| Response filtering | `example.com##^selector` HTML stream filtering and `##^responseheader(name)` header removal; encoding handling and safe stream composition | Complete (Phase 4): bounded UTF-8 simple selectors and safe header set only |
 | Dynamic filtering | global/local source-destination-type rules, `noop`, precedence, hostname-based rules, temporary vs persisted rules, plain-text “My rules”, full static override semantics | Phase 5 |
 | Filter lists | broader preshipped catalog, list categories, checksum/diff-patch updates, update status/history, asset viewer | Phase 6 |
 | UI/tools | full dashboard, per-site switches, DOM inspector, element picker/zapper, context menu, keyboard shortcuts, advanced settings, richer logger views | Phase 6 |
@@ -143,7 +146,7 @@ or upstream filter text is committed.
   every accepted form; unknown options remain forgivingly ignored.
 - Deferred-but-recognized options are no longer silent: they stay non-fatal
   blockers and produce `ignored` diagnostics plus `validate-filters` notices.
-- Compiled schema is v13; every new IR field requires a version bump, and stale
+- Compiled schema is v14; every new IR field requires a version bump, and stale
   cache entries are rejected and rebuilt from text.
 
 **Exit criteria:** documentation matches parser/engine behavior; validation
@@ -216,29 +219,35 @@ blocking listener remains synchronous; all load-order registries stay in sync.
 - Moved the cosmetic content script from `document_idle` to `document_start`,
   with style nodes mounted as soon as `head`/`documentElement` exists. Manifest,
   test chain, and `tools/check.js` pin the earlier timing.
-- Raised the compiled schema to v13 for surveyor and pattern buckets and added
-  WildFire-authored corpus families, unit tests, and line-numbered validation
-  coverage for every new accepted and rejected class.
+- Raised the compiled schema from v12 to v13 for surveyor and pattern buckets
+  and added WildFire-authored corpus families, unit tests, and line-numbered
+  validation coverage for every new accepted and rejected class.
 
 **Exit criteria:** selectors are validated before CSS injection or DOM action;
 malformed rules land in `engine.rejectedCosmetic`; generic exceptions and hide
 modifiers still win correctly; no filter text becomes executable code.
 
-### Phase 4 — HTML and response-header filtering
+### Phase 4 — HTML and response-header filtering (complete)
 
 **Priority:** P1. **Depends on:** Phase 3 selectors and existing rewrite stream
 infrastructure.
 
-- Parse `example.com##^selector` as a document-stream filter, not a DOM-only
-  rule.
-- Remove matching elements from streamed response data using
-  `webRequest.filterResponseData()`, with encoding limits and bounded buffering.
-- Implement `##^responseheader(name)` only for the currently safe header set
-  (`location`, `refresh`, `report-to`, `set-cookie`) on document/subdocument
-  responses. Never remove security headers.
-- Keep generic stream filters domain-scoped; reject malformed, unsafe, or
-  oversized selectors. Preserve MIME type and normalize length/encoding headers
-  after modification.
+- Added `domain##^selector[,selector…]` and `#@^` exceptions as a separate
+  `html` realm. Selectors are bounded, validated tag/id/class/attribute data;
+  generic, specific-generic, procedural, oversized, and unsafe tags/selectors
+  are rejected into `engine.rejectedCosmetic`.
+- `engine.matchHtml()` applies domain/entity/regex scopes to document and
+  subdocument responses only. Stream filters are created synchronously in
+  `onBeforeRequest`; UTF-8 bodies are buffered to 2 MiB, transformed as data,
+  and written back with stale length/encoding headers normalized. Filtering
+  never cancels a request, changes counters, or runs filter text.
+- Implemented `##^responseheader(name)` and `#@^` exceptions for only `location`,
+  `refresh`, `report-to`, and `set-cookie` on document/subdocument responses.
+  Security headers are never removable, and MIME type is preserved.
+- Added `CAP.HTML`/`CAP.RESPONSE_HEADER` listener gating, `htmlRules` and
+  `counts.html`, compiled schema v14 serialization/revalidation, Inspector
+  `html`/`responseheader` phases, WildFire-authored corpus cases, and unit/runtime
+  coverage for streams, exceptions, limits, pause behavior, and header safety.
 
 **Exit criteria:** stream filters are created synchronously in
 `onBeforeRequest`; body/header outcomes appear in Inspector diagnostics;

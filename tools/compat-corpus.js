@@ -22,6 +22,9 @@ const removeparamCheck = (url, type, documentUrl, values, exception) =>
   ({ kind: 'removeparam', url, type, documentUrl, values: values || [], exception: Boolean(exception) });
 const removeheaderCheck = (url, type, documentUrl, names, phase, exception) =>
   ({ kind: 'removeheader', url, type, documentUrl, names: names || [], phase: phase || 'request', exception: Boolean(exception) });
+const htmlCheck = (url, type, documentUrl, headers, selectors, exception) =>
+  ({ kind: 'html', url, type, documentUrl, headers: headers || [],
+    selectors: selectors || [], exception: Boolean(exception) });
 
 const accepted = (id, family, rule, decision, inspectorReason, checks, engineOptions) => ({
   id, family, rule, outcome: 'accepted', decision, inspectorReason,
@@ -46,7 +49,7 @@ const families = [
   'procedural.ancestor', 'procedural.attr', 'procedural.css', 'procedural.xpath',
   'procedural.not', 'procedural.media', 'procedural.action', 'procedural.prop',
   'procedural.others', 'procedural.watch', 'scriptlet.ubo', 'scriptlet.adguard',
-  'scriptlet.exception', 'scriptlet.scope'
+  'scriptlet.exception', 'scriptlet.scope', 'html.selector', 'html.responseheader'
 ].map(id => ({ id }));
 
 const rejectionClasses = [
@@ -77,6 +80,14 @@ const rejectionClasses = [
   { id: 'cosmetic.empty-negated', match: 'empty negated cosmetic domain' },
   { id: 'cosmetic.domain-invalid', match: 'invalid domain:' },
   { id: 'cosmetic.generic-procedural', match: 'generic procedural rules need domain scope' },
+  { id: 'html.selector.generic', match: 'HTML filters need domain scope' },
+  { id: 'html.selector.unsafe', match: 'unsafe HTML filter selector' },
+  { id: 'html.selector.length', match: 'HTML filter selector too long' },
+  { id: 'html.selector.invalid', match: 'invalid HTML filter selector' },
+  { id: 'html.responseheader.declaration', match: 'invalid responseheader declaration' },
+  { id: 'html.responseheader.unsupported', match: 'unsupported response header:' },
+  { id: 'html.responseheader.generic', match: 'responseheader filters need domain scope' },
+  { id: 'html.specific-generic', match: 'specific-generic HTML filters are unsupported' },
   { id: 'procedural.unbalanced', match: 'unbalanced procedural selector' },
   { id: 'procedural.has-empty', match: 'empty :has argument' },
   { id: 'procedural.has-text-empty', match: 'empty :has-text argument' },
@@ -121,6 +132,7 @@ const rejectionClasses = [
 ];
 
 const longRegex = repeatText('/', 'a', 513, '/');
+const longHtmlSelector = 'html.example##^.' + 'x'.repeat(257);
 const manyGroups = '/' + Array.from({ length: 17 }, () => '(a)').join('') + '/';
 const manyQuantifiers = '/' + Array.from({ length: 17 }, () => 'a+').join('') + '/';
 const deepHas = 'example.com##.x' + ':has(.y'.repeat(12) + ')'.repeat(12);
@@ -412,6 +424,22 @@ const rules = [
   accepted('scriptlet.specific-generic.accepted', 'scriptlet.scope',
     ['example.*##+js(set-constant, corpusEntityFlag, 1)', '*##+js(set-constant, corpusGlobalFlag, 1)'],
     'scriptlet', 'scriptlet payload', scriptletCheck(2, 'set-constant')),
+  accepted('html.selector.accepted', 'html.selector',
+    'example.com##^.promo, div.banner[data-x="1"]', 'html', 'HTML stream selectors',
+    htmlCheck('https://example.com/page', 'document', 'https://example.com/page', [], [
+      { tag: '', id: [], classes: ['promo'], attr: null },
+      { tag: 'div', id: [], classes: ['banner'], attr: { name: 'data-x', value: '1' } }
+    ])),
+  accepted('html.selector.exception.accepted', 'html.selector',
+    ['example.com##^.promo', 'example.com#@^.promo'], 'exception', 'exception wins',
+    htmlCheck('https://example.com/page', 'document', 'https://example.com/page', [], [], true)),
+  accepted('html.responseheader.accepted', 'html.responseheader',
+    'example.com##^responseheader(location)', 'html-responseheader', 'HTML response header action',
+    htmlCheck('https://example.com/page', 'document', 'https://example.com/page', ['location'], [])),
+  accepted('html.responseheader.exception.accepted', 'html.responseheader',
+    ['example.com##^responseheader(location)', 'example.com#@^responseheader(location)'],
+    'exception', 'exception wins',
+    htmlCheck('https://example.com/page', 'document', 'https://example.com/page', [], [], true)),
 
   rejected('network.domain.invalid.rejected', 'network.domain', '||bad.example^$domain=bad..example', 'rejectedRegex', 'invalid domain option: bad..example'),
   rejected('network.to.invalid.rejected', 'network.to', '||bad.example^$to=bad..example', 'rejectedRegex', 'invalid to option: bad..example'),
@@ -484,7 +512,15 @@ const rules = [
   rejected('csp.alias.rejected', 'network.csp', '||bad.example^$csp=not-curated', 'rejectedCsp', 'unknown CSP alias: not-curated'),
   rejected('rewrite.alias.rejected', 'network.rewrite', '||bad.example^$rewrite=not-curated', 'rejectedRewrite', 'unknown rewrite alias: not-curated'),
   rejected('registry.rewrite.rejected', 'network.rewrite', '||bad.example^$rewrite=blank-js', 'rejectedRewrite', 'unknown rewrite alias: blank-js', { rewrite: false }),
-  rejected('registry.scriptlet.rejected', 'scriptlet.ubo', 'example.com##+js(set-constant, flag, 1)', 'rejectedScriptlets', 'scriptlet registry unavailable', { scriptlets: false })
+  rejected('registry.scriptlet.rejected', 'scriptlet.ubo', 'example.com##+js(set-constant, flag, 1)', 'rejectedScriptlets', 'scriptlet registry unavailable', { scriptlets: false }),
+  rejected('html.selector.generic.rejected', 'html.selector', '##^.ad', 'rejectedCosmetic', 'HTML filters need domain scope'),
+  rejected('html.selector.unsafe.rejected', 'html.selector', 'example.com##^script', 'rejectedCosmetic', 'unsafe HTML filter selector'),
+  rejected('html.selector.length.rejected', 'html.selector', longHtmlSelector, 'rejectedCosmetic', 'HTML filter selector too long'),
+  rejected('html.selector.invalid.rejected', 'html.selector', 'example.com##^.a,,.b', 'rejectedCosmetic', 'invalid HTML filter selector'),
+  rejected('html.responseheader.declaration.rejected', 'html.responseheader', 'example.com##^responseheader(bad name)', 'rejectedCosmetic', 'invalid responseheader declaration'),
+  rejected('html.responseheader.unsupported.rejected', 'html.responseheader', 'example.com##^responseheader(x-frame-options)', 'rejectedCosmetic', 'unsupported response header: x-frame-options'),
+  rejected('html.responseheader.generic.rejected', 'html.responseheader', '##^responseheader(location)', 'rejectedCosmetic', 'responseheader filters need domain scope'),
+  rejected('html.specific-generic.rejected', 'html.selector', '*##^.ad', 'rejectedCosmetic', 'specific-generic HTML filters are unsupported')
 ];
 
 const smokeScenarios = [
@@ -507,7 +543,9 @@ const smokeScenarios = [
   { id: 'network-removeheader', capability: 'REMOVEHEADER', ruleIds: ['network.removeheader.accepted', 'network.removeheader-response.accepted'] },
   { id: 'cosmetic-core', capability: 'COSMETIC', ruleIds: ['cosmetic.plain.accepted', 'cosmetic.scope.accepted', 'cosmetic.exception.accepted', 'cosmetic.abp.accepted', 'cosmetic.entity.accepted', 'cosmetic.regex.accepted', 'cosmetic.specific-generic.accepted'] },
   { id: 'procedural-core', capability: 'PROCEDURAL', ruleIds: ['procedural.text.accepted', 'procedural.path.accepted', 'procedural.has.accepted', 'procedural.ancestor.accepted', 'procedural.attr.accepted', 'procedural.css.accepted', 'procedural.xpath.accepted', 'procedural.not.accepted', 'procedural.media.accepted', 'procedural.action.accepted', 'procedural.prop.accepted', 'procedural.others.accepted', 'procedural.watch.accepted'] },
-  { id: 'scriptlet-core', capability: 'SCRIPTLET', ruleIds: ['scriptlet.ubo.accepted', 'scriptlet.adguard.accepted', 'scriptlet.exception.accepted', 'scriptlet.adguard-exception.accepted', 'scriptlet.entity.accepted', 'scriptlet.regex.accepted', 'scriptlet.specific-generic.accepted'] }
+  { id: 'scriptlet-core', capability: 'SCRIPTLET', ruleIds: ['scriptlet.ubo.accepted', 'scriptlet.adguard.accepted', 'scriptlet.exception.accepted', 'scriptlet.adguard-exception.accepted', 'scriptlet.entity.accepted', 'scriptlet.regex.accepted', 'scriptlet.specific-generic.accepted'] },
+  { id: 'html-stream', capability: 'HTML', ruleIds: ['html.selector.accepted'] },
+  { id: 'html-response-header', capability: 'RESPONSE_HEADER', ruleIds: ['html.responseheader.accepted'] }
 ];
 
 module.exports = {
