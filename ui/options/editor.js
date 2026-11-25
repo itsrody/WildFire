@@ -253,7 +253,9 @@
         jump.textContent = 'Line ' + (Number(entry.line) || 0);
         jump.addEventListener('click', () => focusLine(entry.line));
         const message = doc.createElement('span');
-        message.textContent = (entry.category || 'rule') + ': ' + (entry.reason || 'invalid rule');
+        const label = entry.kind === 'notice' ? 'notice' : (entry.category || 'rule');
+        if (entry.kind === 'notice') item.className = 'notice';
+        message.textContent = label + ': ' + (entry.reason || 'invalid rule');
         item.append(jump, message);
         issues.appendChild(item);
       });
@@ -265,11 +267,16 @@
         const result = await client.send('validate-filters', { value: textarea.value });
         if (!result.ok) throw new Error(result.error || 'Validation failed.');
         const validation = result.validation || {};
-        showIssues(validation.issues);
-        const count = Array.isArray(validation.issues) ? validation.issues.length : 0;
-        setStatus(count
-          ? count + (count === 1 ? ' issue found.' : ' issues found.')
-          : 'No issues found.');
+        const issues = Array.isArray(validation.issues) ? validation.issues : [];
+        const notices = Array.isArray(validation.notices) ? validation.notices : [];
+        showIssues(issues.map(entry => Object.assign({ kind: 'issue' }, entry))
+          .concat(notices.map(entry => Object.assign({ kind: 'notice' }, entry)))
+          .sort((left, right) => left.line - right.line));
+        setStatus(issues.length
+          ? issues.length + (issues.length === 1 ? ' issue found.' : ' issues found.')
+          : notices.length
+            ? 'No issues; ' + notices.length + (notices.length === 1 ? ' notice.' : ' notices.')
+            : 'No issues found.');
       } catch (error) {
         setStatus(error.message || 'Validation failed.');
       }

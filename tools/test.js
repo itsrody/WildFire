@@ -4013,6 +4013,10 @@ async function testPhase0Foundation() {
   const v1Blob = { v: 1, n: [], c: { g: [], ge: [], d: [], de: [] }, p: { g: [], ge: [], d: [], de: [] }, s: [] };
   const ir3 = new FilterEngine();
   assert.strictEqual(ir3.loadCompiled(v1Blob), false, 'v1 compiled rejected');
+  const staleBlob = Object.assign({}, compiled, { v: FilterEngine.COMPILED_VERSION - 1 });
+  const ir4 = new FilterEngine();
+  assert.strictEqual(ir4.loadCompiled(staleBlob), false,
+    'the previous compiled schema is rejected after an IR change');
 
   // Safe rejection of unsupported/invalid syntax does not throw
   const safe = new FilterEngine(null, () => '', { validate: () => null }, () => true);
@@ -4064,6 +4068,35 @@ async function testPhase1AAliases() {
   assert.strictEqual(e2.loadCompiled(blob), true, 'compiled alias rules load');
   assert.strictEqual(e2.matchRequest('https://c.example/x', 'xmlhttprequest', 'https://site.test/').blocked, true, 'compiled xhr alias');
   assert.ok(e2.getCapabilities() & FilterEngine.CAP.GENERICHIDE, 'compiled ghide capability');
+}
+
+async function testPhase1DeferredOptions() {
+  const e = new FilterEngine();
+  e.load([
+    '||defer.example^$to=site.test',
+    '||defer.example^$strict1p',
+    '||unknown.example^$made-up-option=1'
+  ].join('\n'));
+
+  assert.strictEqual(e.rejectedRegex.length, 0, 'deferred options do not reject rules');
+  assert.strictEqual(e.ignoredOptions.map(entry => entry.reason).join(','),
+    'option not implemented: to,option not implemented: strict1p',
+    'deferred options are recorded once each in load order');
+  assert.ok(e.getDiagnostics().some(entry =>
+    entry.type === 'ignored' && entry.reason === 'option not implemented: to'),
+  'deferred options produce ignored diagnostics');
+  assert.strictEqual(
+    e.matchRequest('https://defer.example/a.js', 'script', 'https://site.test/').blocked, true,
+    'deferred options remain non-fatal blockers');
+
+  const compiled = e.toCompiled();
+  const restored = new FilterEngine();
+  assert.strictEqual(restored.loadCompiled(compiled), true, 'compiled deferred options load');
+  assert.strictEqual(restored.ignoredOptions.map(entry => entry.reason).join(','),
+    'option not implemented: to,option not implemented: strict1p',
+    'compiled deferred options round-trip');
+  assert.ok(restored.getDiagnostics().some(entry => entry.type === 'ignored'),
+    'compiled deferred diagnostics round-trip');
 }
 
 async function testCosmeticPayloadCache() {
@@ -6723,10 +6756,16 @@ async function testBackgroundControllerRobustness() {
     const beforeValidation = healthy.context.state.customFilters;
     const validation = await healthy.debug().onMessage({
       type: 'wildfire:validate-filters',
-      value: '||good.example^\n! note\n/(a+)+$/\n||bad.example^$csp=not-curated'
+      value: [
+        '||good.example^',
+        '! note',
+        '/(a+)+$/',
+        '||bad.example^$csp=not-curated',
+        '||defer.example^$to=site.test'
+      ].join('\n')
     }, {});
     assert.strictEqual(validation.ok, true, 'filter validation returns a local result');
-    assert.strictEqual(validation.validation.counts.network, 1,
+    assert.strictEqual(validation.validation.counts.network, 2,
       'validation counts accepted rules without loading them');
     assert.strictEqual(validation.validation.issues.length, 2,
       'validation reports every rejected rule');
@@ -6734,6 +6773,12 @@ async function testBackgroundControllerRobustness() {
       'validation reports the unsafe regex line');
     assert.strictEqual(validation.validation.issues[1].line, 4,
       'validation reports the unknown alias line');
+    assert.strictEqual(validation.validation.notices.length, 1,
+      'validation reports deferred options as notices');
+    assert.strictEqual(validation.validation.notices[0].line, 5,
+      'deferred option notice points at its rule line');
+    assert.strictEqual(validation.validation.notices[0].reason,
+      'option not implemented: to', 'deferred option notice has a stable reason');
     assert.strictEqual(healthy.context.state.customFilters, beforeValidation,
       'validation never persists custom filters');
     const unknown = await healthy.debug().onMessage({ type: 'wildfire:missing' }, {});
@@ -7169,6 +7214,7 @@ Promise.resolve()
   .then(() => testPhase0Foundation())
   .then(() => testRoadmapPhase0Corpus())
   .then(() => testPhase1AAliases())
+  .then(() => testPhase1DeferredOptions())
   .then(() => testCosmeticPayloadCache())
   .then(() => testHideExceptionModifiers())
   .then(() => testPhase1BBadfilter())

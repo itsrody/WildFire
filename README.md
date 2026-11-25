@@ -1,15 +1,15 @@
 # WildFire
 
-A minimal, **uBO-inspired** content blocker built from scratch for Firefox using a
-clean-room approach: public filter-syntax docs, Gecko/WebExtensions docs, and
-upstream source read for inspiration inform the behavior, while the architecture,
-code, registries, and assets are WildFire's. No vendored upstream source, no npm
-dependencies, no cross-browser shim, and no build framework — just Firefox-native
-WebExtensions APIs and a small filter engine.
+A Firefox-native rewrite of uBO's filtering behavior under the WildFire brand.
+It is clean-room: public filter-syntax docs, Gecko/WebExtensions docs, and
+upstream implementations read only for behavioral guidance inform the work,
+while the architecture, code, registries, and assets are WildFire's. No vendored
+upstream source, no npm dependencies, no cross-browser shim, and no build
+framework — just Firefox-native WebExtensions APIs and WildFire's filter engine.
 
 - **Manifest:** MV2 (`manifest_version: 2`)
 - **Firefox floor:** `strict_min_version: "153.0"` (current ESR line)
-- **Engine:** network blocking + exceptions, domain/wildcard matching, cosmetic hiding
+- **Engine:** network blocking + exceptions, domain/wildcard matching, cosmetic hiding, scriptlets, curated redirects/rewrites/CSP, and CNAME uncloaking
 - **Style:** promise-based `browser.*` through WildFire `wapi` modules; no hand-written
   JS loops, no callback bridges, no generic compatibility layer
 
@@ -114,7 +114,7 @@ npm run icons
 The bundled `filters/default.txt` is an offline fallback, not the registered
 default list. Add your own rules in the options page (one per line). The native
 editor shows line numbers, caret position, rule coloring, unsaved changes and
-line-numbered validation issues from WildFire's own parser; `Ctrl/Cmd+S` saves.
+line-numbered validation issues and notices from WildFire's own parser; `Ctrl/Cmd+S` saves.
 
 | Rule | Meaning |
 | --- | --- |
@@ -174,6 +174,19 @@ line-numbered validation issues from WildFire's own parser; `Ctrl/Cmd+S` saves.
 Cosmetic host lists accept comma-separated domains and `~domain` exclusions;
 both positive and negated hosts use parent-domain scoping. Lines starting with
 `!` are comments.
+
+Resource-type aliases are accepted in `$type` and `$~type` form: `css` →
+`stylesheet`, `frame` → `subdocument`, `xhr` → `xmlhttprequest`, `doc` →
+`document`, plus `main_frame`, `sub_frame`, `object_subrequest`, `ws`, `wss`,
+`csp_report`, `web_manifest`, `eventsource`, and `speculative`. Party aliases are
+`$1p`/`$first-party` and `$3p`/`$third-party` (with `~` negations); hide
+modifiers are `$ehide`/`$elemhide`, `$ghide`/`$generichide`, and
+`$shide`/`$specifichide` (exception-only). `$from=` aliases `$domain=`. Unknown
+options stay non-fatal and ignored. Options reserved for later phases (`$to`,
+`$denyallow`, `$top`, `$strict1p`, `$strict3p`, `$header`, `$method`,
+`$ipaddress`, `$permissions`, `$cname`, `$replace`, `$urlskip`,
+`$uritransform`, `$empty`, `$mp4`) remain non-fatal blockers but are visible as
+`ignored` diagnostics and Options validation notices.
 
 ## Filter lists
 
@@ -426,9 +439,9 @@ execution is used.
 
 ## Design notes / limits
 
-This is deliberately a *minimal* engine, not a full uBO port:
+This is deliberately a scoped rewrite, not parity with every uBO feature today:
 
-- Filter compilation is event-driven (worker-backed with sync fallback) and cached by compiled schema version + content hash. The compiled schema is versioned; incompatible compiled data is rejected and rebuilt from text.
+- Filter compilation is event-driven (worker-backed with sync fallback) and cached by compiled schema version + content hash. The compiled schema is currently v9; any new IR field requires a version bump, and incompatible compiled data is rejected and rebuilt from text.
 
 - Regex filters use a safe subset: backreferences, nested/alternated quantifiers,
   long patterns and stateful flags are rejected when the list loads.
@@ -512,12 +525,12 @@ This is deliberately a *minimal* engine, not a full uBO port:
 ## Message API (internal)
 
 Background listens for `wildfire:*` messages: `state`, `toggle`, `toggle-site`,
-`set-filters`, `set-csp-report-blocking`, `set-csp-report-allow`,
-`set-cname-uncloak`, `reset-stats`,
-`reload`, `list-state`, `suggested-lists`, `add-list`, `remove-list`,
-`update-list`, `set-list-enabled`, `set-list-auto`, `cosmetic`, `diagnostics`, and
-`inspect`. `diagnostics` accepts an optional boolean `value` to enable/disable
-in-memory request metrics, ETP observation and CSP report counts, and an optional
-`reset: true` to clear them. `inspect` accepts `value` to enable/disable the
-local decision log and `reset: true` to clear it; it always returns the current
-bounded snapshot.
+`set-filters`, `validate-filters`, `set-csp-report-blocking`,
+`set-csp-report-allow`, `set-cname-uncloak`, `set-site-rule`,
+`clear-site-rules`, `reset-stats`, `reload`, `list-state`, `suggested-lists`,
+`add-list`, `remove-list`, `update-list`, `set-list-enabled`, `set-list-auto`,
+`cosmetic`, `diagnostics`, and `inspect`. `diagnostics` accepts an optional
+boolean `value` to enable/disable in-memory request metrics, ETP observation,
+CSP report counts and CNAME cache counters, and an optional `reset: true` to
+clear them. `inspect` accepts `value` to enable/disable the local decision log
+and `reset: true` to clear it; it always returns the current bounded snapshot.

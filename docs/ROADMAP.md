@@ -93,7 +93,7 @@ used as a source file for WildFire code.
 
 | Area | uBO behavior still missing in WildFire | Route |
 | --- | --- | --- |
-| Static network syntax | HOSTS-file interpretation, entity host values, regex host/domain values, `$to`, `$denyallow`, `$top`, `$strict1p`, `$strict3p`, `$header`, `$method`, `$ipaddress`, `$permissions`, `$cname` exceptions, `$empty`/`$mp4`, redirect priority and standalone directives, broader curated redirect resources, bare `$removeparam`, `!#if`/`!#else`/`!#endif` | Phase 2 |
+| Static network syntax | HOSTS-file interpretation, entity host values, regex host/domain values, `$to`, `$denyallow`, `$top`, `$strict1p`, `$strict3p`, `$header`, `$method`, `$ipaddress`, `$permissions`, `$cname` exceptions, `$empty`/`$mp4`, redirect priority and standalone directives, broader curated redirect resources, `!#if`/`!#else`/`!#endif` | Phase 2 |
 | Navigation semantics | uBO host-only entries imply strict document blocking; WildFire currently requires explicit `$document`/`$popup` | Decision gate D1 |
 | Cosmetic scope | entity targets, regex host targets, specific-generic `*##selector`, generic DOM-surveyor behavior, action operators `:remove()`, `:style()`, `:remove-attr()`, `:remove-class()` | Phase 3 |
 | Procedural selectors | `:matches-prop()`, `:others()`, `:watch-attr()`; richer mutation/attribute watching for those selectors | Phase 3 |
@@ -104,7 +104,7 @@ used as a source file for WildFire code.
 | Scriptlet timing | realm-birth `set-constant` guarantees, hardened `MAIN` fallback, native exception propagation, `syncNativeScriptlets()` tests | Phase 7, gated |
 | Trust/source model | trusted aliases, `$replace`, `$uritransform`, `$urlskip`, `!#include`, raw `$csp` | Phase 7, gated |
 | Cosmetic timing | `document_idle` injection can flash unhidden content before cosmetic CSS applies | Phase 3 |
-| Performance | repeatable local compatibility corpus, parser fuzzing, benchmark thresholds, long-run memory profiling | Continuous |
+| Performance | parser fuzzing, benchmark thresholds, long-run memory profiling (the repeatable local compatibility corpus is in place) | Continuous |
 
 Curated WildFire aliases for `$redirect`, `$rewrite`, and `$csp` are a deliberate
 security boundary, not an accidental gap. Filter text still never supplies a
@@ -128,23 +128,22 @@ redirect URL, response body, header value, or script.
 **Exit criteria:** corpus runs in `npm test`; build/lint stay clean; no generated
 or upstream filter text is committed.
 
-### Phase 1 — Verify and document current feature truth
+### Phase 1 — Verify and document current feature truth (complete)
 
 **Priority:** P0. **Depends on:** Phase 0.
 
-- Reconcile `README.md`, `AGENTS.md`, and this roadmap with the exact implemented
-  option set. Fix known drift: the README still describes the product as
-  “minimal/uBO-inspired” and its message list omits `validate-filters`,
-  `set-site-rule`, and `clear-site-rules`; Options/suggested-list text says
-  adding only registers while `add-list` also fetches immediately.
-- Audit option/resource-type aliases (`css`, `frame`, `xhr`, `first-party`,
-  `third-party`, `doc`, `ehide`, `ghide`, `shide`, and similar) and document which
-  are accepted; preserve the forgiving “unknown options are ignored” rule.
-- Make rejection diagnostics explicit for options parsed but not actionable, so
-  unimplemented syntax is visible in validation and local diagnostics rather
-  than silently ignored.
-- Confirm compiled-schema versioning and cache invalidation for every new IR
-  field added later.
+- Reconciled `README.md`, `AGENTS.md`, and this roadmap with the exact implemented
+  option set. The product is documented as a Firefox-native uBO rewrite, the
+  message list includes `validate-filters`, `set-site-rule`, and
+  `clear-site-rules`, and Options/suggested-list text matches `add-list`, which
+  fetches immediately but leaves a new list disabled.
+- Audited option/resource-type aliases (`css`, `frame`, `xhr`, `first-party`,
+  `third-party`, `doc`, `ehide`, `ghide`, `shide`, and similar) and documented
+  every accepted form; unknown options remain forgivingly ignored.
+- Deferred-but-recognized options are no longer silent: they stay non-fatal
+  blockers and produce `ignored` diagnostics plus `validate-filters` notices.
+- Compiled schema is v9; every new IR field requires a version bump, and stale
+  cache entries are rejected and rebuilt from text.
 
 **Exit criteria:** documentation matches parser/engine behavior; validation
 messages are stable and tested; cached compiled data from older schemas is

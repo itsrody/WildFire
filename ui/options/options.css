@@ -128,6 +128,7 @@ input { max-width: 260px; }
   font-size: 12px;
 }
 .filter-issues .empty { color: #8bd48a; }
+.filter-issues .notice { color: #ffd257; }
 .filter-issues .issue-line {
   padding: 0;
   border: 0;

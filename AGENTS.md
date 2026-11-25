@@ -128,6 +128,21 @@ lib/
         ubo-aeld.js             AdGuard `ubo-aeld.js` bridge
         ubo-aopw.js             AdGuard `ubo-aopw.js` bridge
         ubo-aost.js             AdGuard `ubo-aost` bridge
+        adguard-constructor.js  constructor/prototype guards
+        adguard-events.js       event/listener defusers
+        adguard-fetch-shim.js   fetch guards
+        adguard-href-sanitizer.js  href sanitizers
+        adguard-innerhtml.js    innerHTML guards
+        adguard-jsonpath-prune.js  JSONPath pruning
+        adguard-m3u-prune.js    M3U playlist pruning
+        adguard-property-path.js  property-path traps
+        adguard-refresh.js      refresh defusers
+        adguard-set-constant.js constant freezing
+        adguard-spoof-css.js    CSS spoof defusers
+        adguard-timer-adjust.js timer defusers
+        adguard-window-open.js  window.open bridge
+        adguard-xhr-shim.js     XHR guards
+        adguard-xml-prune.js    XML pruning
       api.js           canonicalization, validation, apply, public API
     csp-resources.js   curated CSP directives for $csp response headers
     redirect-resources.js  WildFire-owned data-URI redirect resources
@@ -180,7 +195,15 @@ used **only** by `tools/`.
    `shims/prevent-navigation.js`, `shims/popads-net.js`, `shims/multiup.js`,
    `shims/mpegdash-prune.js`, `shims/edit-object-on-setter.js`,
    `shims/ubo-acis.js`, `shims/ubo-aeld.js`,
-   `shims/ubo-aopw.js`, `shims/ubo-aost.js`, `api.js` →
+   `shims/ubo-aopw.js`, `shims/ubo-aost.js`,
+   `shims/adguard-constructor.js`, `shims/adguard-events.js`,
+   `shims/adguard-fetch-shim.js`, `shims/adguard-href-sanitizer.js`,
+   `shims/adguard-innerhtml.js`, `shims/adguard-jsonpath-prune.js`,
+   `shims/adguard-m3u-prune.js`, `shims/adguard-property-path.js`,
+   `shims/adguard-refresh.js`, `shims/adguard-set-constant.js`,
+   `shims/adguard-spoof-css.js`, `shims/adguard-timer-adjust.js`,
+   `shims/adguard-window-open.js`, `shims/adguard-xhr-shim.js`,
+   `shims/adguard-xml-prune.js`, `api.js` →
    `window.WildFireScriptlets`
 10. `lib/resources/rewrite-resources.js` → `window.RewriteResources`
 11. `lib/compile/compile-cache.js` → `window.WildFireCompileCache`
@@ -503,9 +526,10 @@ per-site paused tabs. An `allow` rule also skips `$removeparam`, `$removeheader`
 one filtered request and is recorded as a local Inspector decision. Rules are
 keyed by the tab's top-level site even when the request comes from an embedded
 frame. Storage key `wildfire.remote.v1` holds
-`{lists: [{url, builtin, enabled, autoUpdate, etag, lastModified, text,
-updatedAt, checkedAt, hash, lastError, metadata}]}` and is owned entirely by
-`lib/state/remote-lists.js`. The preshipped default entry points directly at
+`{lists: [{url, builtin, enabled, autoUpdate, autoUpdateChoice, etag,
+lastModified, text, updatedAt, checkedAt, hash, lastError, metadata}]}` and is
+owned entirely by `lib/state/remote-lists.js`; `metadata` also retains the
+response `contentType`. The preshipped default entry points directly at
 `https://ublockorigin.github.io/uAssetsCDN/filters/filters.min.txt`, starts
 enabled, and auto-fetches on startup before following `! Expires`; it cannot be
 removed and can be disabled or opted out of Auto in Options. The old
@@ -623,7 +647,10 @@ reported, so `data_collection_permissions.required` stays `["none"]`.
 | `@@` exceptions | |
 | `@@||host^$elemhide`, `$generichide`, `$specifichide` document exceptions | |
 | `$script`, `$image`, `$~type`, other resource types | |
-| `$third-party`, `$~third-party`, `$1p`, `$3p` | |
+| `$all`, `$match-case` | |
+| `$css` (`stylesheet`), `$frame` (`subdocument`), `$xhr` (`xmlhttprequest`), `$doc` (`document`), plus `main_frame`, `sub_frame`, `object_subrequest`, `ws`, `wss`, `csp_report`, `web_manifest`, `eventsource`, `speculative` aliases and `~type` forms | |
+| `$third-party`/`$3p`, `$~third-party`/`$~3p`, `$first-party`/`$1p`, `$~first-party`/`$~1p` | |
+| `$elemhide`/`$ehide`, `$generichide`/`$ghide`, `$specifichide`/`$shide` (exception-only) | |
 | `$domain=a\|~b` (`from=` alias), including `example.*` and `*.example.*` | |
 | `$document`, `$popup`, `$important`, `$badfilter` | |
 | `$redirect=alias`, `$redirect-rule=alias` | |
@@ -643,6 +670,17 @@ quantifiers, excessive quantifier/group counts, long patterns and stateful
 flags (`g`, `y`, `d`) are rejected into `engine.rejectedRegex` and never reach
 the blocking listener. Regex rules bypass the token index and are evaluated on
 URLs up to 8192 characters.
+
+Option names are lowercased and resource types are normalized through
+`TYPE_ALIASES`; negated party and type options are accepted. Unknown options
+remain forgivingly ignored. Options reserved for later phases (`$to`,
+`$denyallow`, `$top`, `$strict1p`, `$strict3p`, `$header`, `$method`,
+`$ipaddress`, `$permissions`, `$cname`, `$replace`, `$urlskip`,
+`$uritransform`, `$empty`, `$mp4`) are parsed as option syntax but are not
+actionable: they stay non-fatal blockers, are recorded in `engine.ignoredOptions`
+with `type: 'ignored'` diagnostics, and appear as `kind: 'notice'` entries from
+`wildfire:validate-filters`. The compiled IR is currently v9; every new IR field
+must bump `COMPILED_VERSION`, and cache entries from older schemas are rejected.
 
 Redirect rules name an alias from `lib/resources/redirect-resources.js`: `noopjs`,
 `noopcss`, `nooptext`, `noopjson`, `noophtml`, `1x1.gif`, `1x1.png`,

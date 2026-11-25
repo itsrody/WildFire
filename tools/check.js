@@ -382,6 +382,63 @@ function FilterEngineCapabilities() {
     .reduce((map, name) => Object.assign(map, { [name]: true }), {});
 }
 
+const filterConstants = require('../lib/engine/filter/constants.js').WildFireFilter;
+if (filterConstants.COMPILED_VERSION !== 9) {
+  errors.push('compiled IR version must be pinned to 9; bump it for every new IR field');
+}
+const EXPECTED_TYPE_ALIASES = {
+  main_frame: 'document', document: 'document', doc: 'document',
+  sub_frame: 'subdocument', subdocument: 'subdocument', frame: 'subdocument',
+  script: 'script', image: 'image', imageset: 'imageset',
+  stylesheet: 'stylesheet', css: 'stylesheet',
+  object: 'object', object_subrequest: 'object',
+  xmlhttprequest: 'xmlhttprequest', xhr: 'xmlhttprequest',
+  font: 'font', media: 'media',
+  websocket: 'websocket', ws: 'websocket', wss: 'websocket',
+  ping: 'ping', csp: 'csp', csp_report: 'csp',
+  manifest: 'manifest', web_manifest: 'manifest',
+  other: 'other', eventsource: 'other', speculative: 'other'
+};
+const aliasNames = Object.keys(EXPECTED_TYPE_ALIASES);
+if (Object.keys(filterConstants.TYPE_ALIASES).length !== aliasNames.length ||
+    aliasNames.some(alias => filterConstants.TYPE_ALIASES[alias] !== EXPECTED_TYPE_ALIASES[alias])) {
+  errors.push('TYPE_ALIASES drift; reconcile the parser, tests, and documentation');
+}
+const EXPECTED_DEFERRED_OPTIONS = [
+  'to', 'denyallow', 'top', 'strict1p', 'strict3p', 'header', 'method',
+  'ipaddress', 'permissions', 'cname', 'replace', 'urlskip',
+  'uritransform', 'empty', 'mp4'
+];
+if (filterConstants.DEFERRED_NETWORK_OPTIONS.size !== EXPECTED_DEFERRED_OPTIONS.length ||
+    EXPECTED_DEFERRED_OPTIONS.some(name => !filterConstants.DEFERRED_NETWORK_OPTIONS.has(name))) {
+  errors.push('DEFERRED_NETWORK_OPTIONS drift; reconcile validation notices and documentation');
+}
+const expectedOptionNames = new Set(
+  aliasNames.concat(Object.values(EXPECTED_TYPE_ALIASES), EXPECTED_DEFERRED_OPTIONS, [
+    'popup', 'match-case', 'important', 'badfilter', 'all', 'removeparam',
+    'removeheader', 'third-party', '3p', 'first-party', '1p', 'generichide',
+    'ghide', 'elemhide', 'ehide', 'specifichide', 'shide', 'redirect',
+    'redirect-rule', 'rewrite', 'rewrite-rule', 'csp', 'domain', 'from'
+  ])
+);
+if (expectedOptionNames.size !== filterConstants.NETWORK_OPTION_NAMES.size ||
+    Array.from(expectedOptionNames).some(name => !filterConstants.NETWORK_OPTION_NAMES.has(name))) {
+  errors.push('NETWORK_OPTION_NAMES drift; reconcile the option vocabulary and documentation');
+}
+const compileCacheSource = fs.readFileSync(path.join(ROOT, 'lib/compile/compile-cache.js'), 'utf8');
+if (!/function keyFor\(text, version, hash\)/.test(compileCacheSource) ||
+    !/compiled\.v === version/.test(compileCacheSource) ||
+    !/snapshot\.engineVersion === version/.test(compileCacheSource)) {
+  errors.push('compile cache must key compiled blobs and scriptlet snapshots by engine version');
+}
+const compiledSource = fs.readFileSync(path.join(ROOT, 'lib/engine/filter/engine-compiled.js'), 'utf8');
+if (!/compiled\.v !== COMPILED_VERSION/.test(compiledSource)) {
+  errors.push('loadCompiled must reject stale compiled schemas');
+}
+if (!/kind: 'notice'/.test(engineHostSource)) {
+  errors.push('validate-filters must expose deferred-option notices');
+}
+
 if (errors.length) {
   console.error('WildFire check failed:');
   errors.forEach(error => console.error(' - ' + error));

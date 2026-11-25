@@ -3,7 +3,7 @@
   "name": "WildFire",
   "short_name": "WildFire",
   "version": "0.1.0",
-  "description": "A minimal uBO-style content blocker built from scratch for Firefox 153+ (ESR).",
+  "description": "A Firefox-native rewrite of uBO filtering behavior for Firefox 153+ (ESR).",
   "homepage_url": "https://github.com/itsrody/WildFire",
 
   "icons": {

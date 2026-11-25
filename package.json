@@ -2,7 +2,7 @@
   "name": "wildfire",
   "version": "0.1.0",
   "private": true,
-  "description": "Minimal uBO-style content blocker built from scratch for Firefox 153+ (ESR)",
+  "description": "Firefox-native rewrite of uBO filtering behavior for Firefox 153+ (ESR)",
   "scripts": {
     "icons": "node tools/make-icons.js",
     "check": "node tools/check.js",
