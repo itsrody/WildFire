@@ -641,17 +641,19 @@ reported, so `data_collection_permissions.required` stays `["none"]`.
 
 | Supported | Not supported (yet) |
 | --- | --- |
-| `||host^` domain anchors, subdomains | other advanced selectors |
+| `||host^` domain anchors, subdomains; bare valid hostname as HOSTS-file form | other advanced selectors |
+| entity (`example.*`) and safe regex host targets, including `domain=`/`from=`/`to=` values | |
 | `|url|` start/end anchors | full EasyList-scale list curation |
 | `*` wildcards, `^` separator | full EasyList-scale performance tuning |
 | `@@` exceptions | |
 | `@@||host^$elemhide`, `$generichide`, `$specifichide` document exceptions | |
 | `$script`, `$image`, `$~type`, other resource types | |
-| `$all`, `$match-case` | |
+| `$all` (all native types plus document and popup, order-independent), `$match-case` | |
 | `$css` (`stylesheet`), `$frame` (`subdocument`), `$xhr` (`xmlhttprequest`), `$doc` (`document`), plus `main_frame`, `sub_frame`, `object_subrequest`, `ws`, `wss`, `csp_report`, `web_manifest`, `eventsource`, `speculative` aliases and `~type` forms | |
 | `$third-party`/`$3p`, `$~third-party`/`$~3p`, `$first-party`/`$1p`, `$~first-party`/`$~1p` | |
 | `$elemhide`/`$ehide`, `$generichide`/`$ghide`, `$specifichide`/`$shide` (exception-only) | |
-| `$domain=a\|~b` (`from=` alias), including `example.*` and `*.example.*` | |
+| `$domain=a\|~b` (`from=` alias), including `example.*`, `*.example.*`, and safe regex values | |
+| `$to`, `$denyallow`, `$top`, `$strict1p`, `$strict3p` | |
 | `$document`, `$popup`, `$important`, `$badfilter` | |
 | `$redirect=alias`, `$redirect-rule=alias` | |
 | `$rewrite=alias`, `/regex/$rewrite-rule=alias` (curated aliases only) | |
@@ -673,13 +675,23 @@ URLs up to 8192 characters.
 
 Option names are lowercased and resource types are normalized through
 `TYPE_ALIASES`; negated party and type options are accepted. Unknown options
-remain forgivingly ignored. Options reserved for later phases (`$to`,
-`$denyallow`, `$top`, `$strict1p`, `$strict3p`, `$header`, `$method`,
-`$ipaddress`, `$permissions`, `$cname`, `$replace`, `$urlskip`,
-`$uritransform`, `$empty`, `$mp4`) are parsed as option syntax but are not
-actionable: they stay non-fatal blockers, are recorded in `engine.ignoredOptions`
-with `type: 'ignored'` diagnostics, and appear as `kind: 'notice'` entries from
-`wildfire:validate-filters`. The compiled IR is currently v9; every new IR field
+remain forgivingly ignored. `$to` scopes the destination host and accepts plain,
+entity, safe regex, and negated values; `$domain=`/`$from=` scopes the document
+host with the same value forms. `$top` scopes the address-bar host, including
+embedded frames, and uses the same value forms; its topHost is supplied by
+`WildFirePageStore.contextFor()` through every engine match API. `$denyallow`
+requires `domain=`/`from=` and accepts only plain, non-negated hosts.
+`$strict1p`/`$strict3p` compare exact hostnames rather than registrable domains.
+`$all` subsumes earlier or later type exclusions and covers all native network
+types plus document and popup; inline-font/inline-script CSP concepts remain out
+of scope. The synchronous blocking listener reads topHost from the page store and
+passes it through `matchScope()` without an async lookup. Options reserved for
+later phases (`$header`, `$method`, `$ipaddress`,
+`$permissions`, `$cname`, `$replace`, `$urlskip`, `$uritransform`, `$empty`,
+`$mp4`) are parsed as option syntax but are not actionable: they stay non-fatal
+blockers, are recorded in `engine.ignoredOptions` with `type: 'ignored'`
+diagnostics, and appear as `kind: 'notice'` entries from
+`wildfire:validate-filters`. The compiled IR is currently v12; every new IR field
 must bump `COMPILED_VERSION`, and cache entries from older schemas are rejected.
 
 Redirect rules name an alias from `lib/resources/redirect-resources.js`: `noopjs`,

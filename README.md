@@ -119,6 +119,9 @@ line-numbered validation issues and notices from WildFire's own parser; `Ctrl/Cm
 | Rule | Meaning |
 | --- | --- |
 | `||ads.example.com^` | Block that host and its subdomains |
+| `ads.example.com` | HOSTS-file form: same host blocking as `||ads.example.com^` |
+| `||entity.example.*^` | Entity host: any matching suffix under `entity.example` |
+| `\|\|/ads[0-9]+\\.example\\.test/^` | Safe regex host target |
 | `|https://example.com/ad|` | Match a URL from its start/end |
 | `example.org*banner.gif` | Wildcard match |
 | `/ads\.example\.com\/track$/` | Regular-expression match (safe subset) |
@@ -129,13 +132,22 @@ line-numbered validation issues and notices from WildFire's own parser; `Ctrl/Cm
 | `@@||tracker.net^$specifichide` | Keep domain-specific cosmetic rules from applying (`shide`, exception-only) |
 | `||tracker.net^$script` | Only block scripts |
 | `||tracker.net^$~image` | Block everything except images |
-| `||tracker.net^$all` | Match every resource type, overriding earlier type filters |
+| `||tracker.net^$all` | Match every native resource type plus document and popup, regardless of option order |
 | `||tracker.net^$match-case` | Make the pattern case-sensitive |
 | `||tracker.net^$third-party` | Only block cross-site requests |
 | `||tracker.net^$domain=site.com\|~good.site.com` | Only on matching document hosts |
 | `||tracker.net^$from=site.com` | `domain=` alias |
 | `||tracker.net^$domain=site.*` | Match document hosts with any suffix |
 | `||tracker.net^$domain=*.site.*` | Match subdomains with any suffix |
+| `||tracker.net^$domain=/^cdn[0-9]+\\.scope\\.test$/` | Safe regex document-host scope |
+| `||tracker.net^$to=ads.example` | Only block requests whose destination host matches |
+| `||tracker.net^$to=ads.*` / `$to=/^ads[0-9]+\\.example$/` | Entity or safe regex destination-host scope |
+| `||tracker.net^$to=~skip.example` | Only when the destination host is not excluded |
+| `||tracker.net^$domain=site.test,denyallow=skip.site.test` | Skip matching destination hosts even inside a document scope; `$denyallow` needs `domain=`/`from=` and plain hosts only |
+| `||ads.example^$script,top=site.test` | Only when the address-bar host matches, including embedded frames |
+| `||ads.example^$script,~top=skip.test` | Only when the address-bar host is not excluded |
+| `||ads.example^$strict1p` | Only when request and document hosts are exactly equal |
+| `||ads.example^$strict3p` | Only when request and document hosts differ exactly |
 | `||landing.example^$document` | Block a top-level navigation to that host |
 | `||popup.example^$popup` | Block a popup opened as a new tab/window (Firefox native tab close + request cancel) |
 | `||tracker.net^$script,redirect=noopjs` | Serve WildFire's empty script instead of cancelling |
@@ -182,11 +194,19 @@ Resource-type aliases are accepted in `$type` and `$~type` form: `css` →
 `$1p`/`$first-party` and `$3p`/`$third-party` (with `~` negations); hide
 modifiers are `$ehide`/`$elemhide`, `$ghide`/`$generichide`, and
 `$shide`/`$specifichide` (exception-only). `$from=` aliases `$domain=`. Unknown
-options stay non-fatal and ignored. Options reserved for later phases (`$to`,
-`$denyallow`, `$top`, `$strict1p`, `$strict3p`, `$header`, `$method`,
-`$ipaddress`, `$permissions`, `$cname`, `$replace`, `$urlskip`,
-`$uritransform`, `$empty`, `$mp4`) remain non-fatal blockers but are visible as
-`ignored` diagnostics and Options validation notices.
+options stay non-fatal and ignored. `$to`, `$top`, `$domain=`/`$from=`, and
+`$denyallow` scope the destination, address-bar, document, and excluded
+destination hosts respectively; `$top` follows the top-level page even inside
+embedded frames. `$strict1p`/`$strict3p` compare exact hostnames. `$all` covers
+all native network resource types plus document and popup regardless of option
+order; WildFire does not yet implement `$all`'s inline-font/inline-script CSP
+concept. `$denyallow` requires `domain=`/`from=` and accepts only plain hosts.
+Other host-valued options accept literal hosts, WildFire entity wildcards, and
+safe `/regex/` values, including negation. Options reserved for later phases
+(`$header`, `$method`, `$ipaddress`, `$permissions`, `$cname`, `$replace`,
+`$urlskip`, `$uritransform`, `$empty`, `$mp4`) remain non-fatal blockers but are
+visible as `ignored` diagnostics and Options validation notices. Invalid host
+values are rejected with a line-numbered validation reason.
 
 ## Filter lists
 
@@ -441,7 +461,7 @@ execution is used.
 
 This is deliberately a scoped rewrite, not parity with every uBO feature today:
 
-- Filter compilation is event-driven (worker-backed with sync fallback) and cached by compiled schema version + content hash. The compiled schema is currently v9; any new IR field requires a version bump, and incompatible compiled data is rejected and rebuilt from text.
+- Filter compilation is event-driven (worker-backed with sync fallback) and cached by compiled schema version + content hash. The compiled schema is currently v12; any new IR field requires a version bump, and incompatible compiled data is rejected and rebuilt from text.
 
 - Regex filters use a safe subset: backreferences, nested/alternated quantifiers,
   long patterns and stateful flags are rejected when the list loads.

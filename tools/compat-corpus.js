@@ -37,7 +37,8 @@ const rejected = (id, family, rule, rejection, reason, engineOptions) => ({
 const families = [
   'network.comment', 'network.plain', 'network.wildcard', 'network.host',
   'network.anchors', 'network.regex', 'network.exception', 'network.types',
-  'network.party', 'network.domain', 'network.document', 'network.popup',
+  'network.party', 'network.domain', 'network.to', 'network.denyallow',
+  'network.top', 'network.strict-party', 'network.document', 'network.popup',
   'network.important', 'network.badfilter', 'network.redirect', 'network.rewrite',
   'network.csp', 'network.removeparam', 'network.removeheader',
   'network.hide-modifier', 'cname.scope', 'cosmetic.plain', 'cosmetic.scope',
@@ -49,6 +50,11 @@ const families = [
 
 const rejectionClasses = [
   { id: 'network.domain.invalid', match: 'invalid domain option:' },
+  { id: 'network.to.invalid', match: 'invalid to option:' },
+  { id: 'network.denyallow.invalid', match: 'invalid denyallow option:' },
+  { id: 'network.denyallow.domain', match: 'denyallow requires domain option' },
+  { id: 'network.top.invalid', match: 'invalid top option:' },
+  { id: 'network.host.regex', match: 'invalid host regex' },
   { id: 'network.hide-modifier.non-exception', match: 'hide modifiers require an exception' },
   { id: 'network.hide-modifier.mixed', match: 'hide modifiers cannot be combined with network actions' },
   { id: 'network.csp.bare', match: 'bare csp requires an exception' },
@@ -121,6 +127,27 @@ const rules = [
     'blocked', 'network rule', request('https://example.com/a/promo.gif', 'image', 'https://site.test/', true)),
   accepted('network.host.accepted', 'network.host', '||ads.example^',
     'blocked', 'network rule', request('https://cdn.ads.example/a.js', 'script', 'https://site.test/', true)),
+  accepted('network.hosts.accepted', 'network.host', 'hosts.example',
+    'blocked', 'network rule', [
+      request('https://hosts.example/a.js', 'script', 'https://site.test/', true),
+      request('https://cdn.hosts.example/a.js', 'script', 'https://site.test/', true),
+      request('https://nothosts.example/a.js', 'script', 'https://site.test/', false,
+        { decision: 'allowed', inspectorReason: 'no matching rule' }),
+      request('https://other.test/?q=hosts.example', 'script', 'https://site.test/', false,
+        { decision: 'allowed', inspectorReason: 'no matching rule' })
+    ]),
+  accepted('network.host.entity.accepted', 'network.host', '||entity.example.*^',
+    'blocked', 'network rule', [
+      request('https://ads.entity.example.com/a.js', 'script', 'https://site.test/', true),
+      request('https://entity.test/a.js', 'script', 'https://site.test/', false,
+        { decision: 'allowed', inspectorReason: 'no matching rule' })
+    ]),
+  accepted('network.host.regex.accepted', 'network.host', '||/ads[0-9]+\\.regex\\.test/^',
+    'blocked', 'network rule', [
+      request('https://ads12.regex.test/a.js', 'script', 'https://site.test/', true),
+      request('https://ads.regex.test/a.js', 'script', 'https://site.test/', false,
+        { decision: 'allowed', inspectorReason: 'no matching rule' })
+    ]),
   accepted('network.anchors.accepted', 'network.anchors', '|https://exact.example/ad.js|',
     'blocked', 'network rule', [
       request('https://exact.example/ad.js', 'script', 'https://site.test/', true),
@@ -140,6 +167,16 @@ const rules = [
       request('https://asset.example/a.png', 'image', 'https://site.test/', true),
       request('https://asset.example/a.woff', 'font', 'https://site.test/', false,
         { decision: 'allowed', inspectorReason: 'no matching rule' })
+    ]),
+  accepted('network.all.accepted', 'network.types', '||all.example^$~script,all',
+    'blocked', 'network rule', [
+      request('https://all.example/a.js', 'script', 'https://site.test/', true),
+      request('https://all.example/page', 'document', 'https://site.test/', true,
+        { decision: 'blocked', inspectorReason: '$document' }),
+      Object.assign(
+        popup('https://all.example/pop', 'https://site.test/', true),
+        { decision: 'blocked', inspectorReason: '$popup' }
+      )
     ]),
   accepted('network.party.accepted', 'network.party', ['||third.example^$3p', '||first.example^$1p'],
     'blocked', 'network rule', [
@@ -168,6 +205,77 @@ const rules = [
     ]),
   accepted('network.domain-from.accepted', 'network.domain', '||from.example^$from=site.test',
     'blocked', 'network rule', request('https://from.example/a.js', 'script', 'https://site.test/', true)),
+  accepted('network.domain-regex.accepted', 'network.domain', '||regex.example^$domain=/^cdn[0-9]+\\.scope\\.test$/',
+    'blocked', 'network rule', [
+      request('https://regex.example/a.js', 'script', 'https://cdn1.scope.test/', true),
+      request('https://regex.example/a.js', 'script', 'https://other.scope.test/', false,
+        { decision: 'allowed', inspectorReason: 'no matching rule' })
+    ]),
+  accepted('network.to.accepted', 'network.to', 'ad.js*$script,to=site.test',
+    'blocked', 'network rule', [
+      request('https://site.test/ad.js', 'script', 'https://site.test/', true),
+      request('https://other.test/ad.js', 'script', 'https://site.test/', false,
+        { decision: 'allowed', inspectorReason: 'no matching rule' })
+    ]),
+  accepted('network.to-entity.accepted', 'network.to', 'ad.js*$script,to=ads.*',
+    'blocked', 'network rule', [
+      request('https://ads.example/ad.js', 'script', 'https://site.test/', true),
+      request('https://site.test/ad.js', 'script', 'https://site.test/', false,
+        { decision: 'allowed', inspectorReason: 'no matching rule' })
+    ]),
+  accepted('network.to-regex.accepted', 'network.to', 'ad.js*$script,to=/^ads[0-9]+\\.scope\\.test$/',
+    'blocked', 'network rule', [
+      request('https://ads12.scope.test/ad.js', 'script', 'https://site.test/', true),
+      request('https://other.scope.test/ad.js', 'script', 'https://site.test/', false,
+        { decision: 'allowed', inspectorReason: 'no matching rule' })
+    ]),
+  accepted('network.to-negated.accepted', 'network.to', 'ad.js*$script,to=~blocked.test',
+    'blocked', 'network rule', [
+      request('https://site.test/ad.js', 'script', 'https://site.test/', true),
+      request('https://blocked.test/ad.js', 'script', 'https://site.test/', false,
+        { decision: 'allowed', inspectorReason: 'no matching rule' })
+    ]),
+  accepted('network.denyallow.accepted', 'network.denyallow',
+    'ad.js*$script,domain=site.test,denyallow=skip.site.test',
+    'blocked', 'network rule', [
+      request('https://site.test/ad.js', 'script', 'https://site.test/', true),
+      request('https://skip.site.test/ad.js', 'script', 'https://site.test/', false,
+        { decision: 'allowed', inspectorReason: 'no matching rule' })
+    ]),
+  accepted('network.top.accepted', 'network.top', '||ads.test^$script,top=site.test',
+    'blocked', 'network rule', [
+      request('https://ads.test/a.js', 'script', 'https://embed.other.test/', true,
+        { hosts: { target: ['ads.test'], document: ['embed.other.test'], top: ['site.test'] } }),
+      request('https://ads.test/a.js', 'script', 'https://embed.other.test/', false,
+        { hosts: { target: ['ads.test'], document: ['embed.other.test'], top: ['other.test'] },
+          decision: 'allowed', inspectorReason: 'no matching rule' })
+    ]),
+  accepted('network.top-negated.accepted', 'network.top', '||ads.test^$script,~top=skip.test',
+    'blocked', 'network rule', [
+      request('https://ads.test/a.js', 'script', 'https://embed.other.test/', true,
+        { hosts: { target: ['ads.test'], document: ['embed.other.test'], top: ['site.test'] } }),
+      request('https://ads.test/a.js', 'script', 'https://embed.other.test/', false,
+        { hosts: { target: ['ads.test'], document: ['embed.other.test'], top: ['skip.test'] },
+          decision: 'allowed', inspectorReason: 'no matching rule' })
+    ]),
+  accepted('network.top-regex.accepted', 'network.top', '||ads.test^$script,top=/^site[0-9]+\\.test$/',
+    'blocked', 'network rule', [
+      request('https://ads.test/a.js', 'script', 'https://embed.other.test/', true,
+        { hosts: { target: ['ads.test'], document: ['embed.other.test'], top: ['site12.test'] } }),
+      request('https://ads.test/a.js', 'script', 'https://embed.other.test/', false,
+        { hosts: { target: ['ads.test'], document: ['embed.other.test'], top: ['site.test'] },
+          decision: 'allowed', inspectorReason: 'no matching rule' })
+    ]),
+  accepted('network.strict-party.accepted', 'network.strict-party',
+    ['||strict.example^$strict1p', '||cross.example^$strict3p'],
+    'blocked', 'network rule', [
+      request('https://strict.example/a.js', 'script', 'https://strict.example/', true),
+      request('https://strict.example/a.js', 'script', 'https://sub.strict.example/', false,
+        { decision: 'allowed', inspectorReason: 'no matching rule' }),
+      request('https://a.cross.example/a.js', 'script', 'https://b.cross.example/', true),
+      request('https://a.cross.example/a.js', 'script', 'https://a.cross.example/', false,
+        { decision: 'allowed', inspectorReason: 'no matching rule' })
+    ]),
   accepted('network.document.accepted', 'network.document', '||nav.example^$document',
     'blocked', '$document', request('https://nav.example/page', 'document', 'https://site.test/', true)),
   accepted('network.popup.accepted', 'network.popup', '||popup.example^$popup',
@@ -275,6 +383,14 @@ const rules = [
   ], 'scriptlet', 'scriptlet payload', scriptletCheck(2, 'set-constant', true)),
 
   rejected('network.domain.invalid.rejected', 'network.domain', '||bad.example^$domain=bad..example', 'rejectedRegex', 'invalid domain option: bad..example'),
+  rejected('network.to.invalid.rejected', 'network.to', '||bad.example^$to=bad..example', 'rejectedRegex', 'invalid to option: bad..example'),
+  rejected('network.denyallow.invalid.rejected', 'network.denyallow', '||bad.example^$denyallow=bad..example', 'rejectedRegex', 'invalid denyallow option: bad..example'),
+  rejected('network.denyallow.entity.rejected', 'network.denyallow', '||bad.example^$domain=site.test,denyallow=skip.site.*', 'rejectedRegex', 'invalid denyallow option: skip.site.*'),
+  rejected('network.denyallow.regex.rejected', 'network.denyallow', '||bad.example^$domain=site.test,denyallow=/skip\\.site\\.test/', 'rejectedRegex', 'invalid denyallow option: /skip\\.site\\.test/'),
+  rejected('network.denyallow.negated.rejected', 'network.denyallow', '||bad.example^$domain=site.test,denyallow=~skip.site.test', 'rejectedRegex', 'invalid denyallow option: ~skip.site.test'),
+  rejected('network.denyallow.domain.rejected', 'network.denyallow', '||bad.example^$denyallow=skip.site.test', 'rejectedRegex', 'denyallow requires domain option'),
+  rejected('network.top.invalid.rejected', 'network.top', '||bad.example^$top=bad..example', 'rejectedRegex', 'invalid top option: bad..example'),
+  rejected('network.host.regex.rejected', 'network.host', '||/([a-z]+)+/^', 'rejectedRegex', 'invalid host regex'),
   rejected('network.hide-modifier.non-exception.rejected', 'network.hide-modifier', '||bad.example^$generichide', 'rejectedRegex', 'hide modifiers require an exception'),
   rejected('network.hide-modifier.mixed.rejected', 'network.hide-modifier', '@@||bad.example^$generichide,rewrite=blank-js', 'rejectedRegex', 'hide modifiers cannot be combined with network actions'),
   rejected('network.csp.bare.rejected', 'network.csp', '||bad.example^$csp', 'rejectedRegex', 'bare csp requires an exception'),
@@ -340,8 +456,8 @@ const smokeScenarios = [
   { id: 'network-redirect', capability: 'REDIRECT', ruleIds: ['network.redirect.accepted', 'network.redirect-rule.accepted'] },
   { id: 'network-rewrite', capability: 'REWRITE', ruleIds: ['network.rewrite.accepted', 'network.rewrite-rule.accepted'] },
   { id: 'network-csp', capability: 'CSP', ruleIds: ['network.csp.accepted'] },
-  { id: 'network-popup', capability: 'POPUP', ruleIds: ['network.popup.accepted'] },
-  { id: 'network-document', capability: 'DOCUMENT', ruleIds: ['network.document.accepted'] },
+  { id: 'network-popup', capability: 'POPUP', ruleIds: ['network.popup.accepted', 'network.all.accepted'] },
+  { id: 'network-document', capability: 'DOCUMENT', ruleIds: ['network.document.accepted', 'network.all.accepted'] },
   { id: 'network-party', capability: 'THIRD_PARTY', ruleIds: ['network.party.accepted', 'network.not-party.accepted'] },
   { id: 'network-domain', capability: 'DOMAIN', ruleIds: ['network.domain.accepted', 'network.domain-wildcard.accepted', 'network.domain-from.accepted', 'cname.scope.accepted'] },
   { id: 'network-regex', capability: 'REGEX', ruleIds: ['network.regex.accepted', 'network.redirect-rule.accepted', 'network.rewrite-rule.accepted'] },

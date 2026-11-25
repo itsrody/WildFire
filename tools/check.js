@@ -383,8 +383,8 @@ function FilterEngineCapabilities() {
 }
 
 const filterConstants = require('../lib/engine/filter/constants.js').WildFireFilter;
-if (filterConstants.COMPILED_VERSION !== 9) {
-  errors.push('compiled IR version must be pinned to 9; bump it for every new IR field');
+if (filterConstants.COMPILED_VERSION !== 12) {
+  errors.push('compiled IR version must be pinned to 12; bump it for every new IR field');
 }
 const EXPECTED_TYPE_ALIASES = {
   main_frame: 'document', document: 'document', doc: 'document',
@@ -405,9 +405,8 @@ if (Object.keys(filterConstants.TYPE_ALIASES).length !== aliasNames.length ||
   errors.push('TYPE_ALIASES drift; reconcile the parser, tests, and documentation');
 }
 const EXPECTED_DEFERRED_OPTIONS = [
-  'to', 'denyallow', 'top', 'strict1p', 'strict3p', 'header', 'method',
-  'ipaddress', 'permissions', 'cname', 'replace', 'urlskip',
-  'uritransform', 'empty', 'mp4'
+  'header', 'method', 'ipaddress', 'permissions', 'cname', 'replace',
+  'urlskip', 'uritransform', 'empty', 'mp4'
 ];
 if (filterConstants.DEFERRED_NETWORK_OPTIONS.size !== EXPECTED_DEFERRED_OPTIONS.length ||
     EXPECTED_DEFERRED_OPTIONS.some(name => !filterConstants.DEFERRED_NETWORK_OPTIONS.has(name))) {
@@ -418,7 +417,8 @@ const expectedOptionNames = new Set(
     'popup', 'match-case', 'important', 'badfilter', 'all', 'removeparam',
     'removeheader', 'third-party', '3p', 'first-party', '1p', 'generichide',
     'ghide', 'elemhide', 'ehide', 'specifichide', 'shide', 'redirect',
-    'redirect-rule', 'rewrite', 'rewrite-rule', 'csp', 'domain', 'from'
+    'redirect-rule', 'rewrite', 'rewrite-rule', 'csp', 'domain', 'from',
+    'to', 'denyallow', 'top', 'strict1p', 'strict3p'
   ])
 );
 if (expectedOptionNames.size !== filterConstants.NETWORK_OPTION_NAMES.size ||

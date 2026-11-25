@@ -142,7 +142,7 @@ or upstream filter text is committed.
   every accepted form; unknown options remain forgivingly ignored.
 - Deferred-but-recognized options are no longer silent: they stay non-fatal
   blockers and produce `ignored` diagnostics plus `validate-filters` notices.
-- Compiled schema is v9; every new IR field requires a version bump, and stale
+- Compiled schema is v12; every new IR field requires a version bump, and stale
   cache entries are rejected and rebuilt from text.
 
 **Exit criteria:** documentation matches parser/engine behavior; validation
@@ -161,6 +161,8 @@ Scope, in dependency order:
 2. Entity and regex host values in targets, `domain=`/`from=`, `to=`, and static
    extended host lists, with negation and safe-regex validation.
 3. `$to`, `$denyallow`, `$top`, `$strict1p`, `$strict3p`, and `$all` semantics.
+   Implemented with destination/top-context scopes, strict exact-host party
+   checks, order-independent `$all`, and line-numbered rejection reasons.
 4. `$header`, `$method`, `$ipaddress`, and `$permissions`, reusing the existing
    `wapi-webrequest` header/stream plumbing and bounded CNAME cache; IP matching
    needs new bounded DNS-address state.
@@ -347,5 +349,7 @@ A feature is complete only when all of these are true:
 1. Build the local compatibility harness and current-truth matrix (Phase 0).
 2. Implement HOSTS-file interpretation and entity/regex host scope (Phase 2
    steps 1–2), including strict-blocking decision gate D1 documentation.
-3. Implement `$to`, `$denyallow`, `$top`, and strict party options (Phase 2
-   step 3) with Inspector and validation tests.
+3. Implemented `$to`, `$denyallow`, `$top`, strict party options, and `$all`
+   (Phase 2 step 3) with Inspector and validation tests.
+4. Implement Phase 2 steps 4–6 with WildFire-owned registries and trusted-source
+   gates where required.

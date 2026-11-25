@@ -4073,17 +4073,17 @@ async function testPhase1AAliases() {
 async function testPhase1DeferredOptions() {
   const e = new FilterEngine();
   e.load([
-    '||defer.example^$to=site.test',
-    '||defer.example^$strict1p',
+    '||defer.example^$header=x-requested-with',
+    '||defer.example^$ipaddress=192.0.2.1',
     '||unknown.example^$made-up-option=1'
   ].join('\n'));
 
   assert.strictEqual(e.rejectedRegex.length, 0, 'deferred options do not reject rules');
   assert.strictEqual(e.ignoredOptions.map(entry => entry.reason).join(','),
-    'option not implemented: to,option not implemented: strict1p',
+    'option not implemented: header,option not implemented: ipaddress',
     'deferred options are recorded once each in load order');
   assert.ok(e.getDiagnostics().some(entry =>
-    entry.type === 'ignored' && entry.reason === 'option not implemented: to'),
+    entry.type === 'ignored' && entry.reason === 'option not implemented: header'),
   'deferred options produce ignored diagnostics');
   assert.strictEqual(
     e.matchRequest('https://defer.example/a.js', 'script', 'https://site.test/').blocked, true,
@@ -4093,10 +4093,208 @@ async function testPhase1DeferredOptions() {
   const restored = new FilterEngine();
   assert.strictEqual(restored.loadCompiled(compiled), true, 'compiled deferred options load');
   assert.strictEqual(restored.ignoredOptions.map(entry => entry.reason).join(','),
-    'option not implemented: to,option not implemented: strict1p',
+    'option not implemented: header,option not implemented: ipaddress',
     'compiled deferred options round-trip');
   assert.ok(restored.getDiagnostics().some(entry => entry.type === 'ignored'),
     'compiled deferred diagnostics round-trip');
+}
+
+async function testPhase2HostsFile() {
+  const e = new FilterEngine();
+  e.load([
+    '||anchored.example^',
+    'hosts.example',
+    '@@keep.hosts.example',
+    'hosts.example*wild'
+  ].join('\n'));
+
+  assert.strictEqual(e.rejectedRegex.length, 0, 'HOSTS-style rules load cleanly');
+  assert.ok(e.hostRules.has('hosts.example'), 'bare host is host-indexed');
+  assert.strictEqual(e.hostRules.has('hosts.example*wild'), false,
+    'wildcard hostname-like patterns are not host-indexed');
+  assert.strictEqual(
+    e.matchRequest('https://hosts.example/a.js', 'script', 'https://site.test/').blocked, true,
+    'bare host blocks its exact host');
+  assert.strictEqual(
+    e.matchRequest('https://cdn.hosts.example/a.js', 'script', 'https://site.test/').blocked, true,
+    'bare host blocks subdomains');
+  assert.strictEqual(
+    e.matchRequest('https://nothosts.example/a.js', 'script', 'https://site.test/').blocked, false,
+    'bare host does not match lookalike hosts');
+  assert.strictEqual(
+    e.matchRequest('https://other.test/?q=hosts.example', 'script', 'https://site.test/').blocked, false,
+    'bare host does not match URL text outside the host');
+  assert.strictEqual(
+    e.matchRequest('https://keep.hosts.example/a.js', 'script', 'https://site.test/').blocked, false,
+    'bare host exceptions work');
+  assert.strictEqual(
+    e.matchRequest('https://other.test/?q=hosts.example-wild', 'script', 'https://site.test/').blocked, true,
+    'wildcard hostname-like patterns keep plain semantics');
+  assert.strictEqual(
+    e.matchRequest('https://hosts.example/', 'document', 'https://site.test/').blocked, false,
+    'bare hosts still require an explicit document option');
+
+  const restored = new FilterEngine();
+  assert.strictEqual(restored.loadCompiled(e.toCompiled()), true, 'HOSTS compiled round-trip loads');
+  assert.ok(restored.hostRules.has('hosts.example'), 'compiled bare host stays host-indexed');
+  assert.strictEqual(
+    restored.matchRequest('https://cdn.hosts.example/a.js', 'script', 'https://site.test/').blocked, true,
+    'compiled bare host keeps host matching');
+}
+
+async function testPhase2HostSelectors() {
+  const e = new FilterEngine();
+  e.load([
+    '||entity.example.*^',
+    '||/ads[0-9]+\\.regex\\.test/^',
+    '||scoped.example^$domain=/^cdn[0-9]+\\.scope\\.test$/'
+  ].join('\n'));
+
+  assert.strictEqual(e.rejectedRegex.length, 0, 'entity and regex host rules load cleanly');
+  assert.strictEqual(e.hostRules.has('entity.example.*'), false,
+    'entity hosts are not literal host keys');
+  assert.strictEqual(e.unindexedRules.some(rule => rule.hostSelector === 'entity.example.*'), true,
+    'entity host rules are scanned from the unindexed bucket');
+  assert.strictEqual(
+    e.matchRequest('https://ads.entity.example.com/a.js', 'script', 'https://site.test/').blocked, true,
+    'entity host target matches subdomains');
+  assert.strictEqual(
+    e.matchRequest('https://entity.test/a.js', 'script', 'https://site.test/').blocked, false,
+    'entity host target does not match lookalikes');
+  assert.strictEqual(
+    e.matchRequest('https://ads12.regex.test/a.js', 'script', 'https://site.test/').blocked, true,
+    'regex host target matches safe host regexes');
+  assert.strictEqual(
+    e.matchRequest('https://ads.regex.test/a.js', 'script', 'https://site.test/').blocked, false,
+    'regex host target rejects non-matching hosts');
+  assert.strictEqual(
+    e.matchRequest('https://scoped.example/a.js', 'script', 'https://cdn1.scope.test/').blocked, true,
+    'regex domain scope matches document hosts');
+  assert.strictEqual(
+    e.matchRequest('https://scoped.example/a.js', 'script', 'https://other.scope.test/').blocked, false,
+    'regex domain scope rejects non-matching document hosts');
+
+  const restored = new FilterEngine();
+  assert.strictEqual(restored.loadCompiled(e.toCompiled()), true, 'host selector compiled round-trip loads');
+  assert.strictEqual(
+    restored.matchRequest('https://ads.entity.example.com/a.js', 'script', 'https://site.test/').blocked, true,
+    'compiled entity hosts keep matching');
+  assert.strictEqual(
+    restored.matchRequest('https://scoped.example/a.js', 'script', 'https://cdn1.scope.test/').blocked, true,
+    'compiled regex domain scopes keep matching');
+
+  const rejected = new FilterEngine();
+  rejected.load([
+    '||/([a-z]+)+/^',
+    '||bad.example^$domain=bad..example'
+  ].join('\n'));
+  assert.strictEqual(rejected.rejectedRegex.map(entry => entry.reason).join('|'),
+    'invalid host regex|invalid domain option: bad..example',
+    'unsafe host selectors and invalid domain values have stable reasons');
+}
+
+async function testPhase2ScopingOptions() {
+  const e = new FilterEngine();
+  e.load([
+    'ad.js*$script,to=site.test',
+    'entity-ad.js*$script,to=ads.*',
+    'regex-ad.js*$script,to=/^ads[0-9]+\\.scope\\.test$/',
+    'negated-ad.js*$script,to=~blocked.test',
+    '||deny.example^$script,domain=site.test,denyallow=skip.site.test',
+    '||top.example^$script,top=site.test',
+    '||top-any.example^$script,top',
+    '||strict.example^$strict1p',
+    '||cross.example^$strict3p',
+    '||all.example^$~script,all'
+  ].join('\n'));
+
+  assert.strictEqual(e.rejectedRegex.length, 0, 'Phase 2 scoping rules load cleanly');
+  assert.strictEqual(
+    e.matchRequest('https://site.test/ad.js', 'script', 'https://site.test/').blocked, true,
+    '$to matches the request destination host');
+  assert.strictEqual(
+    e.matchRequest('https://other.test/ad.js', 'script', 'https://site.test/').blocked, false,
+    '$to rejects other destination hosts');
+  assert.strictEqual(
+    e.matchRequest('https://ads.example/entity-ad.js', 'script', 'https://site.test/').blocked, true,
+    '$to accepts entity host values');
+  assert.strictEqual(
+    e.matchRequest('https://ads12.scope.test/regex-ad.js', 'script', 'https://site.test/').blocked, true,
+    '$to accepts safe regex host values');
+  assert.strictEqual(
+    e.matchRequest('https://site.test/negated-ad.js', 'script', 'https://site.test/').blocked, true,
+    '$to accepts negated host values');
+  assert.strictEqual(
+    e.matchRequest('https://blocked.test/negated-ad.js', 'script', 'https://site.test/').blocked, false,
+    'negated $to excludes its host');
+  assert.strictEqual(
+    e.matchRequest('https://deny.example/a.js', 'script', 'https://site.test/').blocked, true,
+    '$denyallow still blocks other hosts inside its domain scope');
+  assert.strictEqual(
+    e.matchRequest('https://skip.site.test/a.js', 'script', 'https://site.test/').blocked, false,
+    '$denyallow skips its plain host');
+
+  const embedded = { target: ['top.example'], document: ['embed.other.test'], top: ['site.test'] };
+  const otherTop = { target: ['top.example'], document: ['embed.other.test'], top: ['other.test'] };
+  assert.strictEqual(
+    e.matchRequest('https://top.example/a.js', 'script', 'https://embed.other.test/', embedded).blocked, true,
+    '$top scopes embedded frames by the address-bar host');
+  assert.strictEqual(
+    e.matchRequest('https://top.example/a.js', 'script', 'https://embed.other.test/', otherTop).blocked, false,
+    '$top rejects other top-level hosts');
+  assert.strictEqual(
+    e.matchRequest('https://top-any.example/a.js', 'script', 'https://site.test/',
+      { target: ['top-any.example'], document: ['site.test'], top: [] }).blocked, false,
+    'bare $top requires a top-level context');
+  assert.strictEqual(
+    e.matchRequest('https://strict.example/a.js', 'script', 'https://strict.example/').blocked, true,
+    '$strict1p matches the exact host');
+  assert.strictEqual(
+    e.matchRequest('https://strict.example/a.js', 'script', 'https://sub.strict.example/').blocked, false,
+    '$strict1p rejects subdomains');
+  assert.strictEqual(
+    e.matchRequest('https://a.cross.example/a.js', 'script', 'https://b.cross.example/').blocked, true,
+    '$strict3p matches different exact hosts');
+  assert.strictEqual(
+    e.matchRequest('https://a.cross.example/a.js', 'script', 'https://a.cross.example/').blocked, false,
+    '$strict3p rejects the same exact host');
+  assert.strictEqual(
+    e.matchRequest('https://all.example/a.js', 'script', 'https://site.test/').blocked, true,
+    '$all overrides an earlier type exclusion');
+  assert.strictEqual(
+    e.matchRequest('https://all.example/page', 'document', 'https://site.test/').blocked, true,
+    '$all includes document matching');
+  assert.strictEqual(
+    e.matchPopup('https://all.example/pop', 'https://site.test/').blocked, true,
+    '$all includes popup matching');
+
+  const restored = new FilterEngine();
+  assert.strictEqual(restored.loadCompiled(e.toCompiled()), true, 'Phase 2 scoping compiles cleanly');
+  assert.strictEqual(
+    restored.matchRequest('https://ads12.scope.test/regex-ad.js', 'script', 'https://site.test/').blocked, true,
+    'compiled $to keeps regex host values');
+  assert.strictEqual(
+    restored.matchRequest('https://top.example/a.js', 'script', 'https://embed.other.test/', embedded).blocked, true,
+    'compiled $top keeps top-context scope');
+  assert.strictEqual(
+    restored.matchPopup('https://all.example/pop', 'https://site.test/').blocked, true,
+    'compiled $all keeps popup matching');
+
+  const rejected = new FilterEngine();
+  rejected.load([
+    '||bad.example^$denyallow=skip.site.test',
+    '||bad.example^$domain=site.test,denyallow=skip.site.*',
+    '||bad.example^$domain=site.test,denyallow=/skip\\.site\\.test/',
+    '||bad.example^$domain=site.test,denyallow=~skip.site.test',
+    '||bad.example^$top=bad..example'
+  ].join('\n'));
+  assert.strictEqual(rejected.rejectedRegex.map(entry => entry.reason).join('|'), [
+    'denyallow requires domain option',
+    'invalid denyallow option: skip.site.*',
+    'invalid denyallow option: /skip\\.site\\.test/',
+    'invalid denyallow option: ~skip.site.test',
+    'invalid top option: bad..example'
+  ].join('|'), 'invalid scoping options have stable rejection reasons');
 }
 
 async function testCosmeticPayloadCache() {
@@ -4128,7 +4326,7 @@ async function testCosmeticPayloadCache() {
       getCosmetic: host => { calls.cosmetic++; return ['.ad-' + host]; },
       getProcedural: () => { calls.procedural++; return []; }
     },
-    pageStore: { setCosmetic() {} },
+    pageStore: { setCosmetic() {}, topHostForTab: () => '' },
     wapiContexts: { find: () => null, framesForTab: () => [] },
     wapi: {
       tabs: {
@@ -6761,7 +6959,7 @@ async function testBackgroundControllerRobustness() {
         '! note',
         '/(a+)+$/',
         '||bad.example^$csp=not-curated',
-        '||defer.example^$to=site.test'
+        '||defer.example^$header=x-test'
       ].join('\n')
     }, {});
     assert.strictEqual(validation.ok, true, 'filter validation returns a local result');
@@ -6778,7 +6976,7 @@ async function testBackgroundControllerRobustness() {
     assert.strictEqual(validation.validation.notices[0].line, 5,
       'deferred option notice points at its rule line');
     assert.strictEqual(validation.validation.notices[0].reason,
-      'option not implemented: to', 'deferred option notice has a stable reason');
+      'option not implemented: header', 'deferred option notice has a stable reason');
     assert.strictEqual(healthy.context.state.customFilters, beforeValidation,
       'validation never persists custom filters');
     const unknown = await healthy.debug().onMessage({ type: 'wildfire:missing' }, {});
@@ -7215,6 +7413,9 @@ Promise.resolve()
   .then(() => testRoadmapPhase0Corpus())
   .then(() => testPhase1AAliases())
   .then(() => testPhase1DeferredOptions())
+  .then(() => testPhase2HostsFile())
+  .then(() => testPhase2HostSelectors())
+  .then(() => testPhase2ScopingOptions())
   .then(() => testCosmeticPayloadCache())
   .then(() => testHideExceptionModifiers())
   .then(() => testPhase1BBadfilter())
