@@ -8263,6 +8263,323 @@ async function testTrafficPathRegressions() {
   }
 }
 
+async function testNativeBridgeScriptlets() {
+  const savedFetch = context.fetch;
+  const savedWarn = console.warn;
+  console.warn = () => {};
+  context.fetch = async () => ({ ok: false });
+
+  const scriptletText = [
+    'example.com##+js(set-constant, adValue, false)',
+    'example.com#@#+js(set-constant, adValue, false)',
+    'example.com##+js(remove-attr, id, .ad)'
+  ].join('\n');
+
+  function makeBrowserApi(native, onRegister) {
+    const hub = { addListener() {}, removeListener() {} };
+    return {
+      runtime: {
+        getURL: path => 'moz-extension://test/' + path,
+        onMessage: hub,
+        onConnect: hub
+      },
+      storage: {
+        local: {
+          get: async () => ({}),
+          set: async () => {},
+          remove: async () => {}
+        }
+      },
+      browserAction: { setBadgeText() {}, setBadgeBackgroundColor() {} },
+      webRequest: {
+        onBeforeRequest: hub,
+        onBeforeSendHeaders: hub,
+        onHeadersReceived: hub,
+        onCompleted: hub,
+        onErrorOccurred: hub,
+        onBeforeRedirect: hub
+      },
+      webNavigation: {
+        onCreatedNavigationTarget: hub,
+        onCommitted: hub,
+        onReferenceFragmentUpdated: hub,
+        onHistoryStateUpdated: hub
+      },
+      tabs: {
+        query: async () => [],
+        get: async id => ({ id, url: '' }),
+        sendMessage: async () => {},
+        remove: async () => {},
+        onUpdated: hub,
+        onRemoved: hub
+      },
+      alarms: {
+        onAlarm: hub,
+        clear: async () => {},
+        get: async () => null,
+        create: async () => {}
+      },
+      contentScripts: {
+        register: async details => {
+          onRegister(JSON.parse(JSON.stringify(details)));
+          return { unregister: async () => {} };
+        }
+      },
+      publicSuffix: { getDomain: host => host.split('.').slice(-2).join('.') },
+      wildfireNative: native
+    };
+  }
+
+  const store = {
+    defaults: WildFireStore.defaults,
+    get: async () => Object.assign({}, WildFireStore.defaults),
+    save: async patch => patch
+  };
+  try {
+    const bridgeSets = [];
+    const bridgeClears = [];
+    const registrations = [];
+    const native = {
+      setPayload: async payload => {
+        bridgeSets.push(JSON.parse(JSON.stringify(payload)));
+        return { ok: true };
+      },
+      clearPayload: async () => {
+        bridgeClears.push(true);
+        return { ok: true };
+      },
+      getStatus: async () => ({ ok: true })
+    };
+    const bg = WildFireBackground.create({
+      browserApi: makeBrowserApi(native, details => registrations.push(details)),
+      store
+    });
+    await bg.start();
+    const c = bg.context;
+    assert.strictEqual(c.wapiCapabilities.nativeBridge().setPayload, native.setPayload,
+      'the optional native bridge is detected through wapi capabilities');
+
+    c.engine.load(scriptletText);
+    await c.syncScriptlets();
+    const payload = bridgeSets[bridgeSets.length - 1];
+    assert.ok(payload, 'syncScriptlets delivers a payload to the native bridge');
+    assert.strictEqual(payload.version, 1, 'native payload uses version 1');
+    assert.strictEqual(payload.generation, c.scriptletGeneration,
+      'native payload carries the current scriptlet generation');
+    const allRules = payload.phases.realmBirth.concat(payload.phases.documentStart);
+    assert.strictEqual(payload.hash, c.scriptletHash(allRules),
+      'native payload carries the canonical WildFire scriptlet hash');
+    const realmBirth = payload.phases.realmBirth;
+    assert.strictEqual(realmBirth.length, 2,
+      'realm-birth delivery contains the rule and its #@# exception');
+    assert.ok(realmBirth.every(entry => entry.alias === 'set-constant' &&
+      entry.args.join(',') === 'adValue,false'),
+    'both realm-birth entries resolve to the same canonical alias and arguments');
+    assert.strictEqual(realmBirth.map(entry => entry.isException ? 'exception' : 'rule')
+      .sort().join(','), 'exception,rule', 'the realm-birth exception is preserved');
+    assert.strictEqual(payload.phases.documentStart.map(entry => entry.alias).join(','),
+      'remove-attr', 'DOM-dependent aliases stay in the document_start phase');
+    const registration = registrations[registrations.length - 1];
+    const registrationCode = registration.js.find(entry => entry.code).code;
+    assert.ok(registrationCode.includes('remove-attr'),
+      'the stock fallback still receives document_start rules');
+    assert.ok(!registrationCode.includes('set-constant'),
+      'realm-birth rules are not injected twice when the bridge is ready');
+
+    const clears = bridgeClears.length;
+    assert.strictEqual(await c.syncNativeScriptlets({ realmBirth: [], documentStart: [] }, 99), true,
+      'an empty payload clears the native bridge');
+    assert.strictEqual(bridgeClears.length, clears + 1, 'clearPayload is called once');
+
+    const failingRegistrations = [];
+    const failingNative = {
+      setPayload: async () => { throw new Error('bridge unavailable'); },
+      clearPayload: async () => ({ ok: true }),
+      getStatus: async () => ({ ok: true })
+    };
+    const failing = WildFireBackground.create({
+      browserApi: makeBrowserApi(failingNative, details => failingRegistrations.push(details)),
+      store
+    });
+    await failing.start();
+    failing.context.engine.load(scriptletText);
+    await failing.context.syncScriptlets();
+    const failingCode = failingRegistrations[failingRegistrations.length - 1]
+      .js.find(entry => entry.code).code;
+    assert.ok(failingCode.includes('set-constant') && failingCode.includes('remove-attr'),
+      'a failed bridge falls back to all scriptlets at document_start');
+
+    // The non-packaged Firefox scaffold is loaded with API stubs so the
+    // privileged validation and realm-birth hook stay covered by npm test.
+    const parentSource = fs.readFileSync(path.join(ROOT,
+      'browser/extensions/wildfire-native/parent/ext-wildfire-native.js'), 'utf8');
+    const childSource = fs.readFileSync(path.join(ROOT,
+      'browser/extensions/wildfire-native/child/ext-wildfire-native.js'), 'utf8')
+      .replace(/^export\s+/m, '');
+    const sharedData = new Map();
+    const listeners = new Map();
+    const broadcasts = [];
+    let debuggerInstance = null;
+    class FakeDebugger {
+      constructor() {
+        this.onNewGlobalObject = null;
+        this.uncaughtExceptionHook = null;
+        debuggerInstance = this;
+      }
+    }
+    class FakeDebuggeeObject {
+      constructor(host, props) {
+        this.host = host;
+        this.props = props || new Map();
+      }
+      unsafeDereference() {
+        return {
+          location: { hostname: this.host },
+          document: {
+            documentURIObject: { scheme: 'https' },
+            nodePrincipal: {}
+          }
+        };
+      }
+      makeDebuggeeValue(value) {
+        return value && typeof value === 'object' && !Array.isArray(value)
+          ? new FakeDebuggeeObject(this.host) : value;
+      }
+      getOwnPropertyDescriptor(name) { return this.props.get(name); }
+      defineProperty(name, descriptor) {
+        this.props.set(name, descriptor);
+        return true;
+      }
+    }
+    const nativeSandbox = {
+      console, Object, Array, Map, Set, String, Number, Boolean, Error, JSON, Promise, Date,
+      ExtensionAPI: class {},
+      Services: {
+        ppmm: {
+          sharedData: {
+            get: key => sharedData.get(key),
+            set: (key, value) => sharedData.set(key, value),
+            delete: key => sharedData.delete(key),
+            flush() {},
+            getAll: () => Object.fromEntries(sharedData)
+          },
+          broadcastAsyncMessage: (name, data) => broadcasts.push({ name, data })
+        },
+        cpmm: { addMessageListener: (name, listener) => listeners.set(name, listener) }
+      },
+      ChromeUtils: {
+        importESModule: () => ({ addDebuggerToGlobal: target => { target.Debugger = FakeDebugger; } })
+      },
+      Cu: { reportError() {} },
+      Debugger: FakeDebugger
+    };
+    const nativeContext = vm.createContext(nativeSandbox);
+    nativeContext.window = nativeContext;
+    nativeContext.globalThis = nativeContext;
+    vm.runInContext(parentSource, nativeContext, {
+      filename: 'browser/extensions/wildfire-native/parent/ext-wildfire-native.js'
+    });
+    vm.runInContext(childSource, nativeContext, {
+      filename: 'browser/extensions/wildfire-native/child/ext-wildfire-native.js'
+    });
+    const parentApi = new nativeContext.wildfireNative()
+      .getAPI({ extension: { id: 'wildfire@test' } }).wildfireNative;
+    const rule = {
+      alias: 'set-constant', syntax: 'ubo',
+      args: ['adValue', 'false'], domains: ['example.com'], isException: false
+    };
+    const exception = Object.assign({}, rule, { isException: true });
+    const surveyor = Object.assign({}, rule, {
+      domains: ['*'], isException: false, specificGeneric: true
+    });
+    const acceptedPayload = {
+      version: 1, generation: 3, hash: 'canonical-hash',
+      phases: { realmBirth: [rule, exception, surveyor], documentStart: [] }
+    };
+    const accepted = await parentApi.setPayload(acceptedPayload);
+    assert.strictEqual(accepted.count, 3, 'the parent validator accepts all three realm-birth entries');
+    const stored = sharedData.get('WildFireNative:Payload:wildfire@test');
+    assert.strictEqual(stored.phases.realmBirth[2].specificGeneric, true,
+      'the privileged validator preserves the surveyor marker');
+    assert.ok(broadcasts.some(entry => entry.name === 'WildFireNative:Payload'),
+      'the parent broadcasts accepted payloads to content processes');
+    const trustedPayload = {
+      version: 1, generation: 4, hash: 'trusted',
+      phases: {
+        realmBirth: [{ alias: 'trusted-set-constant', args: ['x', 'false'] }],
+        documentStart: []
+      }
+    };
+    await assert.rejects(parentApi.setPayload(trustedPayload), /trusted/,
+      'the privileged validator rejects trusted aliases independently');
+    const unsafePayload = {
+      version: 1, generation: 4, hash: 'unsafe',
+      phases: {
+        realmBirth: [{ alias: 'remove-attr', args: ['id', '.ad'] }],
+        documentStart: []
+      }
+    };
+    await assert.rejects(parentApi.setPayload(unsafePayload), /realm birth/,
+      'the privileged validator rejects DOM aliases at realm birth');
+    const regexPayload = {
+      version: 1, generation: 4, hash: 'regex',
+      phases: {
+        realmBirth: [Object.assign({}, rule, { domains: ['/ad\\d+/'] })],
+        documentStart: []
+      }
+    };
+    await assert.rejects(parentApi.setPayload(regexPayload), /domain/,
+      'the privileged validator rejects regex domain scopes at realm birth');
+    const inertPayload = {
+      version: 1, generation: 4, hash: 'inert',
+      phases: {
+        realmBirth: [],
+        documentStart: [Object.assign({}, rule, {
+          alias: 'remove-attr', args: ['id', '.ad'], domains: ['/ad\\d+/']
+        })]
+      }
+    };
+    assert.strictEqual((await parentApi.setPayload(inertPayload)).ok, true,
+      'inert document_start metadata is accepted without a native alias whitelist');
+
+    await parentApi.setPayload(acceptedPayload);
+    const ChildClass = vm.runInContext('WildFireNativeChild', nativeContext);
+    new ChildClass();
+    assert.strictEqual(typeof debuggerInstance.onNewGlobalObject, 'function',
+      'the child installs the realm-birth hook');
+    const cancelled = new FakeDebuggeeObject('example.com');
+    debuggerInstance.onNewGlobalObject(cancelled);
+    assert.strictEqual(cancelled.props.size, 0,
+      'a matching #@# exception cancels the native set-constant entry');
+    const otherException = {
+      version: 1, generation: 5, hash: 'other-exception',
+      phases: {
+        realmBirth: [rule, Object.assign({}, exception, { args: ['other', 'false'] })],
+        documentStart: []
+      }
+    };
+    listeners.get('WildFireNative:Payload').receiveMessage({
+      name: 'WildFireNative:Payload',
+      data: { id: 'wildfire@test', payload: otherException }
+    });
+    const applied = new FakeDebuggeeObject('example.com');
+    debuggerInstance.onNewGlobalObject(applied);
+    assert.strictEqual(applied.props.get('adValue').value, false,
+      'a non-matching exception leaves the native set-constant entry live');
+    await parentApi.clearPayload();
+    listeners.get('WildFireNative:Clear').receiveMessage({
+      name: 'WildFireNative:Clear', data: { id: 'wildfire@test' }
+    });
+    const cleared = new FakeDebuggeeObject('example.com');
+    debuggerInstance.onNewGlobalObject(cleared);
+    assert.strictEqual(cleared.props.size, 0,
+      'clearing the payload stops realm-birth application');
+  } finally {
+    context.fetch = savedFetch;
+    console.warn = savedWarn;
+  }
+}
+
 Promise.resolve()
   .then(() => testPhase0Foundation())
   .then(() => testRoadmapPhase0Corpus())
@@ -8309,6 +8626,7 @@ Promise.resolve()
   .then(() => testBackgroundControllerRobustness())
   .then(() => testPopupPerSiteDisplay())
   .then(() => testRemoteLists())
+  .then(() => testNativeBridgeScriptlets())
   .then(() => console.log('WildFire tests passed (' + engine.counts.network + ' network rules loaded from bundled list).'))
   .catch(error => {
     console.error(error);

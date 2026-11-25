@@ -24,8 +24,36 @@ function isContentWindow(win) {
 }
 
 function domainMatches(host, domain) {
-  const key = String(domain || "").toLowerCase().replace(/^\./, "");
-  return !!host && !!key && (host === key || host.endsWith("." + key));
+  const normalizedHost = String(host || "").toLowerCase().replace(/^\./, "").replace(/\.$/, "");
+  const key = String(domain || "").toLowerCase().replace(/^\./, "").replace(/\.$/, "")
+    .replace(/^~/, "").trim();
+  if (!normalizedHost || !key) return false;
+  if (key === "*") return true;
+  // Regex/scoped values are validated in the extension layer. This privileged
+  // mirror deliberately handles only literal, `*`, and entity forms as data.
+  if (key.startsWith("/")) return false;
+  if (!key.includes("*")) {
+    return normalizedHost === key || normalizedHost.endsWith("." + key);
+  }
+  const labels = normalizedHost.split(".").filter(Boolean);
+  const leading = key.startsWith("*.");
+  const trailing = key.endsWith(".*");
+  const parts = key.slice(leading ? 2 : 0, trailing ? -2 : undefined)
+    .split(".").filter(Boolean);
+  if (!parts.length) return false;
+  const partAt = (index, offset) => labels[index + offset] === parts[offset];
+  if (leading && trailing) {
+    return labels.some((unused, index) =>
+      index > 0 && index + parts.length < labels.length &&
+      parts.every((part, offset) => partAt(index, offset)));
+  }
+  if (trailing) {
+    return labels.some((unused, index) =>
+      index + parts.length < labels.length &&
+      parts.every((part, offset) => partAt(index, offset)));
+  }
+  const start = labels.length - parts.length;
+  return start > 0 && parts.every((part, offset) => partAt(start, offset));
 }
 
 function appliesTo(entry, host) {
@@ -37,11 +65,23 @@ function appliesTo(entry, host) {
   return isIncluded && !excluded.some(d => domainMatches(host, d));
 }
 
+function canonicalAlias(entry) {
+  const alias = String(entry && entry.alias || "").trim().toLowerCase();
+  return alias === "set" ? "set-constant" : alias;
+}
+
 function sameRule(left, right) {
   const leftArgs = Array.isArray(left.args) ? left.args : [];
   const rightArgs = Array.isArray(right.args) ? right.args : [];
-  if (left.alias !== right.alias || leftArgs.length !== rightArgs.length) return false;
+  if (canonicalAlias(left) !== canonicalAlias(right)) return false;
+  if (leftArgs.length !== rightArgs.length) return false;
   return leftArgs.every((arg, index) => String(arg) === String(rightArgs[index]));
+}
+
+function hasScopedDomain(entry) {
+  const domains = Array.isArray(entry && entry.domains) ? entry.domains : [];
+  return domains.some(domain => typeof domain === "string" &&
+    domain && domain !== "*" && !domain.startsWith("~"));
 }
 
 function constantValue(token) {
@@ -134,17 +174,21 @@ function applyPayloadToGlobal(globalDO) {
   if (!isContentWindow(win)) return;
   const host = String(win.location && win.location.hostname || "").toLowerCase();
 
-  for (const payload of PAYLOADS.values()) {
+  PAYLOADS.forEach(payload => {
     const rules = payload?.phases?.realmBirth || [];
-    const active = rules.filter(rule => appliesTo(rule, host) && !rule.isException);
-    const exceptions = rules.filter(rule => appliesTo(rule, host) && rule.isException);
-    for (const rule of active) {
-      if (exceptions.some(ex => sameRule(ex, rule))) continue;
-      if (rule.alias === "set-constant") {
+    const applicable = rules.filter(rule => appliesTo(rule, host));
+    const exceptions = applicable.filter(rule => rule.isException);
+    const unexcepted = applicable.filter(rule => !rule.isException &&
+      !exceptions.some(exception => sameRule(exception, rule)));
+    // Surveyor rules are gated by a live domain-scoped rule, matching the
+    // stock document_start registry. Exceptions remove scoped rules first.
+    const hasScopedRule = unexcepted.some(rule => hasScopedDomain(rule));
+    unexcepted.filter(rule => !rule.specificGeneric || hasScopedRule).forEach(rule => {
+      if (canonicalAlias(rule) === "set-constant") {
         defineConstant(globalDO, rule.args[0], constantValue(rule.args[1]));
       }
-    }
-  }
+    });
+  });
 }
 
 function ensureDebugger() {

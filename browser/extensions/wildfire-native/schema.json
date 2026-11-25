@@ -12,7 +12,8 @@
           "syntax": { "type": "string", "optional": true },
           "args": { "type": "array", "items": { "type": "any" } },
           "domains": { "type": "array", "items": { "type": "string" }, "optional": true },
-          "isException": { "type": "boolean", "optional": true }
+          "isException": { "type": "boolean", "optional": true },
+          "specificGeneric": { "type": "boolean", "optional": true }
         }
       },
       {

@@ -1,6 +1,9 @@
 # WildFire native global integration — design note
 
-Status: **design only, not implemented**
+Status: **non-packaged prototype scaffold**. The extension-side payload sync,
+independent validation, and realm-birth exception propagation are implemented and
+tested; the XPI keeps the stock `document_start` fallback and never ships
+`browser/`. Shipping the FOSS bridge remains decision D4.
 
 This document explores a Firefox-integrated execution path for WildFire scriptlets.
 It does not change the shipped extension. The current MV2 extension remains the
@@ -137,7 +140,8 @@ The extension keeps its current responsibilities:
 3. Reject unknown, malformed, unsafe, and `trusted-*` aliases.
 4. Build `engine.getScriptletPayload()`.
 5. Split payload by phase: `realmBirth` for data-only aliases proven safe before
-   DOM startup; `documentStart` for DOM-dependent aliases.
+   DOM startup; `documentStart` for DOM-dependent aliases. Exceptions for a
+  realm-birth alias stay in `realmBirth` so the native hook can cancel them.
 6. Send payload to `browser.wildfireNative` when present.
 7. Register `document_start` fallback through `browser.contentScripts.register()`
    for `documentStart` rules, or for all rules when the bridge is absent/fails.
@@ -173,7 +177,7 @@ browser.wildfireNative.getStatus()
 {
   "version": 1,
   "generation": 42,
-  "hash": "sha256:...",
+  "hash": "1:...",
   "phases": {
     "realmBirth": [],
     "documentStart": []
@@ -189,7 +193,8 @@ Each entry:
   "syntax": "ubo",
   "args": ["window.adValue", "false"],
   "domains": ["example.com", "~ads.example.com"],
-  "isException": false
+  "isException": false,
+  "specificGeneric": false
 }
 ```
 
@@ -199,7 +204,14 @@ Rules:
 - No property in the payload may contain source code.
 - No function may be serialized into the payload.
 - `generation` increases whenever the extension reloads its engine.
-- `hash` is computed from the canonical payload body for auditing and tests.
+- `hash` is the extension's canonical scriptlet hash over both phases, used for
+  auditing and tests; it is not a cryptographic signature.
+- `#@#+js()` / `#@%#//scriptlet()` exceptions for realm-birth aliases travel in
+  the `realmBirth` phase so the privileged hook can cancel them before the first
+  page script. The stock `document_start` registry still receives all rules when
+  the bridge is absent or fails.
+- `*##+js()` entries keep their surveyor marker and only run when a live,
+  domain-scoped rule remains after exceptions.
 - A changed payload affects only future document loads, matching current
   registration semantics.
 
@@ -239,7 +251,8 @@ Responsibilities:
 - Rejects unknown aliases.
 - Rejects unsafe regexes, property paths, arity mismatches, and
   non-JSON arguments.
-- Splits entries into realm-birth and document-start phases.
+- Preserves the extension's realm-birth/document-start phases and the
+  surveyor marker; it never reinterprets an exception as a live rule.
 
 ## 8. New-global hook
 
@@ -282,6 +295,14 @@ Implementation constraints:
 - Catch and report hook errors to browser diagnostics; never throw into page.
 - No strong references to page globals; payload is immutable data.
 - Revalidate payload in the privileged layer even if extension validated it.
+
+The focused `npm test` coverage loads both non-packaged scaffold files with
+Firefox API stubs. It checks that `syncNativeScriptlets()` sends the canonical
+generation/hash payload, clears an empty payload, and falls back to all rules
+when the bridge fails. It also checks that the parent validator preserves
+`specificGeneric` and rejects trusted or realm-unsafe aliases, and that the
+child hook cancels realm-birth `set-constant` entries on a matching `#@#`
+exception while keeping surveyor gating intact.
 
 ## 9. Realm filtering
 

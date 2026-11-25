@@ -105,7 +105,7 @@ used as a source file for WildFire code.
 | Dynamic filtering | global/local source-destination-type rules, `noop`, precedence, hostname-based rules, temporary vs persisted rules, plain-text “My rules”, full static override semantics | Complete (Phase 5): versioned state, one-time `siteRules` migration, distinct diagnostics phase |
 | Filter lists | broader preshipped catalog, list categories, checksum/diff-patch updates, update status/history, asset viewer | Complete (Phase 6 list slice): grouped inert catalog, diff checksum validation, bounded history, local asset viewer |
 | UI/tools | full dashboard, per-site switches, DOM inspector, element picker/zapper, context menu, keyboard shortcuts, advanced settings, richer logger views | Phase 6 |
-| Scriptlet timing | realm-birth `set-constant` guarantees, hardened `MAIN` fallback, native exception propagation, `syncNativeScriptlets()` tests | Phase 7, gated |
+| Scriptlet timing | realm-birth `set-constant` guarantees, hardened `MAIN` fallback, native exception propagation, `syncNativeScriptlets()` tests | Complete (Phase 7 native slice): non-packaged scaffold, realm-birth exceptions, payload sync tests; shipping still gated by D4 |
 | Trust/source model | trusted aliases, `$replace`, `$uritransform`, `$urlskip`, `!#include`, raw `$csp` | Phase 7, gated |
 | Cosmetic timing | `document_idle` injection can flash unhidden content before cosmetic CSS applies | Complete (Phase 3): `document_start` |
 | Performance | parser fuzzing, benchmark thresholds, long-run memory profiling (the repeatable local compatibility corpus is in place) | Continuous |
@@ -314,26 +314,34 @@ in this phase remains deferred; no new permission was added.
 
 ### Phase 7 — Trust-gated features and native realm birth
 
-**Priority:** deferred. **Depends on:** explicit product/source-trust decision.
+**Priority:** trust work deferred; native scaffold slice complete. **Depends on:**
+explicit product/source-trust decision before any trust-gated syntax.
 
-Only after a source-trust model exists:
+The non-packaged FOSS bridge slice is complete and tested:
+
+- Realm-birth `set-constant` entries and their exceptions travel together, so
+  `#@#+js(set-constant, …)` cancels the native entry before the first page
+  script. Surveyor entries stay gated by a live domain-scoped rule.
+- `syncNativeScriptlets()` was covered for canonical generation/hash payloads,
+  empty-payload clearing, and full `document_start` fallback on bridge failure.
+- Both scaffold layers revalidate data-only payloads; the parent preserves the
+  surveyor marker and rejects trusted or realm-unsafe aliases.
+- `docs/native-global-integration.md` now describes the tested scaffold state.
+  The stock extension keeps its `document_start` fallback and never ships
+  `browser/`. Shipping the bridge still needs D4 owner approval.
+
+Still deferred until a written source-trust model and owner approval exist:
 
 - Distinguish trusted list origin and trusted local input in state.
 - Reconsider `trusted-*` aliases, `$replace`, `$uritransform`, `$urlskip`,
   `!#include`, and raw `$csp` directive values.
-- Complete and test the non-packaged FOSS/custom-Firefox bridge scaffold in
-  `browser/` and align `docs/native-global-integration.md` with its actual state.
-  Fix realm-birth exception handling so `#@#+js(set-constant, …)` cancels native
-  entries, and add focused tests for `syncNativeScriptlets()` payload delivery.
-  The stock extension keeps `document_start` fallback and never ships
-  `browser/`.
 - Harden any `world: "MAIN"` mitigation with a non-page-visible trampoline;
   treat it as best-effort `document_start`, never proof of realm birth.
-- Revalidate every payload in both extension and privileged layer; continue to
-  reject all code-bearing payloads.
+- Real-Firefox smoke validation of the privileged `Debugger` hook before D4.
 
-**Exit criteria:** a written trust model, explicit owner approval, independent
-validation in both layers, and no regression to stock-Firefox behavior.
+**Exit criteria for the full phase:** a written trust model, explicit owner
+approval, independent validation in both layers, and no regression to
+stock-Firefox behavior.
 
 ### Continuous — Performance, privacy, and verification
 
@@ -356,7 +364,7 @@ Run for every phase:
 | D1 | Whether bare-host/`||host^` rules may cancel top-level navigation like uBO strict blocking | Keep explicit `$document`/`$popup` only |
 | D2 | Whether any list source is trusted enough for code-like modifiers | Reject all trusted-only aliases and modifiers |
 | D3 | Whether to add `menus`, `privacy`, or `unlimitedStorage` for UI/list scale | Keep current permission set |
-| D4 | Whether to ship a FOSS/custom Firefox native bridge for realm-birth scriptlets | Keep bridge as design note only |
+| D4 | Whether to ship a FOSS/custom Firefox native bridge for realm-birth scriptlets | Keep bridge as a tested, non-packaged prototype only |
 
 ## 6. Definition of done for any roadmap item
 

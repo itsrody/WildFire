@@ -31,6 +31,7 @@ ui/options/            custom filters + paused sites
 ui/inspector/          local-only request decision window with logger-ui renderer
 assets/                generated PNG icons
 tools/                 icon generator, validator, tests, XPI packager, Firefox smoke tools
+browser/               non-packaged FOSS Firefox realm-birth bridge prototype
 dist/                  build output (generated)
 ```
 

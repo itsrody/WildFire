@@ -469,6 +469,15 @@ fetched list applies on the first navigation after restart or update.
 Registrations are replaced whenever the engine reloads, and only future
 navigations receive updated scriptlets.
 
+The optional non-packaged FOSS bridge is a separate privileged layer in
+`browser/`, never part of the XPI. `syncNativeScriptlets()` sends the same
+validated data with a generation and canonical hash; realm-birth-capable aliases
+and their exceptions travel in the `realmBirth` phase so the privileged hook can
+cancel `#@#+js()` entries before the first page script. When the bridge is absent
+or fails, the stock `document_start` registration receives every rule. The
+privileged layer revalidates the payload and preserves the surveyor marker; no
+filter-supplied code crosses either boundary.
+
 Cosmetic and scriptlet host lists share `parseHostScopeList()`: literal hosts,
 parent domains, entity values (`example.*`, `*.example.*`), and safe `/regex/`
 values, plus `~host` exclusions and a bare `*` specific-generic marker. Entity

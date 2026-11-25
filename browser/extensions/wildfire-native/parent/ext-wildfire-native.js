@@ -11,6 +11,7 @@ const ALLOWED_ALIASES = new Set(["set-constant"]);
 const CANONICAL = new Map([
   ["set-constant", "set-constant"],
   ["set", "set-constant"],
+  ["remove-attr", "remove-attr"],
 ]);
 const ALLOWED_CONSTANTS = new Set([
   "undefined", "false", "true", "null", "noopFunc", "noopCallbackFunc",
@@ -35,11 +36,18 @@ function validateEntry(entry, phase) {
   if (!isPlainString(entry.alias)) throw new Error("invalid scriptlet alias");
   const syntax = entry.syntax === "adguard" ? "adguard" : "ubo";
   const rawAlias = entry.alias.trim().toLowerCase();
+  if (!rawAlias) throw new Error("invalid scriptlet alias");
   if (rawAlias.startsWith("trusted-")) throw new Error("trusted scriptlets are not allowed");
-  const alias = CANONICAL.get(rawAlias);
-  if (!alias) throw new Error("unknown scriptlet alias: " + rawAlias);
-  if (phase === "realmBirth" && !ALLOWED_ALIASES.has(alias)) {
-    throw new Error("alias not allowed at realm birth: " + alias);
+  // document_start entries are inert metadata for the privileged bridge; the
+  // stock extension registry applies them. Only realm-birth entries need the
+  // strict alias whitelist because only they can touch a page global here.
+  let alias = rawAlias;
+  if (phase === "realmBirth") {
+    alias = CANONICAL.get(rawAlias);
+    if (!alias) throw new Error("unknown scriptlet alias: " + rawAlias);
+    if (!ALLOWED_ALIASES.has(alias)) {
+      throw new Error("alias not allowed at realm birth: " + alias);
+    }
   }
   if (!Array.isArray(entry.args) || entry.args.length > MAX_ARGS) {
     throw new Error("invalid scriptlet args");
@@ -52,7 +60,7 @@ function validateEntry(entry, phase) {
     }
     return arg;
   });
-  if (alias === "set-constant") {
+  if (phase === "realmBirth" && alias === "set-constant") {
     if (args.length < 2 || args.length > 3) throw new Error("invalid set-constant arity");
     if (!isSafePropertyPath(args[0])) throw new Error("invalid set-constant property path");
     const value = String(args[1] ?? "");
@@ -62,6 +70,9 @@ function validateEntry(entry, phase) {
   const domains = Array.isArray(entry.domains) ? entry.domains : [];
   domains.forEach(domain => {
     if (!isPlainString(domain)) throw new Error("invalid scriptlet domain");
+    if (phase === "realmBirth" && domain.startsWith("/")) {
+      throw new Error("invalid scriptlet domain");
+    }
   });
   return {
     alias,
@@ -69,6 +80,7 @@ function validateEntry(entry, phase) {
     args,
     domains: domains.slice(),
     isException: !!entry.isException,
+    specificGeneric: !!entry.specificGeneric,
   };
 }
 
