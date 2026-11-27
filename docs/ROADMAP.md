@@ -62,9 +62,10 @@ Already implemented and verified in the shipped tree:
 - Full non-trusted uBO `##+js()` and AdGuard `#%#//scriptlet()` alias coverage,
   canonicalized exceptions, one-WildFire-file-per-shim structure, and rejection
   of all trusted/debug aliases.
-- Remote list store with the preshipped, disabled-by-default uAssets CDN list,
-  opt-in custom lists, explicit enablement memory, metadata parsing,
-  size/timeout checks, conditional fetches, and local offline fallback rules.
+- Remote list store with the full preseeded WildFire built-in catalog, the
+  default-on selection enabled on fresh installs, opt-in custom lists, explicit
+  enablement memory, metadata parsing, size/timeout checks, conditional fetches,
+  and local offline fallback rules.
 - Popup, Options custom-filter editor, per-site `allow`/`block` resource rules,
   local diagnostics, and a local-only request decision Inspector.
 
@@ -103,7 +104,7 @@ used as a source file for WildFire code.
 | Procedural selectors | `:matches-prop()`, `:others()`, `:watch-attr()`; richer mutation/attribute watching for those selectors | Complete (Phase 3) |
 | Response filtering | `example.com##^selector` HTML stream filtering and `##^responseheader(name)` header removal; encoding handling and safe stream composition | Complete (Phase 4): bounded UTF-8 simple selectors and safe header set only |
 | Dynamic filtering | global/local source-destination-type rules, `noop`, precedence, hostname-based rules, temporary vs persisted rules, plain-text “My rules”, full static override semantics | Complete (Phase 5): versioned state, one-time `siteRules` migration, distinct diagnostics phase |
-| Filter lists | broader preshipped catalog, list categories, checksum/diff-patch updates, update status/history, asset viewer | Complete (Phase 6 list slice): grouped inert catalog, diff checksum validation, bounded history, local asset viewer |
+| Filter lists | broader preshipped catalog, list categories, checksum/diff-patch updates, update status/history, asset viewer | Complete: full built-in catalog preseeded with the default-on selection enabled; grouped inert shortcut catalog, diff checksum validation, bounded history, local asset viewer |
 | UI/tools | full dashboard, per-site switches, DOM inspector, element picker/zapper, context menu, keyboard shortcuts, advanced settings, richer logger views | Phase 6 |
 | Scriptlet timing | realm-birth `set-constant` guarantees, hardened `MAIN` fallback, native exception propagation, `syncNativeScriptlets()` tests | Complete (Phase 7 native slice): non-packaged scaffold, realm-birth exceptions, payload sync tests; shipping still gated by D4 |
 | Trust/source model | trusted aliases, `$replace`, `$uritransform`, `$urlskip`, `!#include`, raw `$csp` | Phase 7, gated |
@@ -290,8 +291,11 @@ synchronous and navigation rules remain ignored under decision gate D1.
 
 **Priority:** P1/P2. **Depends on:** parser/engine phases for list correctness.
 
+- Preseeded the full built-in remote-list catalog under WildFire-owned metadata,
+  with the full default-on selection enabled on fresh installs; no list text is
+  vendored.
 - Expanded the inert suggested catalog with grouped ads, privacy, malicious,
-  social, and regional shortcuts; no list text is vendored.
+  social, and regional shortcuts.
 - Added checksum-validated `! Diff-Path` updates with full-fetch fallback,
   bounded update history, and a read-only local viewer for curated registries.
 - Build out the dashboard with clear panes for filter lists, custom rules,
@@ -307,8 +311,9 @@ synchronous and navigation rules remain ignored under decision gate D1.
 user-visible strings are WildFire-branded; no upstream branding appears in UI;
 `data_collection_permissions.required` stays `["none"]`.
 
-The list/catalog slice is complete: Options groups suggested shortcuts, shows
-per-list status and bounded history, and opens a local asset viewer through
+The list/catalog slice is complete: Options shows every built-in and user-added
+list with WildFire-owned names, groups suggested shortcuts, shows per-list status
+and bounded history, and opens a local asset viewer through
 `wildfire:asset-registries`. The dashboard/tools and context-menu/shortcut work
 in this phase remains deferred; no new permission was added.
 

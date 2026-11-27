@@ -2,6 +2,8 @@
   'use strict';
 
   const client = WildFireWapiClient.create();
+  const builtinCatalog = typeof WildFireBundledLists !== 'undefined'
+    ? WildFireBundledLists : null;
   const filters = document.getElementById('filters');
   const filterStatus = document.getElementById('filter-status');
   const sitesList = document.getElementById('sites');
@@ -297,17 +299,17 @@
       const row = document.createElement('div');
       row.className = 'list-row';
       const metadata = entry.metadata && typeof entry.metadata === 'object' ? entry.metadata : {};
-      const catalog = suggested.find(item => item.url === entry.url);
+      const catalog = entry.builtin && builtinCatalog
+        ? builtinCatalog.find(entry.url)
+        : suggested.find(item => item.url === entry.url);
       const label = document.createElement('span');
       label.className = 'list-url';
-      label.textContent = entry.builtin
-        ? 'WildFire default filters (preshipped)'
-        : (catalog && catalog.name ? catalog.name : entry.url);
+      label.textContent = catalog && catalog.name ? catalog.name : entry.url;
       const meta = document.createElement('span');
       meta.className = 'list-meta';
       const when = entry.checkedAt || entry.updatedAt;
       const status = !entry.text ? 'Not fetched'
-        : (entry.enabled ? (entry.builtin ? 'Active (preshipped)' : 'Active') : 'Disabled');
+        : (entry.enabled ? 'Active' : 'Disabled') + (entry.builtin ? ' · built-in' : '');
       const time = when ? new Date(when).toLocaleString() : 'never';
       const hash = entry.hash ? ' · ' + String(entry.hash).slice(0, 8) : '';
       const err = entry.lastError ? ' · Error: ' + entry.lastError : '';
@@ -315,7 +317,7 @@
       const latest = history[history.length - 1];
       const update = latest ? ' · Last change: ' + latest.action +
         (latest.error ? ' failed (' + latest.error + ')' : (latest.changed ? ' applied' : ' checked')) : '';
-      const details = [metadata.version, metadata.expires]
+      const details = [catalog && catalog.description, metadata.version, metadata.expires]
         .filter(Boolean).join(' · ');
       meta.textContent = status + ' · ' + time + hash + err + update +
         (details ? ' · ' + details : '');

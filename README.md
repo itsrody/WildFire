@@ -78,7 +78,7 @@ npm run smoke:site
 ```
 
 The tool opens the URL in a headed Firefox window by default (use `--headless`
-to opt out), waits for the preshipped remote list to load, and reports navigation
+to opt out), waits for the default built-in remote lists to load, and reports navigation
 timing, resource totals, engine counts, diagnostic phase totals, Inspector
 decisions, cosmetic/scriptlet timings, and remote-list state. On YouTube it
 follows randomly chosen watch links for `--navigations` pages (default 3) and
@@ -112,8 +112,8 @@ npm run icons
 
 ## Filter syntax
 
-The bundled `filters/default.txt` is an offline fallback, not the registered
-default list. Add your own rules in the options page (one per line). The native
+The bundled `filters/default.txt` is an offline fallback, not one of the
+registered built-in remote lists. Add your own rules in the options page (one per line). The native
 editor shows line numbers, caret position, rule coloring, unsaved changes and
 line-numbered validation issues and notices from WildFire's own parser; `Ctrl/Cmd+S` saves.
 
@@ -230,14 +230,16 @@ values are rejected with a line-numbered validation reason.
 
 ## Filter lists
 
-The preshipped `WildFire default filters` list points directly at
-`https://ublockorigin.github.io/uAssetsCDN/filters/filters.min.txt`. It starts
-disabled so its broad rule set cannot break sites on a stock install. It is
-fetched into storage on startup, revalidated on its `! Expires` interval, and
-applied only after you choose **Enable**; that choice survives reseeds. It cannot
-be removed; **Disable** or **Auto: off** opts out again. No upstream filter text
-is vendored into this repository: `filters/default.txt` supplies the packaged
-offline fallback rules even while the CDN list is disabled.
+WildFire's built-in catalog preseeds a broad family of remote filter lists under
+WildFire-owned IDs, names, and descriptions: core ads, badware, privacy, unbreak
+and quick-fix rules, public ads and privacy lists, malicious URL and host lists,
+annoyance and widget lists, and regional lists. No upstream filter text is
+vendored; each entry points directly at its public `http(s)` URL. The full
+default-on selection starts enabled on a fresh install. Other built-in lists
+start disabled, and an explicit **Enable** or **Disable** choice survives reseeds.
+Built-in lists cannot be removed; **Auto: off** opts a list out of future checks.
+`filters/default.txt` remains the packaged offline fallback while the default
+built-in list is disabled or unfetched.
 
 Open Options → **Suggested lists** for shortcuts to well-known community lists,
 or **Filter lists** to add any `http(s)` URL. Adding a URL — suggested or typed —
@@ -544,14 +546,15 @@ This is deliberately a scoped rewrite, not parity with every uBO feature today:
   registration is idempotent, a failed init settles readiness with a recorded
   error, and scriptlet registrations are swapped atomically so a failed
   replacement keeps the old one.
-- The uAssets CDN list is preshipped as a direct remote URL but starts disabled;
-  the packaged `filters/default.txt` still loads as the offline fallback. Every
-  list auto-fetches once and revalidates on its `! Expires` interval unless Auto
-  is off. The CDN list and user-added lists must be enabled before their rules
-  apply, and explicit enablement survives reseeds. WildFire stores the exact
-  text, a hash, bounded update history, and parsed header metadata for each
-  list. The suggested-list catalog is inert grouped data, and the local asset
-  viewer reads only curated registries.
+- WildFire's built-in catalog is preseeded as remote-list entries with the full
+  default-on selection enabled; other built-in and user-added lists start
+  disabled. Every registered list auto-fetches once and revalidates on its
+  `! Expires` interval unless Auto is off, and explicit enable/disable choices
+  survive reseeds. The default built-in list replaces `filters/default.txt` once
+  fetched; the packaged list stays as the offline fallback while it is disabled
+  or unfetched. WildFire stores the exact text, a hash, bounded update history,
+  and parsed header metadata for each list. The suggested-list catalog is inert
+  grouped data, and the local asset viewer reads only curated registries.
 - Firefox ETP is left untouched. WildFire observes ETP block errors and
   classifications only while diagnostics are enabled, and never adds them to
   WildFire's counters. Header listeners are registered when loaded rules need

@@ -102,7 +102,7 @@
 
   <section class="card">
     <h2>Filter lists</h2>
-    <p class="hint">The preshipped WildFire list, the preshipped uAssets CDN list, and any list you add are fetched once and then revalidated on the list's own <code>!Expires</code> interval. The CDN list and user-added lists start disabled; enable one to apply its rules. Auto can be turned off per list. WildFire stores the exact text it applies.</p>
+    <p class="hint">WildFire's built-in remote list catalog covers ads, privacy, malware, annoyances, and regional filters. Built-in lists and any list you add are fetched once and then revalidated on the list's own <code>!Expires</code> interval. The full default selection starts enabled; other built-in lists and user-added lists start disabled. Enable a list to apply its rules, and turn Auto off per list to stop checks. WildFire stores the exact text it applies.</p>
     <ul id="remote-lists" class="sites"></ul>
     <form id="list-form" class="actions">
       <input id="list-url" type="url" placeholder="https://example.com/filters.txt" autocomplete="off" spellcheck="false">
@@ -126,6 +126,7 @@
   </section>
 
   <script src="../../lib/wapi/wapi-client.js"></script>
+  <script src="../../lib/state/bundled-lists.js"></script>
   <script src="editor.js"></script>
   <script src="options.js"></script>
 </body>

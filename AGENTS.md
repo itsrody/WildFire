@@ -149,8 +149,8 @@ lib/
     rewrite-resources.js   WildFire-owned bodies for $rewrite responses
   state/
     store.js           wapi.storage.local wrapper, key wildfire.state.v1
-    bundled-lists.js   inert catalog of the preshipped default list and update URL
-    remote-lists.js    preshipped + opt-in remote list store, key wildfire.remote.v1
+    bundled-lists.js   inert catalog of preseeded built-in remote lists and URLs
+    remote-lists.js    preseeded + opt-in remote list store, key wildfire.remote.v1
     suggested-lists.js inert catalog of suggested list URLs (Options shortcuts)
     page-store.js      per-tab/frame document, site, popup and page cache state
 content/cosmetic.js    injects hidden-element CSS in every frame
@@ -602,18 +602,18 @@ decisions, with a copyable WildFire rule. Storage key `wildfire.remote.v1` holds
 etag, lastModified, text, updatedAt, checkedAt, lastPatchAt, hash, lastError,
 history, metadata}]}` and is owned entirely by `lib/state/remote-lists.js`;
 `metadata` also retains the response `contentType`. `history` is a bounded
-local-only record of patch/update/error outcomes. The preshipped default entry
-points directly at
-`https://ublockorigin.github.io/uAssetsCDN/filters/filters.min.txt`, starts
-disabled so its broad rule set cannot break stock installs, and auto-fetches on
-startup before following `! Expires`; `set-list-enabled` records `enabledChoice`
-so an explicit user choice survives reseeds while an old implicit enable is
-reset once. It cannot be removed and can be enabled or opted out of Auto in
-Options. The old `wildfire:bundled/default.txt` sentinel and the former
-WildFire starter URL are migrated to that URL with their old implicit enable
-reset to the safer default. No upstream filter text is
-vendored into the repository; `filters/default.txt` remains the packaged offline
-fallback and still loads when the CDN list is disabled.
+local-only record of patch/update/error outcomes. `lib/state/bundled-lists.js`
+preseeds the full built-in catalog under WildFire-owned IDs, names, and
+descriptions; every entry points directly at its public `http(s)` URL and no
+upstream filter text is vendored. The full default-on selection starts enabled;
+other built-in lists and user-added lists start disabled. `set-list-enabled`
+records `enabledChoice` so an explicit user choice survives reseeds while an old
+implicit state is replaced once by the catalog default. Built-in lists cannot be
+removed and can be disabled or opted out of Auto in Options. The old
+`wildfire:bundled/default.txt` sentinel and the former WildFire starter URL
+migrate to the default URL with their old implicit state replaced by the new
+default selection. `filters/default.txt` remains the packaged offline fallback
+and still loads while the default built-in list is disabled or unfetched.
 
 Background listens for `wildfire:*` messages:
 
@@ -674,40 +674,38 @@ continues, and copies a matching rule as WildFire syntax. The blocking listener
 records only when the logger is enabled, and inspection never changes `blocked`,
 `blockedBySite`, or filter decisions.
 
-The preshipped default list is remote-list shaped and is fetched directly from
-`https://ublockorigin.github.io/uAssetsCDN/filters/filters.min.txt`.
-`lib/state/bundled-lists.js` is an inert catalog with that default URL;
-`lib/state/remote-lists.js` seeds the entry at startup, parses `! Title`,
-`! Description`, `! Version`, `! Homepage`, `! License`, `! Expires`,
+WildFire's built-in catalog is remote-list shaped: every preseeded entry is
+fetched directly from its public `http(s)` URL. `lib/state/bundled-lists.js` is
+an inert WildFire-owned catalog of those entries; `lib/state/remote-lists.js`
+seeds them at startup with the full default-on selection enabled, parses
+`! Title`, `! Description`, `! Version`, `! Homepage`, `! License`, `! Expires`,
 `! Checksum`, `! Diff-Name`, `! Diff-Path`, `! Diff-Expires` and
-`! Last Modified` metadata, stores the fetched text, hash, and bounded update
-history, and loads its fetched rules once before external remote rules when the
-user has enabled it. A `! Diff-Path` list is updated through WildFire's own
-bounded diff reader on the short `! Diff-Expires` interval; the patched text is
-accepted only when the patch's SHA-1 checksum prefix matches, and any failure
-falls back to the full
-URL. It auto-fetches on startup, then revalidates at its `! Expires` interval;
-`remove-list` rejects it, while `set-list-enabled` and `set-list-auto` can opt it
-out. The CDN list starts disabled and its fetched rules stay inactive until the
-user enables it; `filters/default.txt` still supplies packaged offline fallback
-rules on a stock install. A fetched update persists across extension reseeds;
-the legacy `wildfire:bundled/default.txt` sentinel and the former WildFire
-starter URL migrate to the default URL while resetting old implicit enables.
-No upstream filter text is vendored into this repository. The bundled
-`lib/state/suggested-lists.js` catalog remains
-inert grouped data: Options shows its URLs as ads, privacy, malicious, social,
-and regional shortcuts, and clicking one only sends `add-list`. Every registered
-list, including the default list,
-auto-fetches once and then revalidates at its `! Expires` interval, which
-defaults to one day and can be as short as one minute. `set-list-auto` can
-disable this per list. User-added lists stay disabled until the user enables
-them. Fetches use `cache: 'no-store'`, validator headers, a size cap (including
-`Content-Length` preflight), a 60-second `AbortController` timeout, final-URL and
-HTML-error checks, and parsed header metadata. A 304 keeps the stored text and
-metadata but refreshes the check time; an unchanged 200 keeps the original
-content time. The `alarms` permission supports the one named alarm, whose period
-tracks the shortest active list interval. No data about the user is collected or
-reported, so `data_collection_permissions.required` stays `["none"]`.
+`! Last Modified` metadata, stores each fetched text, hash, and bounded update
+history, and loads enabled fetched rules with the default built-in list taking
+the packaged offline fallback slot. A `! Diff-Path` list is updated through
+WildFire's own bounded diff reader on the short `! Diff-Expires` interval; the
+patched text is accepted only when the patch's SHA-1 checksum prefix matches,
+and any failure falls back to the full URL. Every registered list auto-fetches
+once, then revalidates at its `! Expires` interval; `remove-list` rejects built-in
+entries, while `set-list-enabled` and `set-list-auto` can opt a list out. Other
+built-in lists and user-added lists stay inactive until the user enables them;
+`filters/default.txt` still supplies packaged offline fallback rules while the
+default built-in list is disabled or unfetched. A fetched update persists across
+extension reseeds; the legacy `wildfire:bundled/default.txt` sentinel and the
+former WildFire starter URL migrate to the default URL while replacing old
+implicit states with the new default selection. No upstream filter text is
+vendored into this repository. The bundled `lib/state/suggested-lists.js`
+catalog remains inert grouped data: Options shows its URLs as ads, privacy,
+malicious, social, and regional shortcuts, and clicking one only sends
+`add-list`. The `! Expires` interval defaults to one day and can be as short as
+one minute. `set-list-auto` can disable checks per list. Fetches use
+`cache: 'no-store'`, validator headers, a size cap (including `Content-Length`
+preflight), a 60-second `AbortController` timeout, final-URL and HTML-error
+checks, and parsed header metadata. A 304 keeps the stored text and metadata but
+refreshes the check time; an unchanged 200 keeps the original content time. The
+`alarms` permission supports the one named alarm, whose period tracks the
+shortest active list interval. No data about the user is collected or reported,
+so `data_collection_permissions.required` stays `["none"]`.
 
 ---
 
@@ -986,8 +984,9 @@ Already implemented and tested: Firefox-native registrable-domain scoping
 safe regex filters, wider resource types with `$document`/`$popup`, a
 from-scratch redirect engine with WildFire-owned data-URI resources, DOM-based
 procedural cosmetic selectors (including native-CSS compilation, `:contains()`,
-`:nth-ancestor()`/`:upward()`), opt-in remote lists with a deterministic
-update store and user consent, curated `$csp` response-header filtering on
+`:nth-ancestor()`/`:upward()`), preseeded built-in remote lists with the full
+default-on selection enabled and explicit user choices preserved, curated
+`$csp` response-header filtering on
 Firefox's `onHeadersReceived`, fixed-mapping `$rewrite` response bodies through
 Firefox's `filterResponseData()` stream filter, cache-backed CNAME uncloaking
 through Firefox's DNS API, and a scriptlet alias registry

@@ -20,11 +20,18 @@ const fs = require('fs');
 const http = require('http');
 const os = require('os');
 const path = require('path');
+const vm = require('vm');
 const { spawn } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const args = process.argv.slice(2);
-const PRESHIPPED_URL = 'https://ublockorigin.github.io/uAssetsCDN/filters/filters.min.txt';
+const catalogContext = vm.createContext({ Object });
+vm.runInContext(
+  fs.readFileSync(path.join(ROOT, 'lib/state/bundled-lists.js'), 'utf8'),
+  catalogContext
+);
+const DEFAULT_LIST_URLS = catalogContext.WildFireBundledLists.defaults()
+  .map(entry => entry.url);
 
 function argValue(name, fallback) {
   const index = args.indexOf(name);
@@ -184,7 +191,7 @@ function siteScript(endpoint, navigationCount, videoUrl) {
   window.__wildFireSiteSmoke = true;
 
   var ENDPOINT = ${JSON.stringify(endpoint)};
-  var LIST_URL = ${JSON.stringify(PRESHIPPED_URL)};
+  var LIST_URLS = ${JSON.stringify(DEFAULT_LIST_URLS)};
   var NAVIGATIONS = ${Number(navigationCount)};
   var FIXED_VIDEO_URL = ${JSON.stringify(videoUrl)};
   var RUN_MS = ${Number(runMs)};
@@ -234,7 +241,9 @@ function siteScript(endpoint, navigationCount, videoUrl) {
 
   function listReady(snapshot) {
     var lists = snapshot && Array.isArray(snapshot.lists) ? snapshot.lists : [];
-    return lists.some(function (entry) { return entry.url === LIST_URL && Boolean(entry.text); });
+    return LIST_URLS.every(function (url) {
+      return lists.some(function (entry) { return entry.url === url && Boolean(entry.text); });
+    });
   }
 
   function waitForList(limit) {

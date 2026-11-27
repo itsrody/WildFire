@@ -3272,7 +3272,15 @@ async function testBackgroundLoadFiltersIntegration() {
           ok: true,
           status: 200,
           headers: { get: () => '' },
-          text: async () => '! Title: uBlock filters\n! Expires: 5 days\n||ubo.example^'
+          text: async () => '! Title: WildFire core\n! Expires: 5 days\n||ubo.example^'
+        };
+      }
+      if (WildFireBundledLists.all().some(entry => entry.url === u)) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => '' },
+          text: async () => '! Title: WildFire built-in\n! Expires: 1 day\n||builtin.example^'
         };
       }
       if (u.includes('auto.test/list.txt')) {
@@ -3337,51 +3345,53 @@ async function testBackgroundLoadFiltersIntegration() {
     .replace(/  wildfire\.start\(\);\n\}\)\(\);\s*$/, '  globalThis.__wildfireTest = wildfire.debug(); wildfire.start(); })();');
   vm.runInContext(bgSource, ctx, { filename: 'background.js' });
 
-  // wait for init/load
-  await new Promise(resolve => setTimeout(resolve, 20));
+  // wait for init/load and the preseeded remote first fetch
+  await new Promise(resolve => setTimeout(resolve, 250));
   const api = ctx.__wildfireTest;
   assert.ok(api, 'background test hook exposed');
   api._apiHooks = apiHooks;
 
   const listed = await api.onMessage({ type: 'wildfire:list-state' }, {});
-  const builtin = listed.lists.find(entry => entry.builtin);
-  assert.ok(builtin, 'the background exposes the preshipped list');
-  assert.strictEqual(builtin.enabled, false, 'the preshipped list starts disabled');
-  assert.strictEqual(builtin.autoUpdate, true, 'the preshipped list auto-updates by default');
-  assert.strictEqual(builtin.metadata.title, 'uBlock filters',
+  const builtins = listed.lists.filter(entry => entry.builtin);
+  assert.strictEqual(builtins.length, WildFireBundledLists.all().length,
+    'the background exposes every preseeded built-in list');
+  const builtin = builtins.find(entry => entry.url === WildFireBundledLists.DEFAULT_URL);
+  assert.ok(builtin, 'the background exposes the default built-in list');
+  assert.strictEqual(builtin.enabled, true, 'the default built-in list starts enabled');
+  assert.strictEqual(builtin.autoUpdate, true, 'the default built-in list auto-updates');
+  assert.strictEqual(builtin.metadata.title, 'WildFire core',
     'fetched default list metadata survives storage');
-  assert.strictEqual(api.engine.matchRequest('https://bundled.example/x.js', 'script',
-    'https://site.test/').blocked, true,
-    'the packaged offline fallback stays active while the CDN list is disabled');
-  const preshippedRemoteList = listed.lists
-    .find(entry => entry.url === RemoteLists.PRESHIPPED_REMOTE_URL);
-  assert.ok(preshippedRemoteList, 'the uAssets CDN URL is the default list');
-  assert.strictEqual(preshippedRemoteList.enabled, false,
-    'the preshipped remote list is fetched but not applied by default');
-  assert.ok(preshippedRemoteList.text.includes('||ubo.example^'),
-    'the preshipped remote list is fetched directly from its URL');
+  const defaultOnCount = builtins.filter(entry => entry.enabled).length;
+  assert.strictEqual(defaultOnCount, WildFireBundledLists.defaults().length,
+    'the full default-on selection is active on a fresh install');
   assert.strictEqual(api.engine.matchRequest('https://ubo.example/x.js', 'script',
-    'https://site.test/').blocked, false, 'preshipped remote rules are inactive until enabled');
-  const enabledBundled = await api.onMessage({
-    type: 'wildfire:set-list-enabled',
-    url: WildFireBundledLists.DEFAULT_URL,
-    value: true
-  }, {});
-  assert.strictEqual(enabledBundled.ok, true, 'the preshipped list can be enabled');
-  await new Promise(resolve => setTimeout(resolve, 20));
-  assert.strictEqual(api.engine.matchRequest('https://ubo.example/x.js', 'script',
-    'https://site.test/').blocked, true, 'explicitly enabled remote rules become active');
+    'https://site.test/').blocked, true, 'the fetched default rules are active');
+  assert.strictEqual(api.engine.matchRequest('https://builtin.example/x.js', 'script',
+    'https://site.test/').blocked, true, 'other default-on built-in rules are active');
+  const experimental = builtins.find(entry => entry.url ===
+    'https://ublockorigin.github.io/uAssetsCDN/filters/experimental.min.txt');
+  assert.ok(experimental && experimental.enabled === false,
+    'the experimental built-in list stays disabled');
   const disabledBundled = await api.onMessage({
     type: 'wildfire:set-list-enabled',
     url: WildFireBundledLists.DEFAULT_URL,
     value: false
   }, {});
-  assert.strictEqual(disabledBundled.ok, true, 'the preshipped list can be disabled');
-  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.strictEqual(disabledBundled.ok, true, 'the default built-in list can be disabled');
+  await new Promise(resolve => setTimeout(resolve, 250));
   assert.strictEqual(api.engine.matchRequest('https://ubo.example/x.js', 'script',
-    'https://site.test/').blocked, false, 'disabling the preshipped list removes its fetched rules');
+    'https://site.test/').blocked, false, 'disabling the default list removes its fetched rules');
   assert.strictEqual(api.engine.matchRequest('https://bundled.example/x.js', 'script',
-    'https://site.test/').blocked, true, 'disabling the CDN list keeps the offline fallback');
+    'https://site.test/').blocked, true, 'disabling the default list restores the offline fallback');
+  const enabledBundled = await api.onMessage({
+    type: 'wildfire:set-list-enabled',
+    url: WildFireBundledLists.DEFAULT_URL,
+    value: true
+  }, {});
+  assert.strictEqual(enabledBundled.ok, true, 'the default built-in list can be re-enabled');
+  await new Promise(resolve => setTimeout(resolve, 250));
+  assert.strictEqual(api.engine.matchRequest('https://ubo.example/x.js', 'script',
+    'https://site.test/').blocked, true, 're-enabled default rules become active again');
 
   const autoOff = await api.onMessage({
     type: 'wildfire:set-list-auto',
@@ -3454,7 +3464,7 @@ async function testBackgroundLoadFiltersIntegration() {
   api.compiler.compile = async () => { throw new Error('worker hung'); };
   api.setState({ customFilters: '||fallback.example^' });
   await api.loadFilters(true);
-  await new Promise(resolve => setTimeout(resolve, 20));
+  await new Promise(resolve => setTimeout(resolve, 250));
   console.warn = origWarn;
   assert.strictEqual(api.engine.matchRequest('https://fallback.example/x.js', 'script', 'https://site.test/').blocked, true, 'fallback compile activates rules');
 }
@@ -5863,14 +5873,21 @@ async function testRemoteLists() {
   assert.strictEqual(registered.list.autoUpdate, true, 'new lists default to automatic updates');
 
   const bundledCatalog = WildFireBundledLists.all();
-  assert.strictEqual(bundledCatalog.length, 1, 'one default list is preshipped');
-  assert.strictEqual(bundledCatalog[0].builtin, true, 'the preshipped list is marked built-in');
+  assert.strictEqual(bundledCatalog.length, 70,
+    'the full built-in catalog is preshipped');
+  assert.ok(bundledCatalog.every(entry => entry.builtin && /^WildFire\b/.test(entry.name)),
+    'every built-in entry is WildFire-branded and marked built-in');
+  assert.strictEqual(WildFireBundledLists.defaults().length, 9,
+    'the full upstream default-on selection is preseeded');
   assert.strictEqual(WildFireBundledLists.DEFAULT_URL,
     'https://ublockorigin.github.io/uAssetsCDN/filters/filters.min.txt',
     'the default list points at the uAssets CDN');
   bundledCatalog[0].url = 'https://changed.example/';
   assert.strictEqual(WildFireBundledLists.all()[0].url, WildFireBundledLists.DEFAULT_URL,
     'the bundled catalog cannot be mutated by callers');
+  assert.ok(bundledCatalog.every(entry =>
+    RemoteLists.normalizeUrl(entry.url) === entry.url),
+  'every built-in entry has its own real http(s) update URL');
   assert.strictEqual(RemoteLists.normalizeUrl(WildFireBundledLists.DEFAULT_URL),
     WildFireBundledLists.DEFAULT_URL, 'the default list has a real http(s) update URL');
   assert.strictEqual(RemoteLists.normalizeUrl(WildFireBundledLists.LEGACY_URL), '',
@@ -6007,17 +6024,21 @@ async function testRemoteLists() {
     timeoutMs: 0
   });
   const seeded = await preshipped.seedBundled();
-  assert.strictEqual(seeded.ok, true, 'the default list is seeded locally');
+  assert.strictEqual(seeded.ok, true, 'the built-in catalog is seeded locally');
   assert.strictEqual(bundledNetworkFetches, 0, 'seeding makes no network request');
-  assert.strictEqual(seeded.list.builtin, true, 'the seeded entry is built-in');
-  assert.strictEqual(seeded.list.enabled, false, 'the default list starts disabled');
+  assert.strictEqual(seeded.list.builtin, true, 'the seeded default entry is built-in');
+  assert.strictEqual(seeded.list.enabled, true, 'the default list starts enabled');
   assert.strictEqual(seeded.list.enabledChoice, false,
     'the default list has no explicit enablement choice yet');
   assert.strictEqual(seeded.list.autoUpdate, true, 'the default list auto-fetches by default');
   assert.strictEqual(seeded.list.text, '', 'no upstream filter text is vendored');
   assert.strictEqual(seeded.list.metadata.title, '', 'no upstream metadata is vendored');
   assert.strictEqual(await preshipped.enabledText(), '',
-    'the default list contributes no rules until it is fetched');
+    'built-in lists contribute no rules until fetched');
+  assert.strictEqual(seeded.snapshot.lists.filter(entry => entry.builtin).length,
+    WildFireBundledLists.all().length, 'every built-in list is preseeded');
+  assert.strictEqual(seeded.snapshot.lists.filter(entry => entry.builtin && entry.enabled).length,
+    WildFireBundledLists.defaults().length, 'the full default selection is enabled');
   const seededUbo = seeded.snapshot.lists
     .find(entry => entry.url === RemoteLists.PRESHIPPED_REMOTE_URL);
   assert.ok(seededUbo, 'the uAssets CDN URL is the default list');
@@ -6025,7 +6046,7 @@ async function testRemoteLists() {
     'https://ublockorigin.github.io/uAssetsCDN/filters/filters.min.txt',
     'the default URL points at the uAssets CDN');
   assert.strictEqual(seededUbo.text, '', 'the default list starts unfetched');
-  assert.strictEqual(seededUbo.enabled, false, 'the default list starts disabled');
+  assert.strictEqual(seededUbo.enabled, true, 'the default list starts enabled');
   assert.strictEqual(seededUbo.autoUpdate, true, 'the default list auto-fetches');
 
   const updatedBundled = await preshipped.update(WildFireBundledLists.DEFAULT_URL);
@@ -6043,7 +6064,9 @@ async function testRemoteLists() {
   assert.strictEqual(bundledNetworkFetches, 1, 'reseeding still makes no network request');
 
   assert.strictEqual((await preshipped.remove(WildFireBundledLists.DEFAULT_URL)).ok, false,
-    'the preshipped list cannot be removed');
+    'the default built-in list cannot be removed');
+  assert.strictEqual((await preshipped.remove(WildFireBundledLists.defaults()[1].url)).ok, false,
+    'another default built-in list cannot be removed');
   const autoOffPreshipped = await preshipped.setAutoUpdate(WildFireBundledLists.DEFAULT_URL, false);
   assert.strictEqual(autoOffPreshipped.ok, true, 'Auto can be disabled for the preshipped list');
   assert.strictEqual(autoOffPreshipped.list.autoUpdate, false, 'the Auto choice is stored');
@@ -6077,8 +6100,8 @@ async function testRemoteLists() {
     'the legacy sentinel migrates to the default URL');
   assert.strictEqual(migrated.list.text, '||legacy.example^',
     'migration preserves a manually updated default list');
-  assert.strictEqual(migrated.list.enabled, false,
-    'migration resets the old implicit enable to the safer default');
+  assert.strictEqual(migrated.list.enabled, true,
+    'migration moves the old implicit state to the full default selection');
 
   const starterRemote = RemoteLists.create({
     storage: memoryStorage({
@@ -6100,8 +6123,8 @@ async function testRemoteLists() {
     'the former starter URL migrates to the default URL');
   assert.strictEqual(starterMigrated.list.text, '||starter.example^',
     'starter migration preserves a manually updated default list');
-  assert.strictEqual(starterMigrated.list.enabled, false,
-    'starter migration resets the old implicit enable to the safer default');
+  assert.strictEqual(starterMigrated.list.enabled, true,
+    'starter migration moves the old implicit state to the full default selection');
 
   const explicitDefault = RemoteLists.create({
     storage: memoryStorage({
@@ -6121,13 +6144,32 @@ async function testRemoteLists() {
   });
   const explicitSeeded = await explicitDefault.seedBundled();
   assert.strictEqual(explicitSeeded.list.enabled, true,
-    'an explicit earlier enable survives the safer-default migration');
+    'an explicit earlier enable survives the default-selection migration');
+  const explicitDisabled = RemoteLists.create({
+    storage: memoryStorage({
+      [RemoteLists.KEY]: {
+        lists: [{
+          url: WildFireBundledLists.DEFAULT_URL,
+          enabled: false,
+          enabledChoice: true,
+          text: '||chosen-off.example^',
+          updatedAt: 100
+        }]
+      }
+    }),
+    fetchImpl: async () => { throw new Error('explicit choice must not fetch'); },
+    now: () => 1000,
+    timeoutMs: 0
+  });
+  const explicitDisabledSeeded = await explicitDisabled.seedBundled();
+  assert.strictEqual(explicitDisabledSeeded.list.enabled, false,
+    'an explicit earlier disable survives the default-selection migration');
   const implicitDefault = RemoteLists.create({
     storage: memoryStorage({
       [RemoteLists.KEY]: {
         lists: [{
           url: WildFireBundledLists.DEFAULT_URL,
-          enabled: true,
+          enabled: false,
           text: '||implicit.example^',
           updatedAt: 100
         }]
@@ -6138,10 +6180,10 @@ async function testRemoteLists() {
     timeoutMs: 0
   });
   const implicitSeeded = await implicitDefault.seedBundled();
-  assert.strictEqual(implicitSeeded.list.enabled, false,
-    'an old implicit enable is reset to the safer default');
+  assert.strictEqual(implicitSeeded.list.enabled, true,
+    'an old implicit disabled state is replaced by the full default selection');
   assert.strictEqual(implicitSeeded.list.text, '||implicit.example^',
-    'the safer-default migration preserves fetched list text');
+    'the default-selection migration preserves fetched list text');
 
   let firstClock = 1000;
   const firstRemote = RemoteLists.create({
