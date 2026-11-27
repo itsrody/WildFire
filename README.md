@@ -232,11 +232,12 @@ values are rejected with a line-numbered validation reason.
 
 The preshipped `WildFire default filters` list points directly at
 `https://ublockorigin.github.io/uAssetsCDN/filters/filters.min.txt`. It starts
-enabled, is fetched into storage on startup, and then revalidates on its
-`! Expires` interval. It cannot be removed; **Disable** or **Auto: off** opts
-out. No upstream filter text is vendored into this repository:
-`filters/default.txt` only supplies offline fallback rules until the default
-list is fetched.
+disabled so its broad rule set cannot break sites on a stock install. It is
+fetched into storage on startup, revalidated on its `! Expires` interval, and
+applied only after you choose **Enable**; that choice survives reseeds. It cannot
+be removed; **Disable** or **Auto: off** opts out again. No upstream filter text
+is vendored into this repository: `filters/default.txt` supplies the packaged
+offline fallback rules even while the CDN list is disabled.
 
 Open Options → **Suggested lists** for shortcuts to well-known community lists,
 or **Filter lists** to add any `http(s)` URL. Adding a URL — suggested or typed —
@@ -543,13 +544,14 @@ This is deliberately a scoped rewrite, not parity with every uBO feature today:
   registration is idempotent, a failed init settles readiness with a recorded
   error, and scriptlet registrations are swapped atomically so a failed
   replacement keeps the old one.
-- The default list ships preshipped, and the uAssets CDN list is preshipped as a
-  direct remote URL. Every list auto-fetches once and revalidates on its
-  `! Expires` interval unless Auto is off. User-added lists must be enabled
-  before their rules apply. WildFire stores the exact text, a hash, bounded
-  update history, and parsed header metadata for each list. The suggested-list
-  catalog is inert grouped data, and the local asset viewer reads only curated
-  registries.
+- The uAssets CDN list is preshipped as a direct remote URL but starts disabled;
+  the packaged `filters/default.txt` still loads as the offline fallback. Every
+  list auto-fetches once and revalidates on its `! Expires` interval unless Auto
+  is off. The CDN list and user-added lists must be enabled before their rules
+  apply, and explicit enablement survives reseeds. WildFire stores the exact
+  text, a hash, bounded update history, and parsed header metadata for each
+  list. The suggested-list catalog is inert grouped data, and the local asset
+  viewer reads only curated registries.
 - Firefox ETP is left untouched. WildFire observes ETP block errors and
   classifications only while diagnostics are enabled, and never adds them to
   WildFire's counters. Header listeners are registered when loaded rules need

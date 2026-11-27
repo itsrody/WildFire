@@ -62,9 +62,9 @@ Already implemented and verified in the shipped tree:
 - Full non-trusted uBO `##+js()` and AdGuard `#%#//scriptlet()` alias coverage,
   canonicalized exceptions, one-WildFire-file-per-shim structure, and rejection
   of all trusted/debug aliases.
-- Remote list store with the preshipped uAssets CDN default list, opt-in custom
-  lists, metadata parsing, size/timeout checks, conditional fetches, and local
-  offline fallback rules.
+- Remote list store with the preshipped, disabled-by-default uAssets CDN list,
+  opt-in custom lists, explicit enablement memory, metadata parsing,
+  size/timeout checks, conditional fetches, and local offline fallback rules.
 - Popup, Options custom-filter editor, per-site `allow`/`block` resource rules,
   local diagnostics, and a local-only request decision Inspector.
 

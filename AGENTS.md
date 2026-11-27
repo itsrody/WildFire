@@ -598,18 +598,22 @@ filters active. An `allow` rule also skips `$removeparam`, `$removeheader`,
 filter-supplied code path is re-enabled. Dynamic decisions have their own
 `dynamic` diagnostics phase and Inspector source, separate from static `request`
 decisions, with a copyable WildFire rule. Storage key `wildfire.remote.v1` holds
-`{lists: [{url, builtin, enabled, autoUpdate, autoUpdateChoice, etag,
-lastModified, text, updatedAt, checkedAt, lastPatchAt, hash, lastError,
+`{lists: [{url, builtin, enabled, enabledChoice, autoUpdate, autoUpdateChoice,
+etag, lastModified, text, updatedAt, checkedAt, lastPatchAt, hash, lastError,
 history, metadata}]}` and is owned entirely by `lib/state/remote-lists.js`;
 `metadata` also retains the response `contentType`. `history` is a bounded
 local-only record of patch/update/error outcomes. The preshipped default entry
 points directly at
 `https://ublockorigin.github.io/uAssetsCDN/filters/filters.min.txt`, starts
-enabled, and auto-fetches on startup before following `! Expires`; it cannot be
-removed and can be disabled or opted out of Auto in Options. The old
-`wildfire:bundled/default.txt` sentinel and the former WildFire starter URL are
-migrated to that URL. No upstream filter text is vendored into the repository;
-`filters/default.txt` remains only an offline engine fallback.
+disabled so its broad rule set cannot break stock installs, and auto-fetches on
+startup before following `! Expires`; `set-list-enabled` records `enabledChoice`
+so an explicit user choice survives reseeds while an old implicit enable is
+reset once. It cannot be removed and can be enabled or opted out of Auto in
+Options. The old `wildfire:bundled/default.txt` sentinel and the former
+WildFire starter URL are migrated to that URL with their old implicit enable
+reset to the safer default. No upstream filter text is
+vendored into the repository; `filters/default.txt` remains the packaged offline
+fallback and still loads when the CDN list is disabled.
 
 Background listens for `wildfire:*` messages:
 
@@ -677,17 +681,20 @@ The preshipped default list is remote-list shaped and is fetched directly from
 `! Description`, `! Version`, `! Homepage`, `! License`, `! Expires`,
 `! Checksum`, `! Diff-Name`, `! Diff-Path`, `! Diff-Expires` and
 `! Last Modified` metadata, stores the fetched text, hash, and bounded update
-history, and loads it once before custom and external remote rules. A
-`! Diff-Path` list is updated through WildFire's own bounded diff reader on the
-short `! Diff-Expires` interval; the patched text is accepted only when the
-patch's SHA-1 checksum prefix matches, and any failure falls back to the full
+history, and loads its fetched rules once before external remote rules when the
+user has enabled it. A `! Diff-Path` list is updated through WildFire's own
+bounded diff reader on the short `! Diff-Expires` interval; the patched text is
+accepted only when the patch's SHA-1 checksum prefix matches, and any failure
+falls back to the full
 URL. It auto-fetches on startup, then revalidates at its `! Expires` interval;
 `remove-list` rejects it, while `set-list-enabled` and `set-list-auto` can opt it
-out. A fetched update persists across extension reseeds; the legacy
-`wildfire:bundled/default.txt` sentinel and the former WildFire starter URL
-migrate to the default URL while preserving user choices. No upstream filter
-text is vendored into this repository; `filters/default.txt` supplies offline
-fallback rules only. The bundled `lib/state/suggested-lists.js` catalog remains
+out. The CDN list starts disabled and its fetched rules stay inactive until the
+user enables it; `filters/default.txt` still supplies packaged offline fallback
+rules on a stock install. A fetched update persists across extension reseeds;
+the legacy `wildfire:bundled/default.txt` sentinel and the former WildFire
+starter URL migrate to the default URL while resetting old implicit enables.
+No upstream filter text is vendored into this repository. The bundled
+`lib/state/suggested-lists.js` catalog remains
 inert grouped data: Options shows its URLs as ads, privacy, malicious, social,
 and regional shortcuts, and clicking one only sends `add-list`. Every registered
 list, including the default list,
